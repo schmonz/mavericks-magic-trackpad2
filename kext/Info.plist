@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>MT2Claim</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.schmonz.MT2Claim</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>MT2Claim</string>
+    <key>CFBundlePackageType</key>
+    <string>KEXT</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>OSBundleRequired</key>
+    <string>Root</string>
+    <key>IOKitPersonalities</key>
+    <dict>
+        <key>MT2 Claim</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.schmonz.MT2Claim</string>
+            <key>IOClass</key>
+            <string>com_schmonz_MT2Claim</string>
+            <key>IOProviderClass</key>
+            <string>IOUSBInterface</string>
+            <key>idVendor</key>
+            <integer>1452</integer>
+            <key>idProduct</key>
+            <integer>613</integer>
+            <key>bConfigurationValue</key>
+            <integer>1</integer>
+            <key>bInterfaceNumber</key>
+            <integer>1</integer>
+            <key>IOProbeScore</key>
+            <integer>500000</integer>
+        </dict>
+    </dict>
+    <key>OSBundleLibraries</key>
+    <dict>
+        <key>com.apple.kpi.iokit</key>
+        <string>13.4</string>
+        <key>com.apple.kpi.libkern</key>
+        <string>13.4</string>
+    </dict>
+</dict>
+</plist>

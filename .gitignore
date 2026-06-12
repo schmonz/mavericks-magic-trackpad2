@@ -9,3 +9,4 @@ build/
 /test_model
 /test_decode
 /test_encode
+kext/MT2Claim.kext/
