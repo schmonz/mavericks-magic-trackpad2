@@ -2,3 +2,10 @@ spike_bind
 *.o
 build/
 /docs/superpowers/
+/reference/
+/mt2d
+/dump_frames
+/vhid_probe
+/test_model
+/test_decode
+/test_encode
