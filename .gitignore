@@ -14,3 +14,5 @@ kext/MT2Claim.kext/
 /test_gesture
 captures/raw_session.txt
 /mt2_reenumerate
+kext-gesture/MT2Gesture.kext/
+kext-gesture/*.o
