@@ -1,0 +1,27 @@
+#!/bin/sh
+# Activate the MT2 driver: fix kext ownership, rebuild caches, load the kext,
+# nudge the device to re-match it, and start the daemon.
+set -e
+
+KEXT=/Library/Extensions/MT2Claim.kext
+PLIST=/Library/LaunchDaemons/com.schmonz.mt2d.plist
+
+# kexts must be root:wheel and not group/world-writable.
+chown -R root:wheel "$KEXT"
+chmod -R 755 "$KEXT"
+
+# Rebuild kext caches so MT2Claim is present at the next boot (wins the match
+# before IOUSBHIDDriver because it is in the catalogue before USB enumeration).
+touch /Library/Extensions
+kextcache -update-volume / 2>/dev/null || true
+
+# Best-effort: load now and re-enumerate so it works without a reboot. Requires
+# kext-dev-mode=1 (unsigned kext); harmless if it can't load until reboot.
+kextload "$KEXT" 2>/dev/null || true
+/usr/local/bin/mt2_reenumerate 2>/dev/null || true
+
+# Start (or restart) the daemon. It supervises itself and waits for the device.
+launchctl unload "$PLIST" 2>/dev/null || true
+launchctl load -w "$PLIST"
+
+exit 0

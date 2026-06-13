@@ -14,7 +14,12 @@ typedef void (*mt2_frame_cb)(const uint8_t *frame, size_t len, void *ctx);
  * be claimed (e.g. kext not loaded -> kIOReturnExclusiveAccess). */
 int mt2_reader_start(mt2_frame_cb cb, void *ctx);
 
-/* Stop the read thread and release the interface. */
+/* Block until the read thread exits on its own (device unplugged or fatal read
+ * error). Returns immediately if no thread is running. */
+void mt2_reader_wait(void);
+
+/* Stop the read thread (if running) and release the interface/device. Safe to
+ * call after mt2_reader_wait(). */
 void mt2_reader_stop(void);
 
 #endif

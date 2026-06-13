@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stop any running instance before we replace files.
+launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
+kextunload -b com.schmonz.MT2Claim 2>/dev/null || true
+exit 0
