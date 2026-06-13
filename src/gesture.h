@@ -7,7 +7,8 @@ typedef struct {
     int dx, dy;          /* relative pointer motion (mouse units) */
     int wheel_v;         /* vertical scroll (mouse wheel units) */
     int wheel_h;         /* horizontal scroll */
-    unsigned buttons;    /* bit0 = left, bit1 = right */
+    unsigned buttons;    /* held buttons: bit0 = left, bit1 = right */
+    unsigned tap;        /* momentary click to pulse (down+up): bit0 left, bit1 right; 0 = none */
 } mouse_report_t;
 
 typedef struct gesture_state gesture_state_t;

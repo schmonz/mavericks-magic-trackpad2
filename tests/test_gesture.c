@@ -34,15 +34,20 @@ static void run_tests(void) {
         gesture_destroy(st);
     }
 
-    /* Two-finger scroll. */
+    /* Two-finger scroll: smoothing ramps up, so a tick emits within a few
+     * frames of sustained movement (not necessarily the first). */
     {
         gesture_state_t *st = gesture_create();
-        touch_frame_t d = mk2(0, 0, 100, 0, 0);
-        CHECK_EQ(gesture_process(st, &d, &r), 0);           /* baseline */
-        touch_frame_t e = mk2(0, 400, 100, 400, 0);
-        CHECK_EQ(gesture_process(st, &e, &r), 1);
-        CHECK(r.wheel_v != 0);
-        CHECK_EQ(r.dx, 0);                                  /* scroll, not pointer */
+        touch_frame_t base = mk2(0, 0, 100, 0, 0);
+        CHECK_EQ(gesture_process(st, &base, &r), 0);        /* baseline */
+        int saw_scroll = 0;
+        for (int i = 1; i <= 8; i++) {
+            touch_frame_t f = mk2(0, i * 200, 100, i * 200, 0);
+            gesture_process(st, &f, &r);
+            CHECK_EQ(r.dx, 0);                              /* scroll, not pointer */
+            if (r.wheel_v != 0) saw_scroll = 1;
+        }
+        CHECK(saw_scroll);
         gesture_destroy(st);
     }
 
@@ -60,6 +65,55 @@ static void run_tests(void) {
         CHECK_EQ(gesture_process(st2, &f2, &r), 1);
         CHECK(r.buttons & 0x2);                             /* two-finger click -> right */
         gesture_destroy(st2);
+    }
+
+    /* Tap-to-click: brief touch with no movement -> momentary click. */
+    {
+        gesture_state_t *st = gesture_create();
+        touch_frame_t down = mk1(1, 1000, 1000, 0); down.timestamp = 0.0;
+        gesture_process(st, &down, &r);
+        touch_frame_t up = {0}; up.ntouches = 0; up.timestamp = 0.10;  /* lifted 100ms later */
+        CHECK_EQ(gesture_process(st, &up, &r), 1);
+        CHECK_EQ(r.tap, 0x1u);                              /* one-finger tap -> left */
+        gesture_destroy(st);
+    }
+    {   /* two-finger tap -> right */
+        gesture_state_t *st = gesture_create();
+        touch_frame_t d = mk2(0, 0, 100, 0, 0); d.timestamp = 0.0;
+        gesture_process(st, &d, &r);
+        touch_frame_t up = {0}; up.ntouches = 0; up.timestamp = 0.10;
+        gesture_process(st, &up, &r);
+        CHECK_EQ(r.tap, 0x2u);
+        gesture_destroy(st);
+    }
+    {   /* moved during touch -> NOT a tap */
+        gesture_state_t *st = gesture_create();
+        touch_frame_t down = mk1(1, 0, 0, 0); down.timestamp = 0.0;
+        gesture_process(st, &down, &r);
+        touch_frame_t mv = mk1(1, 800, 800, 0); mv.timestamp = 0.05;
+        gesture_process(st, &mv, &r);
+        touch_frame_t up = {0}; up.ntouches = 0; up.timestamp = 0.10;
+        gesture_process(st, &up, &r);
+        CHECK_EQ(r.tap, 0u);
+        gesture_destroy(st);
+    }
+    {   /* held too long -> NOT a tap */
+        gesture_state_t *st = gesture_create();
+        touch_frame_t down = mk1(1, 0, 0, 0); down.timestamp = 0.0;
+        gesture_process(st, &down, &r);
+        touch_frame_t up = {0}; up.ntouches = 0; up.timestamp = 0.50;  /* 500ms */
+        gesture_process(st, &up, &r);
+        CHECK_EQ(r.tap, 0u);
+        gesture_destroy(st);
+    }
+    {   /* physical click during touch -> NOT also a tap */
+        gesture_state_t *st = gesture_create();
+        touch_frame_t down = mk1(1, 0, 0, 1); down.timestamp = 0.0;
+        gesture_process(st, &down, &r);
+        touch_frame_t up = {0}; up.ntouches = 0; up.timestamp = 0.10;
+        gesture_process(st, &up, &r);
+        CHECK_EQ(r.tap, 0u);
+        gesture_destroy(st);
     }
 
     /* Finger-count change must not emit a motion spike. */

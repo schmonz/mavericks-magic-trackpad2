@@ -1,8 +1,8 @@
 /* mt2d: Magic Trackpad 2 -> usable pointer on Mavericks.
  *
  * Reads raw MT2 multitouch frames (via the MT2Claim kext + USB), decodes them,
- * synthesizes cursor / two-finger scroll / click, and injects them through a
- * kextless virtual mouse the system fully understands.
+ * synthesizes cursor / two-finger scroll / click / tap, and injects them through
+ * a kextless virtual mouse the system fully understands.
  *
  * Runs a supervise loop: waits for the trackpad (so it survives boot ordering
  * and the kext not yet being ready) and re-claims it after unplug/replug. */
@@ -13,18 +13,32 @@
 #include <stdio.h>
 #include <signal.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 static vhid_mouse_t *g_mouse;
 static gesture_state_t *g_gesture;
 static volatile int g_quit;
 
+static double now_seconds(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
+}
+
 static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
     (void)ctx;
     touch_frame_t tf = {0};
     if (mt2_decode(frame, len, &tf) != 0) return;
+    tf.timestamp = now_seconds();                 /* for tap timing */
+
     mouse_report_t m;
-    if (gesture_process(g_gesture, &tf, &m))
+    if (!gesture_process(g_gesture, &tf, &m)) return;
+    if (m.tap) {                                  /* momentary click: down then up */
+        vhid_mouse_send(g_mouse, m.tap, 0, 0, 0, 0);
+        vhid_mouse_send(g_mouse, 0, 0, 0, 0, 0);
+    } else {
         vhid_mouse_send(g_mouse, m.buttons, m.dx, m.dy, m.wheel_v, m.wheel_h);
+    }
 }
 
 static void on_sig(int s) {
