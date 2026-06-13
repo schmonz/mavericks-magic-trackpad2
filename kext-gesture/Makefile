@@ -8,13 +8,13 @@ CXXFLAGS = -mmacosx-version-min=10.9 -fno-rtti -fno-exceptions -fapple-kext \
            -I/System/Library/Frameworks/IOKit.framework/Headers
 LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 
-OBJS = $(KEXT_NAME).o MT2GestureUserClient.o
+OBJS = $(KEXT_NAME).o MT2GestureUserClient.o MT2HIDShell.o
 
 .PHONY: all clean load unload
 
 all: $(KEXT_NAME).kext
 
-%.o: %.cpp MT2Gesture.h amd_shim.h
+%.o: %.cpp MT2Gesture.h amd_shim.h MT2HIDShell.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(KEXT_NAME).kext: $(OBJS) Info.plist

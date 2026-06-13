@@ -39,6 +39,31 @@
             <key>IOUserClientClass</key>
             <string>com_schmonz_MT2GestureUserClient</string>
         </dict>
+        <key>MT2HIDEventDriver</key>
+        <dict>
+            <!-- Drive Apple's AppleMultitouchHIDEventDriver (the AppleMultitouch
+                 event service the gesture wrapper wires to) onto our in-kernel MT1
+                 HID interface. Mirrors AppleBluetoothMultitouch's BNBTrackpadEvent
+                 Driver personality, which is NOT in the live catalogue, so the
+                 generic IOHIDEventDriver wins by default. High IOProbeScore +
+                 specific VendorID/ProductID/VendorIDSource match beats it. The
+                 IOClass lives in com.apple.driver.AppleMultitouchDriver (our
+                 OSBundleLibrary), so CFBundleIdentifier points there. -->
+            <key>CFBundleIdentifier</key>
+            <string>com.apple.driver.AppleMultitouchDriver</string>
+            <key>IOClass</key>
+            <string>AppleMultitouchHIDEventDriver</string>
+            <key>IOProviderClass</key>
+            <string>IOHIDInterface</string>
+            <key>VendorID</key>
+            <integer>1452</integer>
+            <key>ProductID</key>
+            <integer>782</integer>
+            <key>VendorIDSource</key>
+            <integer>2</integer>
+            <key>IOProbeScore</key>
+            <integer>100000</integer>
+        </dict>
     </dict>
     <key>OSBundleLibraries</key>
     <dict>
@@ -48,6 +73,8 @@
         <string>13.4</string>
         <key>com.apple.driver.AppleMultitouchDriver</key>
         <string>193.8</string>
+        <key>com.apple.iokit.IOHIDFamily</key>
+        <string>1.5</string>
     </dict>
 </dict>
 </plist>

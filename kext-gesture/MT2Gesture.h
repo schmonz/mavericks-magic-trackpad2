@@ -6,9 +6,14 @@
 /* The transport nub: constructs/drives an AppleMultitouchDevice (see MT2Gesture.cpp)
  * and exposes feedFrame() so its user client (MT2GestureUserClient) can push
  * userspace-decoded MT1 frames into AppleMultitouchDevice::handleTouchFrame. */
+class com_schmonz_MT2HIDShell;
+
 class com_schmonz_MT2Gesture : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2Gesture)
     AppleMultitouchDevice *fDevice;
+    com_schmonz_MT2HIDShell *fHidShell;   /* in-kernel MT1 HID device under us;
+                                             instantiates the started event driver
+                                             the actuation wrapper wires to (M5) */
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;

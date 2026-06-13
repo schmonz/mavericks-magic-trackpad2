@@ -32,10 +32,35 @@
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSBoolean.h>
 #include <libkern/c++/OSString.h>
+#include <libkern/c++/OSNumber.h>
 #include "amd_shim.h"
 #include "MT2Gesture.h"
+#include "MT2HIDShell.h"
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
+
+/* Build the property table an IOHIDDevice needs to look like the BT Magic Trackpad
+ * (matches BNBTrackpadEventDriver: VendorID 1452, VendorIDSource 2, usage 1/2,
+ * Transport Bluetooth). Mirrors src/vhid_mt1.c's creation dict. */
+static OSDictionary *makeHidProps(void) {
+    OSDictionary *p = OSDictionary::withCapacity(8);
+    if (!p) return 0;
+    struct { const char *k; unsigned v; } nums[] = {
+        {"VendorID", 1452}, {"ProductID", 782}, {"VendorIDSource", 2},
+        {"PrimaryUsagePage", 0x01}, {"PrimaryUsage", 0x02},
+    };
+    for (unsigned i = 0; i < sizeof(nums)/sizeof(nums[0]); i++) {
+        OSNumber *n = OSNumber::withNumber(nums[i].v, 32);
+        if (n) { p->setObject(nums[i].k, n); n->release(); }
+    }
+    OSString *t = OSString::withCString("Bluetooth");
+    if (t) { p->setObject("Transport", t); t->release(); }
+    OSString *pr = OSString::withCString("Magic Trackpad");
+    if (pr) { p->setObject("Product", pr); pr->release(); }
+    OSString *mf = OSString::withCString("Apple Inc.");
+    if (mf) { p->setObject("Manufacturer", mf); mf->release(); }
+    return p;
+}
 
 /* AMDDeviceReportStruct layout (from Apple staticGet/SetReportHandler):
  *   off 0x000  uint8  reportID
@@ -101,6 +126,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
         return false;
     }
     fDevice = 0;
+    fHidShell = 0;
 
     /* Make IOServiceOpen on us instantiate our feeder user client. Also declared
      * in Info.plist; set here too so it is present regardless of match path. */
@@ -110,6 +136,31 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
      * IOServiceGetMatchingService("com_schmonz_MT2Gesture") and IOServiceOpen us.
      * Without this the nub stays !registered and is invisible to that lookup. */
     registerService();
+
+    /* M5: stand up an in-kernel MT1 HID device UNDER US so Apple's
+     * AppleMultitouchHIDEventDriver matches+starts a real IOHIDEventService
+     * (IOHIDPointing) in our subtree. That started driver is what
+     * AppleMultitouchDevice's (non-fake) wrapper wiring attaches to for actuation.
+     * Best-effort: if any of this fails we still register the device (M4 path). */
+    {
+        com_schmonz_MT2HIDShell *hid = new com_schmonz_MT2HIDShell;
+        OSDictionary *hp = makeHidProps();
+        if (hid && hp && hid->init(hp)) {
+            if (hid->attach(this) && hid->start(this)) {
+                fHidShell = hid;
+                IOLog("MT2Gesture: MT1 HID shell started under nub\n");
+            } else {
+                IOLog("MT2Gesture: MT1 HID shell attach/start FAILED\n");
+                hid->detach(this);
+                hid->release();
+                hid = 0;
+            }
+        } else {
+            IOLog("MT2Gesture: MT1 HID shell init/alloc FAILED\n");
+            if (hid) hid->release();
+        }
+        if (hp) hp->release();
+    }
 
     OSObject *o = OSMetaClass::allocClassWithName("AppleMultitouchDevice");
     if (!o) {
@@ -134,7 +185,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
         dev->release();
         return true;
     }
-    props->setObject("IsFake", kOSBooleanTrue);   /* bypass start() provider cast */
+    props->setObject("IsFake", kOSBooleanFalse);   /* bypass start() provider cast */
 
     bool ok = dev->init(props);                    /* virtual -> AppleMultitouchDevice::init */
     props->release();
@@ -146,7 +197,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
 
     /* Belt-and-suspenders: ensure IsFake is in the device property table even if
      * init() did not adopt our dict wholesale. start() reads it via getProperty. */
-    dev->setProperty("IsFake", kOSBooleanTrue);
+    dev->setProperty("IsFake", kOSBooleanFalse);
 
     amd->setEnableMultitouchHandler(&enableStub, this);
     amd->setGetReportHandler(&getReportStub, this);
@@ -170,6 +221,16 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
 }
 
 void com_schmonz_MT2Gesture::stop(IOService *provider) {
+    /* Tear down the HID shell first: terminating it propagates down to Apple's
+     * AppleMultitouchHIDEventDriver, whose termination fires the device's
+     * hidEventDriverTerminated notification and cleanly clears the wrapper before
+     * we release the AppleMultitouchDevice below. */
+    if (fHidShell) {
+        fHidShell->terminate();
+        fHidShell->release();
+        fHidShell = 0;
+        IOLog("MT2Gesture: MT1 HID shell terminated + released\n");
+    }
     if (fDevice) {
         IOService *dev = (IOService *)fDevice;
         dev->stop(this);
