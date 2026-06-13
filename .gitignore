@@ -10,3 +10,5 @@ build/
 /test_decode
 /test_encode
 kext/MT2Claim.kext/
+/mt2d_mt1
+/test_gesture
