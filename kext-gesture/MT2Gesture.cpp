@@ -31,15 +31,9 @@
 #include <libkern/c++/OSObject.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSBoolean.h>
+#include <libkern/c++/OSString.h>
 #include "amd_shim.h"
-
-class com_schmonz_MT2Gesture : public IOService {
-    OSDeclareDefaultStructors(com_schmonz_MT2Gesture)
-    AppleMultitouchDevice *fDevice;
-public:
-    virtual bool start(IOService *provider) override;
-    virtual void stop(IOService *provider) override;
-};
+#include "MT2Gesture.h"
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
 
@@ -107,6 +101,15 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
         return false;
     }
     fDevice = 0;
+
+    /* Make IOServiceOpen on us instantiate our feeder user client. Also declared
+     * in Info.plist; set here too so it is present regardless of match path. */
+    setProperty("IOUserClientClass", "com_schmonz_MT2GestureUserClient");
+
+    /* Publish ourselves so the userspace feeder can find us by class via
+     * IOServiceGetMatchingService("com_schmonz_MT2Gesture") and IOServiceOpen us.
+     * Without this the nub stays !registered and is invisible to that lookup. */
+    registerService();
 
     OSObject *o = OSMetaClass::allocClassWithName("AppleMultitouchDevice");
     if (!o) {
@@ -176,6 +179,15 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
         IOLog("MT2Gesture: device stopped + released\n");
     }
     IOService::stop(provider);
+}
+
+IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *buf, unsigned int len) {
+    if (!fDevice || !buf || len == 0) {
+        return kIOReturnNotReady;
+    }
+    /* Verbatim hand-off: handleTouchFrame enqueues these exact bytes to the
+     * connected AppleMultitouchDeviceUserClient (RE'd: no in-kernel reformatting). */
+    return fDevice->handleTouchFrame((unsigned char *)buf, len);
 }
 
 extern "C" {

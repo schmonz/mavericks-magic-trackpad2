@@ -10,7 +10,7 @@ PKG_ID  = com.schmonz.mt2d
 all: daemon tools
 
 daemon: mt2d
-tools: dump_frames vhid_probe mt2_reenumerate
+tools: dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed
 
 # Shipping daemon: synthesize cursor/scroll/click from touches (works today).
 mt2d: $(SRC)/mt2d.c $(SRC)/mt2_reader.c $(SRC)/mt2_decode.c $(SRC)/gesture.c $(SRC)/vhid_mouse.c
@@ -29,6 +29,10 @@ vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c
 
 mt2_reenumerate: tools/mt2_reenumerate.c
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
+
+# Milestone 4 feeder: MT2 frames -> MT1 reports -> MT2Gesture kext user client.
+mt2_gesture_feed: tools/mt2_gesture_feed.c $(SRC)/mt2_reader.c $(SRC)/mt2_decode.c $(SRC)/mt1_encode.c
+	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
 # Build the interface-claim kext (delegates to its own makefile).
 kext:
@@ -69,6 +73,6 @@ test_gesture: tests/test_gesture.c $(SRC)/gesture.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f mt2d mt2d_mt1 dump_frames vhid_probe mt2_reenumerate $(TESTS) *.o
+	rm -f mt2d mt2d_mt1 dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed $(TESTS) *.o
 	rm -rf build
 	$(MAKE) -C kext clean 2>/dev/null || true

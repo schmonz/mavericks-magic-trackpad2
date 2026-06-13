@@ -6,8 +6,17 @@
 #include "mt1_encode.h"
 #include "vhid_mt1.h"
 #include <CoreFoundation/CoreFoundation.h>
+#include <mach/mach_time.h>
 #include <stdio.h>
 #include <signal.h>
+
+static uint32_t elapsed_ms(void) {
+    static mach_timebase_info_data_t tb;
+    static uint64_t t0;
+    if (tb.denom == 0) { mach_timebase_info(&tb); t0 = mach_absolute_time(); }
+    uint64_t ns = (mach_absolute_time() - t0) * tb.numer / tb.denom;
+    return (uint32_t)(ns / 1000000ULL);
+}
 
 static vhid_t *g_vhid;
 
@@ -16,7 +25,7 @@ static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
     touch_frame_t tf = {0};
     if (mt2_decode(frame, len, &tf) != 0) return;
     uint8_t out[256];
-    int n = mt1_encode(&tf, out, sizeof(out));
+    int n = mt1_encode(&tf, out, sizeof(out), elapsed_ms());
     if (n > 0) vhid_send(g_vhid, out, (size_t)n);
 }
 

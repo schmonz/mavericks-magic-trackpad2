@@ -8,16 +8,18 @@ CXXFLAGS = -mmacosx-version-min=10.9 -fno-rtti -fno-exceptions -fapple-kext \
            -I/System/Library/Frameworks/IOKit.framework/Headers
 LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 
+OBJS = $(KEXT_NAME).o MT2GestureUserClient.o
+
 .PHONY: all clean load unload
 
 all: $(KEXT_NAME).kext
 
-$(KEXT_NAME).o: $(KEXT_NAME).cpp
+%.o: %.cpp MT2Gesture.h amd_shim.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-$(KEXT_NAME).kext: $(KEXT_NAME).o Info.plist
+$(KEXT_NAME).kext: $(OBJS) Info.plist
 	mkdir -p $(KEXT_NAME).kext/Contents/MacOS
-	$(CXX) $(LDFLAGS) -o $(KEXT_NAME).kext/Contents/MacOS/$(KEXT_NAME) $(KEXT_NAME).o
+	$(CXX) $(LDFLAGS) -o $(KEXT_NAME).kext/Contents/MacOS/$(KEXT_NAME) $(OBJS)
 	cp Info.plist $(KEXT_NAME).kext/Contents/
 	chmod -R 755 $(KEXT_NAME).kext
 
@@ -31,4 +33,4 @@ unload:
 	-sudo kextunload -b $(BUNDLE_ID)
 
 clean:
-	rm -rf $(KEXT_NAME).kext $(KEXT_NAME).o
+	rm -rf $(KEXT_NAME).kext $(OBJS)

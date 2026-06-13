@@ -18,6 +18,10 @@ public:
     void setGetReportHandler(int (*handler)(AMDDeviceReportStruct *, unsigned char, void *), void *target);
     void setSetReportHandler(int (*handler)(AMDDeviceReportStruct *, unsigned char, void *), void *target);
     void setSwapButtonsHandler(int (*handler)(unsigned char, unsigned char, void *), void *target);
-    bool handleTouchFrame(unsigned char *frame, unsigned int length);
+    /* Returns an IOReturn: 0 (kIOReturnSuccess) when the frame was enqueued to the
+     * user client, or 0xE00002BC etc. if the device is not yet ready / no client.
+     * (C++ mangling ignores return type, so this matches the exported symbol
+     * __ZN21AppleMultitouchDevice16handleTouchFrameEPhj regardless of bool vs int.) */
+    IOReturn handleTouchFrame(unsigned char *frame, unsigned int length);
 };
 #endif

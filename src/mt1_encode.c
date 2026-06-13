@@ -27,7 +27,7 @@ static int scale(int v, int inMin, int inMax, int outMin, int outMax) {
     return (int)s;
 }
 
-int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap) {
+int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t timestamp) {
     if (!frame || !buf) return -1;
     int nt = frame->ntouches;
     if (nt < 0) nt = 0;
@@ -35,10 +35,13 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap) {
     size_t need = MT1_HEADER + (size_t)nt * MT1_RECSZ;
     if (cap < need) return -1;
 
+    /* 18-bit device timestamp, packed where hid-magicmouse.c reads it:
+     * ts = data[1]>>6 | data[2]<<2 | data[3]<<10. button stays in bit 0. */
+    uint32_t ts = timestamp & 0x3ffff;
     buf[0] = MT1_REPORT_ID;
-    buf[1] = (uint8_t)(frame->button & 0x01);   /* clicks; ts bits left 0 */
-    buf[2] = 0;
-    buf[3] = 0;
+    buf[1] = (uint8_t)((frame->button & 0x01) | ((ts & 0x03) << 6));
+    buf[2] = (uint8_t)((ts >> 2) & 0xff);
+    buf[3] = (uint8_t)((ts >> 10) & 0xff);
 
     for (int i = 0; i < nt; i++) {
         const touch_t *in = &frame->touches[i];

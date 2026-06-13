@@ -22,10 +22,14 @@ static void run_tests(void) {
     f.touches[0].size = 23;
 
     uint8_t buf[256];
-    int n = mt1_encode(&f, buf, sizeof(buf));
+    int n = mt1_encode(&f, buf, sizeof(buf), 0x25abc /* 18-bit ts */);
     CHECK_EQ(n, 4 + 9);           /* 4-byte header + one 9-byte record */
     CHECK_EQ(buf[0], 0x28);       /* MT1 report id */
     CHECK_EQ(buf[1] & 0x01, 1);   /* button */
+
+    /* Timestamp round-trips through the header where hid-magicmouse.c reads it. */
+    uint32_t ts = (uint32_t)(buf[1] >> 6) | ((uint32_t)buf[2] << 2) | ((uint32_t)buf[3] << 10);
+    CHECK_EQ(ts, 0x25abc & 0x3ffff);
 
     int id, x, y, state;
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
@@ -40,11 +44,11 @@ static void run_tests(void) {
 
     /* No-touch frame still yields a valid header-only report. */
     touch_frame_t e = {0};
-    int m = mt1_encode(&e, buf, sizeof(buf));
+    int m = mt1_encode(&e, buf, sizeof(buf), 0);
     CHECK_EQ(m, 4);
     CHECK_EQ(buf[0], 0x28);
 
     /* Capacity guard. */
-    CHECK_EQ(mt1_encode(&f, buf, 3), -1);
+    CHECK_EQ(mt1_encode(&f, buf, 3, 0), -1);
 }
 TEST_MAIN()
