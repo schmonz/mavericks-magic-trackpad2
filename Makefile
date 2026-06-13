@@ -34,15 +34,17 @@ mt2_reenumerate: tools/mt2_reenumerate.c
 kext:
 	$(MAKE) -C kext
 
-# Assemble an installer: kext -> /Library/Extensions, mt2d + helper ->
-# /usr/local/bin, LaunchDaemon -> /Library/LaunchDaemons. Scripts load it all.
+# Assemble an installer. The unsigned kext goes under /usr/local/lib/mt2d (NOT
+# /Library/Extensions, which enforces signing); the launchd wrapper kextloads it
+# from there. Root-run binaries + wrapper -> /usr/local/sbin, LaunchDaemon -> /Library.
 pkg: mt2d mt2_reenumerate kext
 	rm -rf build/pkgroot build/scripts
-	mkdir -p build/pkgroot/Library/Extensions
-	mkdir -p build/pkgroot/usr/local/bin
+	mkdir -p build/pkgroot/usr/local/lib/mt2d
+	mkdir -p build/pkgroot/usr/local/sbin
 	mkdir -p build/pkgroot/Library/LaunchDaemons
-	cp -R kext/MT2Claim.kext build/pkgroot/Library/Extensions/
-	cp mt2d mt2_reenumerate build/pkgroot/usr/local/bin/
+	cp -R kext/MT2Claim.kext build/pkgroot/usr/local/lib/mt2d/
+	cp mt2d mt2_reenumerate dist/mt2d-run build/pkgroot/usr/local/sbin/
+	chmod +x build/pkgroot/usr/local/sbin/mt2d-run
 	cp dist/com.schmonz.mt2d.plist build/pkgroot/Library/LaunchDaemons/
 	cp -R dist/scripts build/scripts
 	chmod +x build/scripts/preinstall build/scripts/postinstall

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Launchd entry point for mt2d.
+#
+# The MT2Claim kext is unsigned, so it cannot live in /Library/Extensions
+# (signing-enforced even under kext-dev-mode). Instead we keep it under
+# /usr/local and kextload it from this loose path, where kext-dev-mode permits
+# unsigned loads. If our driver hasn't claimed the multitouch interface yet
+# (e.g. the device enumerated before the kext was in the catalogue at boot),
+# force a re-enumeration so it wins the match. Then run the daemon.
+KEXT=/usr/local/lib/mt2d/MT2Claim.kext
+
+kextload "$KEXT" 2>/dev/null || true
+
+if [ "$(ioclasscount com_schmonz_MT2Claim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
+    /usr/local/sbin/mt2_reenumerate 2>/dev/null || true
+fi
+
+exec /usr/local/sbin/mt2d

@@ -6,7 +6,7 @@
     <string>com.schmonz.mt2d</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/mt2d</string>
+        <string>/usr/local/sbin/mt2d-run</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

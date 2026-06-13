@@ -1,5 +1,9 @@
 #!/bin/sh
-# Stop any running instance before we replace files.
+# Stop any running instance and remove a stale kext from /Library/Extensions
+# (older layout; it can't load there anyway due to signing enforcement).
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
 kextunload -b com.schmonz.MT2Claim 2>/dev/null || true
+rm -rf /Library/Extensions/MT2Claim.kext 2>/dev/null || true
+# Remove binaries from an older /usr/local/bin layout.
+rm -f /usr/local/bin/mt2d /usr/local/bin/mt2_reenumerate /usr/local/bin/mt2d-run 2>/dev/null || true
 exit 0
