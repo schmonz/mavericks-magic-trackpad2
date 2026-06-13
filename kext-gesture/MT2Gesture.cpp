@@ -43,10 +43,64 @@ public:
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
 
-/* No-op handler stubs; real geometry get-report handler comes in Task 2. */
-static int enableStub(bool enable, void *t)                                   { (void)enable; (void)t; return 0; }
-static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) { (void)r; (void)id; (void)t; return 0; }
-static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) { (void)r; (void)id; (void)t; return 0; }
+/* AMDDeviceReportStruct layout (from Apple staticGet/SetReportHandler):
+ *   off 0x000  uint8  reportID
+ *   off 0x001  uint8  buf[0x203]   (report data)
+ *   off 0x204  uint32 length
+ * INSTRUMENTED PASS: log every report the driver asks for so we learn which IDs
+ * cacheDeviceProperties fetches. get-report returns an empty (len=0) report. */
+static int enableStub(bool enable, void *t) {
+    (void)t;
+    IOLog("MT2Gesture: ENABLE-MT enable=%d\n", (int)enable);
+    return 0;
+}
+/* Geometry get-report handler. Report->key mapping reversed from
+ * AppleMultitouchDevice::decodeDeviceProperty (D-report jump table @0x3bc4):
+ *   0xD1 -> Family ID (data[0])
+ *   0xD3 -> Endianness(d0) Rows(d1) Columns(d2) bcdVersion(d3..d4 BE)  [PacketSize defaults 0x400]
+ *   0xD9 -> Surface Width(u32 d0..3) Height(u32 d4..7) Descriptor(whole if len>=16)
+ *   0xD0 -> Sensor Region Descriptor (raw)   0xA1 -> Sensor Region Param (raw)
+ *   0x7F -> rCRITICAL_ERRORS (u32 must be 0)  0xDB -> Multitouch ID (skip => return error)
+ * Data is written at r[1]; the response length goes in *(u32*)(r+0x204). First
+ * attempt at values (Magic-Trackpad-ish); tune empirically vs MTDeviceCreateList. */
+static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
+    (void)t; (void)id;
+    unsigned char *b = (unsigned char *)r;
+    unsigned char rid = b[0];
+    unsigned char *o = b + 1;                      /* response data buffer */
+    unsigned int *lenp = (unsigned int *)(b + 0x204);
+    unsigned int n = 0, i;
+    switch (rid) {
+    case 0x7f:                                     /* rCRITICAL_ERRORS: none */
+        o[0]=o[1]=o[2]=o[3]=0; n=4; break;
+    case 0xd1:                                     /* Family ID */
+        o[0]=0x80; n=1; break;
+    case 0xd3:                                     /* Endianness,Rows,Cols,bcdVersion */
+        o[0]=0x01; o[1]=0x0d; o[2]=0x10; o[3]=0x01; o[4]=0x00; n=5; break;
+    case 0xd9: {                                   /* Surface Width/Height (u32 LE) */
+        unsigned int w=13000, h=11300;
+        o[0]=w&0xff; o[1]=(w>>8)&0xff; o[2]=(w>>16)&0xff; o[3]=(w>>24)&0xff;
+        o[4]=h&0xff; o[5]=(h>>8)&0xff; o[6]=(h>>16)&0xff; o[7]=(h>>24)&0xff;
+        n=8; break; }
+    case 0xd0:                                     /* Sensor Region Descriptor */
+    case 0xa1:                                     /* Sensor Region Param */
+        for (i=0;i<16;i++) o[i]=0; n=16; break;
+    case 0xdb:                                     /* Multitouch ID: let driver skip */
+    default:
+        IOLog("MT2Gesture: GET-REPORT id=0x%02x UNHANDLED -> skip\n", (unsigned)rid);
+        return (int)0xe00002c7;                    /* kIOReturnUnsupported */
+    }
+    *lenp = n;
+    IOLog("MT2Gesture: GET-REPORT id=0x%02x -> %u bytes\n", (unsigned)rid, n);
+    return 0;
+}
+static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
+    (void)t;
+    unsigned char *b = (unsigned char *)r;
+    IOLog("MT2Gesture: SET-REPORT typeArg=%u reportID=0x%02x len=%u b1=0x%02x\n",
+          (unsigned)id, (unsigned)b[0], *(unsigned int *)(b + 0x204), (unsigned)b[1]);
+    return 0;
+}
 
 bool com_schmonz_MT2Gesture::start(IOService *provider) {
     if (!IOService::start(provider)) {
