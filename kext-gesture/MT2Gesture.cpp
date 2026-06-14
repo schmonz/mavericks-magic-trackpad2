@@ -73,6 +73,10 @@ static int enableStub(bool enable, void *t) {
     IOLog("MT2Gesture: ENABLE-MT enable=%d\n", (int)enable);
     return 0;
 }
+/* Remember the 1-byte value hidd SETs per reportID, so a later GET reads it back
+ * (a real device echoes its mode registers; hidd SETs 0xC8/0xDC/0xDD then GETs them
+ * and may disable gestures if the GET fails). */
+static unsigned char g_reg[256];
 /* Geometry get-report handler. Report->key mapping reversed from
  * AppleMultitouchDevice::decodeDeviceProperty (D-report jump table @0x3bc4):
  *   0xD1 -> Family ID (data[0])
@@ -105,9 +109,12 @@ static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
     case 0xa1:                                     /* Sensor Region Param */
         for (i=0;i<16;i++) o[i]=0; n=16; break;
     case 0xdb:                                     /* Multitouch ID: let driver skip */
-    default:
-        IOLog("MT2Gesture: GET-REPORT id=0x%02x UNHANDLED -> skip\n", (unsigned)rid);
+        IOLog("MT2Gesture: GET-REPORT id=0xdb UNHANDLED -> skip\n");
         return (int)0xe00002c7;                    /* kIOReturnUnsupported */
+    default:                                       /* echo back the last SET value */
+        o[0] = g_reg[rid]; n = 1;
+        IOLog("MT2Gesture: GET-REPORT id=0x%02x -> echo 0x%02x\n", (unsigned)rid, (unsigned)o[0]);
+        break;
     }
     *lenp = n;
     IOLog("MT2Gesture: GET-REPORT id=0x%02x -> %u bytes\n", (unsigned)rid, n);
@@ -116,6 +123,7 @@ static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
 static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
     (void)t;
     unsigned char *b = (unsigned char *)r;
+    g_reg[b[0]] = b[1];                             /* remember it for the echo on GET */
     IOLog("MT2Gesture: SET-REPORT typeArg=%u reportID=0x%02x len=%u b1=0x%02x\n",
           (unsigned)id, (unsigned)b[0], *(unsigned int *)(b + 0x204), (unsigned)b[1]);
     return 0;
@@ -221,6 +229,36 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
      * opens our AppleMultitouchDeviceUserClient (= adopts the device). */
     dev->setProperty("MT Built-In", kOSBooleanTrue);
     dev->setProperty("Driver is Ready", kOSBooleanTrue);
+
+    /* M5 ADOPTION FIX (diffed vs a real hidd-adopted BNBTrackpadDevice device):
+     * the adopted device advertises IOCFPlugInTypes -> MultitouchHID.plugin, which is
+     * how MultitouchSupport/hidd instantiates the plugin to open a multitouch device.
+     * Without it hidd never adopts us. Mirror the stock DefaultMultitouchProperties. */
+    {
+        OSDictionary *plug = OSDictionary::withCapacity(1);
+        OSString *path = OSString::withCString(
+            "AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin");
+        if (plug && path) {
+            plug->setObject("0516B563-B15B-11DA-96EB-0014519758EF", path);
+            dev->setProperty("IOCFPlugInTypes", plug);
+        }
+        if (path) path->release();
+        if (plug) plug->release();
+    }
+    dev->setProperty("TrackpadFourFingerGestures", kOSBooleanTrue);
+    dev->setProperty("TrackpadMomentumScroll", kOSBooleanTrue);
+    /* Rest of the stock DefaultMultitouchProperties (the BNBTrackpadDriver personality):
+     * parser-type/options tell MultitouchSupport how to parse the device; MTHIDDevice /
+     * HIDServiceSupport flag it as a real MT HID trackpad. */
+    {
+        OSNumber *pt = OSNumber::withNumber((unsigned long long)1000, 32);
+        if (pt) { dev->setProperty("parser-type", pt); pt->release(); }
+        OSNumber *po = OSNumber::withNumber((unsigned long long)47, 32);
+        if (po) { dev->setProperty("parser-options", po); po->release(); }
+    }
+    dev->setProperty("MTHIDDevice", kOSBooleanTrue);
+    dev->setProperty("HIDServiceSupport", kOSBooleanTrue);
+    dev->setProperty("TrackpadSecondaryClickCorners", kOSBooleanTrue);
 
     dev->registerService();
     fDevice = amd;
