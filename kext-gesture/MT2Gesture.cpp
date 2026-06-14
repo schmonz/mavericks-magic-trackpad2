@@ -214,6 +214,14 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
         dev->release();
         return true;
     }
+    /* M5 adoption probe: MultitouchSupport's MTDeviceIsBuiltIn reads the device
+     * registry property "MT Built-In"; the system auto-drives built-in trackpads
+     * regardless of the saved "default device" pref. "Driver is Ready" is also
+     * cached by mt_CachePropertiesForDevice. Set both and see if WindowServer
+     * opens our AppleMultitouchDeviceUserClient (= adopts the device). */
+    dev->setProperty("MT Built-In", kOSBooleanTrue);
+    dev->setProperty("Driver is Ready", kOSBooleanTrue);
+
     dev->registerService();
     fDevice = amd;
     IOLog("MT2Gesture: AppleMultitouchDevice started + registered (fake mode)\n");
