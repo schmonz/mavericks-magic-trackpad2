@@ -20,3 +20,9 @@ captures/raw_session.txt
 kext-gesture/MT2Gesture.kext/
 kext-gesture/*.o
 .claude/
+tools/feed_probe
+tools/mt_contacts
+tools/mt_cursorpos
+tools/mt_transport
+tools/synth_feed
+kext-startmt/MT2StartMT.kext/
