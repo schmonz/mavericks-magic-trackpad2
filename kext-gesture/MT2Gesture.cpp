@@ -259,6 +259,52 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     dev->setProperty("MTHIDDevice", kOSBooleanTrue);
     dev->setProperty("HIDServiceSupport", kOSBooleanTrue);
     dev->setProperty("TrackpadSecondaryClickCorners", kOSBooleanTrue);
+    /* Tell the system to treat this as a TRACKPAD (cursor/gestures), not a generic
+     * digitizer. hidd forwards our touches as raw DigitizerEvents but runs no
+     * gesture/cursor recognition without this (stock BNBTrackpadDriver sets it). */
+    dev->setProperty("HIDDefaultBehavior", "Trackpad");
+
+    /* GESTURE/CURSOR ACTIVATION (RE'd from MTTrackpadHIDManager::determineHIDManagerSettings
+     * in MultitouchHID.plugin): the userspace gesture recognizer (hidd) builds its
+     * trackpad settings + chord-gesture-set by reading a "TrackpadUserPreferences"
+     * dictionary from THIS device's IORegistry entry via
+     * IORegistryEntryCreateCFProperty(MTDeviceGetService(d), "TrackpadUserPreferences").
+     * With neither "TrackpadUserPreferences" nor "MultitouchPreferences" present it runs a
+     * bare-defaults path that leaves the chord set empty -> no chord ever commits ->
+     * no cursor/tap/scroll/gesture output (confirmed via dtrace: handleEvent + hand stats
+     * run, but commit2Chord/dispatchEvents/AppendRelativeMouse never fire). Provide the
+     * dict with sensible enabled values so the recognizer populates a real gesture set. */
+    {
+        OSDictionary *tp = OSDictionary::withCapacity(24);
+        if (tp) {
+            #define MT_SET_BOOL(k, v) do { tp->setObject(k, (v) ? kOSBooleanTrue : kOSBooleanFalse); } while (0)
+            #define MT_SET_INT(k, v) do { OSNumber *n = OSNumber::withNumber((unsigned long long)(v), 32); \
+                if (n) { tp->setObject(k, n); n->release(); } } while (0)
+            MT_SET_BOOL("Clicking", true);            /* tap to click */
+            MT_SET_BOOL("Dragging", true);
+            MT_SET_BOOL("TrackpadScroll", true);
+            MT_SET_BOOL("TrackpadHorizScroll", true);
+            MT_SET_BOOL("TrackpadMomentumScroll", true);
+            MT_SET_BOOL("TrackpadPinch", true);
+            MT_SET_BOOL("TrackpadRotate", true);
+            MT_SET_BOOL("TrackpadRightClick", true);
+            MT_SET_BOOL("TrackpadThreeFingerDrag", true);
+            MT_SET_INT("TrackpadTwoFingerDoubleTapGesture", 1);
+            MT_SET_INT("TrackpadThreeFingerTapGesture", 2);
+            MT_SET_INT("TrackpadThreeFingerHorizSwipeGesture", 2);
+            MT_SET_INT("TrackpadThreeFingerVertSwipeGesture", 2);
+            MT_SET_INT("TrackpadFourFingerHorizSwipeGesture", 2);
+            MT_SET_INT("TrackpadFourFingerVertSwipeGesture", 2);
+            MT_SET_INT("TrackpadFourFingerPinchGesture", 2);
+            MT_SET_INT("TrackpadFiveFingerPinchGesture", 2);
+            MT_SET_INT("TrackpadTwoFingerFromRightEdgeSwipeGesture", 3);
+            #undef MT_SET_BOOL
+            #undef MT_SET_INT
+            dev->setProperty("TrackpadUserPreferences", tp);
+            tp->release();
+            IOLog("MT2Gesture: TrackpadUserPreferences installed (gesture activation)\n");
+        }
+    }
 
     dev->registerService();
     fDevice = amd;

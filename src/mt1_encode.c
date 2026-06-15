@@ -57,6 +57,12 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
         int orient = (in->orientation + 32) & 0x3f;
         int state = (in->state == TS_TOUCHING || in->state == TS_START)
                     ? MT1_STATE_DRAG : MT1_STATE_NONE;
+        /* Finger-role identity: Apple's MTParse_CompactV4BinaryPath reads the LOW nibble
+         * of the per-touch state byte (t[8] & 0x0f) as the fingerID, then mt_GetProtocolFingerID
+         * returns it. fingerID 0 = "unidentified" -> MultitouchSupport's recognizer classifies
+         * the contact as a non-finger and forms no chord (no cursor/scroll/gestures). A valid
+         * finger needs fingerID in 1..5 (thumb..pinky). Assign distinct ids per contact slot. */
+        int finger_id = (i % 5) + 1;
 
         t[0] = (uint8_t)(X & 0xff);
         t[1] = (uint8_t)(((X >> 8) & 0x1f) | ((V & 0x07) << 5));
@@ -66,7 +72,7 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
         t[5] = (uint8_t)(in->touch_minor & 0xff);
         t[6] = (uint8_t)((in->size & 0x3f) | ((id & 0x03) << 6));
         t[7] = (uint8_t)((orient << 2) | ((id >> 2) & 0x03));
-        t[8] = (uint8_t)(state & 0xf0);
+        t[8] = (uint8_t)((state & 0xf0) | (finger_id & 0x0f));
     }
     return (int)need;
 }

@@ -1,4 +1,5 @@
 spike_bind
+._*
 *.o
 build/
 /docs/superpowers/
