@@ -1,6 +1,6 @@
 #!/bin/sh
 # Activate: fix kext ownership (kextload requires root:wheel), reset the boot
-# sentinel to healthy (a fresh install should attempt full-gesture mode), and
+# sentinel to ok (a fresh install should attempt full-gesture mode), and
 # start the daemon. The launchd wrapper (mt2d-run) loads the kexts from
 # /usr/local, re-enumerates the device if needed, and runs the feeder. No
 # /Library/Extensions, no kextcache: the unsigned kexts only load from a loose path.
@@ -16,7 +16,7 @@ chmod -R 755 "$CLAIM" "$GESTURE"
 chmod +x /usr/local/sbin/mt2d-run
 
 mkdir -p /var/db
-echo healthy > "$STATE"
+echo ok > "$STATE"
 
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST"

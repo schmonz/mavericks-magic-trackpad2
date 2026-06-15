@@ -5,16 +5,11 @@ SRC = src
 VERSION = 1.0.0
 PKG_ID  = com.schmonz.mt2d
 
-.PHONY: all test clean daemon tools kext kext-gesture pkg
+.PHONY: all test clean tools kext kext-gesture pkg
 
-all: daemon tools
+all: tools
 
-daemon: mt2d
 tools: dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed
-
-# Shipping daemon: synthesize cursor/scroll/click from touches (works today).
-mt2d: $(SRC)/mt2d.c $(SRC)/mt2_reader.c $(SRC)/mt2_decode.c $(SRC)/gesture.c $(SRC)/vhid_mouse.c
-	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
 # Research daemon: feed MT1 reports to a fake-MT1 IOHIDUserDevice (gesture-engine
 # path; binds AppleMultitouchHIDEventDriver but no MultitouchDevice yet).
@@ -45,14 +40,14 @@ kext-gesture:
 # Assemble an installer. The unsigned kext goes under /usr/local/lib/mt2d (NOT
 # /Library/Extensions, which enforces signing); the launchd wrapper kextloads it
 # from there. Root-run binaries + wrapper -> /usr/local/sbin, LaunchDaemon -> /Library.
-pkg: mt2d mt2_gesture_feed mt2_reenumerate kext kext-gesture
+pkg: mt2_gesture_feed mt2_reenumerate kext kext-gesture
 	rm -rf build/pkgroot build/scripts
 	mkdir -p build/pkgroot/usr/local/lib/mt2d
 	mkdir -p build/pkgroot/usr/local/sbin
 	mkdir -p build/pkgroot/Library/LaunchDaemons
 	cp -R kext/MT2Claim.kext build/pkgroot/usr/local/lib/mt2d/
 	cp -R kext-gesture/MT2Gesture.kext build/pkgroot/usr/local/lib/mt2d/
-	cp mt2d mt2_gesture_feed mt2_reenumerate dist/mt2d-run build/pkgroot/usr/local/sbin/
+	cp mt2_gesture_feed mt2_reenumerate dist/mt2d-run build/pkgroot/usr/local/sbin/
 	chmod +x build/pkgroot/usr/local/sbin/mt2d-run
 	cp dist/com.schmonz.mt2d.plist build/pkgroot/Library/LaunchDaemons/
 	cp -R dist/scripts build/scripts
@@ -63,7 +58,7 @@ pkg: mt2d mt2_gesture_feed mt2_reenumerate kext kext-gesture
 	@echo "Built build/mt2d-$(VERSION).pkg"
 
 # Unit tests are pure C, no frameworks needed.
-TESTS = test_model test_decode test_encode test_gesture
+TESTS = test_model test_decode test_encode
 test: $(TESTS)
 	@fail=0; for t in $(TESTS); do echo "== $$t =="; ./$$t || fail=1; done; \
 	 echo "== test_mt2d_run.sh =="; sh tests/test_mt2d_run.sh || fail=1; \
@@ -75,10 +70,8 @@ test_decode: tests/test_decode.c $(SRC)/mt2_decode.c
 	$(CC) $(CFLAGS) -o $@ $^
 test_encode: tests/test_encode.c $(SRC)/mt1_encode.c
 	$(CC) $(CFLAGS) -o $@ $^
-test_gesture: tests/test_gesture.c $(SRC)/gesture.c
-	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f mt2d mt2d_mt1 dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed $(TESTS) *.o
+	rm -f mt2d_mt1 dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed test_gesture $(TESTS) *.o
 	rm -rf build
 	$(MAKE) -C kext clean 2>/dev/null || true

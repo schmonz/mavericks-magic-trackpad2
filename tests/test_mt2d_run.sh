@@ -23,15 +23,14 @@ check() {
     fi
 }
 
-check "missing state -> full/attempting"   full     attempting MISSING
-check "healthy     -> full/attempting"     full     attempting healthy
-check "attempting  -> degraded/degraded"   degraded degraded   attempting
-check "degraded    -> degraded/degraded"   degraded degraded   degraded
+check "missing state -> full/trying"  full  trying  MISSING
+check "ok          -> full/trying"    full  trying  ok
+check "trying      -> skip/trying"    skip  trying  trying
 
-# --reset writes healthy regardless of prior state
-sf="$TMP/state"; echo degraded > "$sf"
+# --reset writes ok regardless of prior state
+sf="$TMP/state"; echo trying > "$sf"
 MT2D_STATE_FILE="$sf" "$WRAPPER" --reset >/dev/null 2>&1
-if [ "$(cat "$sf")" = "healthy" ]; then echo "PASS: --reset -> healthy"; else echo "FAIL: --reset (got $(cat "$sf"))"; fail=1; fi
+if [ "$(cat "$sf")" = "ok" ]; then echo "PASS: --reset -> ok"; else echo "FAIL: --reset (got $(cat "$sf"))"; fail=1; fi
 
 if [ $fail -eq 0 ]; then echo "ALL mt2d-run TESTS PASS"; else echo "mt2d-run TESTS FAILED"; exit 1; fi
 exit 0

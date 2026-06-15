@@ -1,20 +1,20 @@
 #!/bin/sh
-# Launchd boot wrapper: self-healing full-gesture MT2 driver with synthesis
-# fallback.
+# Launchd boot wrapper: bring up full-gesture MT2 support, with a minimal
+# anti-brick-loop guard.
 #
 # Both unsigned kexts load from this loose path (kext-dev-mode permits unsigned
 # loads outside /Library/Extensions); they are NEVER placed in /Library/
-# Extensions or the boot caches, so the kernel always boots clean.
+# Extensions or the boot caches, so the kernel always boots clean. MT2Gesture
+# matches IOResources; if loading it ever panics the machine, the guard below
+# stops re-loading it on the next boot so we never get a boot-crash loop.
 #
-# Sentinel /var/db/mt2d-boot.state holds: healthy | attempting | degraded.
-#   healthy / missing -> attempt FULL gesture mode (load MT2Gesture, run feeder)
-#   attempting/degraded -> a prior boot tried full mode and never confirmed
-#                          healthy; stay DEGRADED (mt2d synthesis: basic
-#                          cursor/scroll) until `mt2d-run --reset`.
-# A watchdog flips the sentinel to "healthy" only after the feeder has run for a
-# settling window with the gesture service instantiated. If MT2Gesture panics
-# the machine, the flip never happens, so the next boot degrades and stays there
-# (one bad boot, no oscillation, no operator needed).
+# Sentinel /var/db/mt2d-boot.state:
+#   ok / missing -> load MT2Gesture and run the feeder (full gestures).
+#   trying       -> a prior boot started full mode but never confirmed healthy
+#                   (likely an MT2Gesture load panic); SKIP loading MT2Gesture
+#                   until `mt2d-run --reset`. Use another pointing device meanwhile.
+# The feeder itself self-heals (waits for the device, reconnects on unplug), so
+# no synthesis fallback is needed.
 
 STATE_FILE="${MT2D_STATE_FILE:-/var/db/mt2d-boot.state}"
 KEXT_DIR="${MT2D_KEXT_DIR:-/usr/local/lib/mt2d}"
@@ -23,70 +23,58 @@ HEALTHY_DELAY="${MT2D_HEALTHY_DELAY:-20}"
 
 log() { echo "[mt2d-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-# --reset re-enables full mode after a degrade.
+# --reset re-enables full mode after the guard tripped.
 if [ "${1:-}" = "--reset" ]; then
     mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
-    echo healthy > "$STATE_FILE"
-    log "sentinel reset to healthy; full mode will be attempted on next start"
+    echo ok > "$STATE_FILE"
+    log "sentinel reset to ok; full mode will be attempted on next start"
     exit 0
 fi
 
-STATE="$(cat "$STATE_FILE" 2>/dev/null || echo healthy)"
+STATE="$(cat "$STATE_FILE" 2>/dev/null || echo ok)"
 
-case "$STATE" in
-    attempting|degraded)
-        echo degraded > "$STATE_FILE" 2>/dev/null || true
-        MODE=degraded
-        ;;
-    *)
-        echo attempting > "$STATE_FILE" 2>/dev/null || true
-        MODE=full
-        ;;
-esac
+if [ "$STATE" = "trying" ]; then
+    # Prior boot started full mode but never confirmed healthy -> likely a panic
+    # loading MT2Gesture. Do NOT reload it; avoid a boot-crash loop.
+    log "prior boot did not confirm healthy; NOT loading MT2Gesture (run 'mt2d-run --reset' to retry). Use another pointing device."
+    [ "${MT2D_DRYRUN:-0}" = "1" ] && { echo "MODE=skip"; echo "STATE=$(cat "$STATE_FILE" 2>/dev/null)"; }
+    exit 0
+fi
 
-# Dry-run: decide + record state only, no kextload/exec (used by the unit test).
+echo trying > "$STATE_FILE" 2>/dev/null || true
+
+# Dry-run: decide + record state only, no kextload/feeder (used by the unit test).
 if [ "${MT2D_DRYRUN:-0}" = "1" ]; then
-    echo "MODE=$MODE"
+    echo "MODE=full"
     echo "STATE=$(cat "$STATE_FILE" 2>/dev/null)"
     exit 0
 fi
 
-# Load the input interface-claim kext and re-enumerate if it didn't win the match
-# (e.g. the MT2 enumerated before the kext was loadable at boot).
-claim_and_reenumerate() {
-    kextload "$KEXT_DIR/MT2Claim.kext" 2>/dev/null || true
-    if [ "$(ioclasscount com_schmonz_MT2Claim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
-        "$SBIN/mt2_reenumerate" 2>/dev/null || true
-    fi
-}
-
-if [ "$MODE" = "degraded" ]; then
-    log "prior boot did not confirm healthy (state was '$STATE'); running synthesis fallback (basic cursor/scroll). Run 'mt2d-run --reset' to retry full gestures."
-    claim_and_reenumerate
-    exec "$SBIN/mt2d"
-fi
-
 log "attempting full-gesture mode"
-claim_and_reenumerate
+
+# Load the input interface-claim kext; re-enumerate if it didn't win the match
+# (e.g. the MT2 enumerated before the kext was loadable at boot).
+kextload "$KEXT_DIR/MT2Claim.kext" 2>/dev/null || true
+if [ "$(ioclasscount com_schmonz_MT2Claim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
+    "$SBIN/mt2_reenumerate" 2>/dev/null || true
+fi
+# Load the gesture transport kext (the IOResources-matching one the guard covers).
 kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 
-# Start the feeder as a child so the trackpad is live immediately AND this
-# wrapper stays alive as the launchd job. The feeder is still the first process
-# to open the MT2 after enumeration. (We do NOT exec it: a backgrounded watchdog
-# subshell does not reliably survive an exec in the launchd no-TTY context, which
-# would leave the sentinel stuck at "attempting" and cause a false degrade.)
+# Start the feeder as a child so this wrapper stays alive as the launchd job. It
+# self-heals: waits for the device and reconnects on unplug/replug.
 "$SBIN/mt2_gesture_feed" &
 FEEDER_PID=$!
 trap 'kill "$FEEDER_PID" 2>/dev/null' TERM INT
 
-# Health gate, run INLINE in this process (no background subshell): if we are
-# still alive HEALTHY_DELAY seconds after loading MT2Gesture (the load did not
-# panic the machine) with the feeder alive and the gesture service instantiated,
-# mark the boot healthy.
+# Anti-brick-loop gate, INLINE (no background subshell, which doesn't survive in
+# the launchd no-TTY context): if MT2Gesture is instantiated and we're still
+# alive after the settling window, the load did not panic -> mark ok so the next
+# boot will try full mode again.
 sleep "$HEALTHY_DELAY"
 cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
-if kill -0 "$FEEDER_PID" 2>/dev/null && [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
-    echo healthy > "$STATE_FILE" 2>/dev/null || true
+if [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
+    echo ok > "$STATE_FILE" 2>/dev/null || true
     log "full-gesture mode confirmed healthy"
 fi
 
