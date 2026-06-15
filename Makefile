@@ -5,7 +5,7 @@ SRC = src
 VERSION = 1.0.0
 PKG_ID  = com.schmonz.mt2d
 
-.PHONY: all test clean daemon tools kext pkg
+.PHONY: all test clean daemon tools kext kext-gesture pkg
 
 all: daemon tools
 
@@ -37,6 +37,10 @@ mt2_gesture_feed: tools/mt2_gesture_feed.c $(SRC)/mt2_reader.c $(SRC)/mt2_decode
 # Build the interface-claim kext (delegates to its own makefile).
 kext:
 	$(MAKE) -C kext
+
+# Build the gesture kext (delegates to its own makefile).
+kext-gesture:
+	$(MAKE) -C kext-gesture
 
 # Assemble an installer. The unsigned kext goes under /usr/local/lib/mt2d (NOT
 # /Library/Extensions, which enforces signing); the launchd wrapper kextloads it
