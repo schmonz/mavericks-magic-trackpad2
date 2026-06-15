@@ -27,6 +27,7 @@
 #include <mach/mach_time.h>
 #include <stdio.h>
 #include <signal.h>
+#include <unistd.h>
 
 /* Monotonic milliseconds since the first call - the MT1 frame timestamp the
  * gesture engine needs (must increase frame-to-frame). */
@@ -39,6 +40,7 @@ static uint32_t elapsed_ms(void) {
 }
 
 static io_connect_t g_conn = IO_OBJECT_NULL;
+static volatile int g_quit;
 
 static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
     (void)ctx;
@@ -64,6 +66,7 @@ static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
 
 static void on_sig(int s) {
     (void)s;
+    g_quit = 1;
     mt2_reader_stop();
     if (g_conn) IOServiceClose(g_conn);
     _exit(0);
@@ -73,29 +76,37 @@ int main(void) {
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
 
-    io_service_t svc = IOServiceGetMatchingService(
-        kIOMasterPortDefault, IOServiceMatching("com_schmonz_MT2Gesture"));
-    if (!svc) {
-        fprintf(stderr, "mt2_gesture_feed: MT2Gesture service not found "
-                        "(is /tmp/MT2Gesture.kext loaded?)\n");
-        return 1;
+    /* Open the MT2Gesture user client, retrying briefly: at boot the wrapper has
+     * just kextloaded MT2Gesture and the service may not be published yet. */
+    for (int i = 0; i < 10 && g_conn == IO_OBJECT_NULL && !g_quit; i++) {
+        io_service_t svc = IOServiceGetMatchingService(
+            kIOMasterPortDefault, IOServiceMatching("com_schmonz_MT2Gesture"));
+        if (svc) {
+            kern_return_t kr = IOServiceOpen(svc, mach_task_self(), 0, &g_conn);
+            IOObjectRelease(svc);
+            if (kr != KERN_SUCCESS) g_conn = IO_OBJECT_NULL;
+        }
+        if (g_conn == IO_OBJECT_NULL) sleep(1);
     }
-    kern_return_t kr = IOServiceOpen(svc, mach_task_self(), 0, &g_conn);
-    IOObjectRelease(svc);
-    if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "mt2_gesture_feed: IOServiceOpen failed: 0x%x\n", kr);
-        return 1;
-    }
-
-    if (mt2_reader_start(on_frame, NULL) != 0) {
-        fprintf(stderr, "mt2_gesture_feed: mt2_reader_start failed "
-                        "(root? MT2Claim loaded + device re-enumerated?)\n");
-        IOServiceClose(g_conn);
+    if (g_conn == IO_OBJECT_NULL) {
+        fprintf(stderr, "mt2_gesture_feed: MT2Gesture service unavailable "
+                        "(is MT2Gesture.kext loaded?)\n");
         return 1;
     }
 
-    printf("mt2_gesture_feed: MT2 -> MT1 report -> MT2Gesture user client. Ctrl-C to stop.\n");
-    fflush(stdout);
-    CFRunLoopRun();
+    /* Supervise loop (mirrors mt2d): wait for the trackpad so we survive boot
+     * ordering and the MT2Claim re-enumerate settling, and re-claim it after
+     * unplug/replug. The frame timestamp (elapsed_ms) stays monotonic across
+     * reconnects, which the gesture engine needs. */
+    fprintf(stderr, "mt2_gesture_feed: waiting for Magic Trackpad 2 (MT2Claim kext required)...\n");
+    while (!g_quit) {
+        if (mt2_reader_start(on_frame, NULL) == 0) {
+            fprintf(stderr, "mt2_gesture_feed: trackpad connected; full-gesture feed active.\n");
+            mt2_reader_wait();      /* blocks until the device is lost */
+            mt2_reader_stop();      /* release the interface/device */
+            fprintf(stderr, "mt2_gesture_feed: trackpad disconnected; waiting...\n");
+        }
+        sleep(2);                   /* retry cadence */
+    }
     return 0;
 }
