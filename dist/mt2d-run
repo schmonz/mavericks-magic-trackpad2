@@ -70,16 +70,24 @@ log "attempting full-gesture mode"
 claim_and_reenumerate
 kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 
-# Watchdog: flips the sentinel to healthy only if the feeder is alive and the
-# gesture service is instantiated after the settling window. Backgrounded, so it
-# survives the exec below; if the machine panicked during the load it never runs.
-(
-    sleep "$HEALTHY_DELAY"
-    cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
-    if pgrep -f mt2_gesture_feed >/dev/null 2>&1 && [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
-        echo healthy > "$STATE_FILE" 2>/dev/null || true
-    fi
-) &
+# Start the feeder as a child so the trackpad is live immediately AND this
+# wrapper stays alive as the launchd job. The feeder is still the first process
+# to open the MT2 after enumeration. (We do NOT exec it: a backgrounded watchdog
+# subshell does not reliably survive an exec in the launchd no-TTY context, which
+# would leave the sentinel stuck at "attempting" and cause a false degrade.)
+"$SBIN/mt2_gesture_feed" &
+FEEDER_PID=$!
+trap 'kill "$FEEDER_PID" 2>/dev/null' TERM INT
 
-# The feeder must be the FIRST process to open the MT2 after enumeration.
-exec "$SBIN/mt2_gesture_feed"
+# Health gate, run INLINE in this process (no background subshell): if we are
+# still alive HEALTHY_DELAY seconds after loading MT2Gesture (the load did not
+# panic the machine) with the feeder alive and the gesture service instantiated,
+# mark the boot healthy.
+sleep "$HEALTHY_DELAY"
+cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
+if kill -0 "$FEEDER_PID" 2>/dev/null && [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
+    echo healthy > "$STATE_FILE" 2>/dev/null || true
+    log "full-gesture mode confirmed healthy"
+fi
+
+wait "$FEEDER_PID"
