@@ -1,18 +1,85 @@
 #!/bin/sh
-# Launchd entry point for mt2d.
+# Launchd boot wrapper: self-healing full-gesture MT2 driver with synthesis
+# fallback.
 #
-# The MT2Claim kext is unsigned, so it cannot live in /Library/Extensions
-# (signing-enforced even under kext-dev-mode). Instead we keep it under
-# /usr/local and kextload it from this loose path, where kext-dev-mode permits
-# unsigned loads. If our driver hasn't claimed the multitouch interface yet
-# (e.g. the device enumerated before the kext was in the catalogue at boot),
-# force a re-enumeration so it wins the match. Then run the daemon.
-KEXT=/usr/local/lib/mt2d/MT2Claim.kext
+# Both unsigned kexts load from this loose path (kext-dev-mode permits unsigned
+# loads outside /Library/Extensions); they are NEVER placed in /Library/
+# Extensions or the boot caches, so the kernel always boots clean.
+#
+# Sentinel /var/db/mt2d-boot.state holds: healthy | attempting | degraded.
+#   healthy / missing -> attempt FULL gesture mode (load MT2Gesture, run feeder)
+#   attempting/degraded -> a prior boot tried full mode and never confirmed
+#                          healthy; stay DEGRADED (mt2d synthesis: basic
+#                          cursor/scroll) until `mt2d-run --reset`.
+# A watchdog flips the sentinel to "healthy" only after the feeder has run for a
+# settling window with the gesture service instantiated. If MT2Gesture panics
+# the machine, the flip never happens, so the next boot degrades and stays there
+# (one bad boot, no oscillation, no operator needed).
 
-kextload "$KEXT" 2>/dev/null || true
+STATE_FILE="${MT2D_STATE_FILE:-/var/db/mt2d-boot.state}"
+KEXT_DIR="${MT2D_KEXT_DIR:-/usr/local/lib/mt2d}"
+SBIN="${MT2D_SBIN:-/usr/local/sbin}"
+HEALTHY_DELAY="${MT2D_HEALTHY_DELAY:-20}"
 
-if [ "$(ioclasscount com_schmonz_MT2Claim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
-    /usr/local/sbin/mt2_reenumerate 2>/dev/null || true
+log() { echo "[mt2d-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+# --reset re-enables full mode after a degrade.
+if [ "${1:-}" = "--reset" ]; then
+    mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || true
+    echo healthy > "$STATE_FILE"
+    log "sentinel reset to healthy; full mode will be attempted on next start"
+    exit 0
 fi
 
-exec /usr/local/sbin/mt2d
+STATE="$(cat "$STATE_FILE" 2>/dev/null || echo healthy)"
+
+case "$STATE" in
+    attempting|degraded)
+        echo degraded > "$STATE_FILE" 2>/dev/null || true
+        MODE=degraded
+        ;;
+    *)
+        echo attempting > "$STATE_FILE" 2>/dev/null || true
+        MODE=full
+        ;;
+esac
+
+# Dry-run: decide + record state only, no kextload/exec (used by the unit test).
+if [ "${MT2D_DRYRUN:-0}" = "1" ]; then
+    echo "MODE=$MODE"
+    echo "STATE=$(cat "$STATE_FILE" 2>/dev/null)"
+    exit 0
+fi
+
+# Load the input interface-claim kext and re-enumerate if it didn't win the match
+# (e.g. the MT2 enumerated before the kext was loadable at boot).
+claim_and_reenumerate() {
+    kextload "$KEXT_DIR/MT2Claim.kext" 2>/dev/null || true
+    if [ "$(ioclasscount com_schmonz_MT2Claim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
+        "$SBIN/mt2_reenumerate" 2>/dev/null || true
+    fi
+}
+
+if [ "$MODE" = "degraded" ]; then
+    log "prior boot did not confirm healthy (state was '$STATE'); running synthesis fallback (basic cursor/scroll). Run 'mt2d-run --reset' to retry full gestures."
+    claim_and_reenumerate
+    exec "$SBIN/mt2d"
+fi
+
+log "attempting full-gesture mode"
+claim_and_reenumerate
+kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
+
+# Watchdog: flips the sentinel to healthy only if the feeder is alive and the
+# gesture service is instantiated after the settling window. Backgrounded, so it
+# survives the exec below; if the machine panicked during the load it never runs.
+(
+    sleep "$HEALTHY_DELAY"
+    cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
+    if pgrep -f mt2_gesture_feed >/dev/null 2>&1 && [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
+        echo healthy > "$STATE_FILE" 2>/dev/null || true
+    fi
+) &
+
+# The feeder must be the FIRST process to open the MT2 after enumeration.
+exec "$SBIN/mt2_gesture_feed"
