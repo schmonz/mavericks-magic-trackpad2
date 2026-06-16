@@ -37,7 +37,7 @@ int main(void) {
     g_vhid = vhid_create();
     if (!g_vhid) { fprintf(stderr, "vhid_create failed (run as root)\n"); return 1; }
     if (mt2_usb_read_start(on_frame, NULL) != 0) {
-        fprintf(stderr, "mt2_usb_read_start failed (root; MT2Claim kext loaded?)\n");
+        fprintf(stderr, "mt2_usb_read_start failed (root; MT2USBClaim kext loaded?)\n");
         vhid_destroy(g_vhid); return 1;
     }
     printf("mt2d_mt1 (research): MT2 -> MT1 -> fake-MT1 device. Ctrl-C to stop.\n");

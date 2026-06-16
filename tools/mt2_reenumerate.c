@@ -1,5 +1,5 @@
 /* Force the Magic Trackpad 2 to re-enumerate so IOKit re-runs driver matching
- * (and the MT2Claim kext, once installed, wins the multitouch interface). Used
+ * (and the MT2USBClaim kext, once installed, wins the multitouch interface). Used
  * by the installer so activation doesn't require a reboot. */
 #include <IOKit/IOKitLib.h>
 #include <IOKit/usb/IOUSBLib.h>

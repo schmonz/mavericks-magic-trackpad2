@@ -9,7 +9,7 @@ typedef void (*mt2_frame_cb)(const uint8_t *frame, size_t len, void *ctx);
 /* Claim the MT2 multitouch USB interface (#1), enable multitouch, and spawn a
  * background thread that delivers each raw frame via cb.
  *
- * Requires: running as root, and the MT2Claim kext loaded so IOUSBHIDDriver has
+ * Requires: running as root, and the MT2USBClaim kext loaded so IOUSBHIDDriver has
  * released interface 1. Returns 0 on success, -1 if the device/interface can't
  * be claimed (e.g. kext not loaded -> kIOReturnExclusiveAccess). */
 int mt2_usb_read_start(mt2_frame_cb cb, void *ctx);

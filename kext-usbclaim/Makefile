@@ -1,5 +1,5 @@
-KEXT_NAME  = MT2Claim
-BUNDLE_ID  = com.schmonz.MT2Claim
+KEXT_NAME  = MT2USBClaim
+BUNDLE_ID  = com.schmonz.MT2USBClaim
 
 CXX = clang++
 # On Mavericks, kernel headers live in /System, not in an SDK.

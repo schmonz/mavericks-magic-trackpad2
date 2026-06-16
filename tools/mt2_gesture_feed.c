@@ -1,6 +1,6 @@
 /* mt2_gesture_feed - Milestone 4 userspace feeder.
  *
- * Reads raw MT2 multitouch frames (src/mt2_usb_read: needs the MT2Claim kext loaded
+ * Reads raw MT2 multitouch frames (src/mt2_usb_read: needs the MT2USBClaim kext loaded
  * + the device re-enumerated so interface 1 is free), decodes them to the neutral
  * touch model, re-encodes each as a Magic Trackpad 1 (0x28) input report, and
  * pushes the report into the MT2Gesture kext's user client via selector 0
@@ -9,8 +9,8 @@
  * which drives Apple's gesture engine.
  *
  * Run as root, with both kexts loaded:
- *   sudo kextload /usr/local/lib/mt2d/MT2Claim.kext   (frees interface 1)
- *   sudo /usr/local/sbin/mt2_reenumerate              (so MT2Claim attaches)
+ *   sudo kextload /usr/local/lib/mt2d/MT2USBClaim.kext   (frees interface 1)
+ *   sudo /usr/local/sbin/mt2_reenumerate              (so MT2USBClaim attaches)
  *   sudo kextload /tmp/MT2Gesture.kext                (the gesture transport)
  *   sudo ./mt2_gesture_feed
  *
@@ -42,7 +42,7 @@ static uint32_t elapsed_ms(void) {
 static io_connect_t g_conn = IO_OBJECT_NULL;
 static volatile int g_quit;
 
-/* Cold-boot defect: MT2Claim's re-enumerate makes the USB link flap (connect/
+/* Cold-boot defect: MT2USBClaim's re-enumerate makes the USB link flap (connect/
  * disconnect repeatedly) for ~20s while it settles. Each freshly (re)connected
  * connection delivers transitional frames whose contact positions are discontinuous
  * with the gesture engine's retained state, which the engine integrates into a burst
@@ -112,10 +112,10 @@ int main(void) {
     }
 
     /* Supervise loop (mirrors mt2d): wait for the trackpad so we survive boot
-     * ordering and the MT2Claim re-enumerate settling, and re-claim it after
+     * ordering and the MT2USBClaim re-enumerate settling, and re-claim it after
      * unplug/replug. The frame timestamp (elapsed_ms) stays monotonic across
      * reconnects, which the gesture engine needs. */
-    fprintf(stderr, "mt2_gesture_feed: waiting for Magic Trackpad 2 (MT2Claim kext required)...\n");
+    fprintf(stderr, "mt2_gesture_feed: waiting for Magic Trackpad 2 (MT2USBClaim kext required)...\n");
     while (!g_quit) {
         g_connect_ms = elapsed_ms();   /* restart the per-connection settle window */
         if (mt2_usb_read_start(on_frame, NULL) == 0) {

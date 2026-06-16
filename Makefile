@@ -31,7 +31,7 @@ mt2_gesture_feed: tools/mt2_gesture_feed.c $(SRC)/mt2_usb_read.c $(SRC)/mt2_usb_
 
 # Build the interface-claim kext (delegates to its own makefile).
 kext:
-	$(MAKE) -C kext
+	$(MAKE) -C kext-usbclaim
 
 # Build the gesture kext (delegates to its own makefile).
 kext-gesture:
@@ -45,7 +45,7 @@ pkg: mt2_gesture_feed mt2_reenumerate kext kext-gesture
 	mkdir -p build/pkgroot/usr/local/lib/mt2d
 	mkdir -p build/pkgroot/usr/local/sbin
 	mkdir -p build/pkgroot/Library/LaunchDaemons
-	cp -R kext/MT2Claim.kext build/pkgroot/usr/local/lib/mt2d/
+	cp -R kext-usbclaim/MT2USBClaim.kext build/pkgroot/usr/local/lib/mt2d/
 	cp -R kext-gesture/MT2Gesture.kext build/pkgroot/usr/local/lib/mt2d/
 	cp mt2_gesture_feed mt2_reenumerate dist/mt2d-run build/pkgroot/usr/local/sbin/
 	chmod +x build/pkgroot/usr/local/sbin/mt2d-run
@@ -74,4 +74,4 @@ test_encode: tests/test_encode.c $(SRC)/mt1_encode.c
 clean:
 	rm -f mt2d_mt1 dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed test_gesture $(TESTS) *.o
 	rm -rf build
-	$(MAKE) -C kext clean 2>/dev/null || true
+	$(MAKE) -C kext-usbclaim clean 2>/dev/null || true
