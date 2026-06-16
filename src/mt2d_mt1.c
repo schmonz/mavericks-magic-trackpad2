@@ -1,7 +1,7 @@
 /* Research daemon: MT2 -> decode -> MT1 report -> fake-MT1 IOHIDUserDevice.
  * Binds AppleMultitouchHIDEventDriver but does not yet yield a MultitouchDevice
  * (gesture engine). Kept for continued research into the full-gesture path. */
-#include "mt2_reader.h"
+#include "mt2_usb_read.h"
 #include "mt2_usb_decode.h"
 #include "mt1_encode.h"
 #include "vhid_mt1.h"
@@ -29,15 +29,15 @@ static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
     if (n > 0) vhid_send(g_vhid, out, (size_t)n);
 }
 
-static void on_sig(int s) { (void)s; mt2_reader_stop(); if (g_vhid) vhid_destroy(g_vhid); _exit(0); }
+static void on_sig(int s) { (void)s; mt2_usb_read_stop(); if (g_vhid) vhid_destroy(g_vhid); _exit(0); }
 
 int main(void) {
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
     g_vhid = vhid_create();
     if (!g_vhid) { fprintf(stderr, "vhid_create failed (run as root)\n"); return 1; }
-    if (mt2_reader_start(on_frame, NULL) != 0) {
-        fprintf(stderr, "mt2_reader_start failed (root; MT2Claim kext loaded?)\n");
+    if (mt2_usb_read_start(on_frame, NULL) != 0) {
+        fprintf(stderr, "mt2_usb_read_start failed (root; MT2Claim kext loaded?)\n");
         vhid_destroy(g_vhid); return 1;
     }
     printf("mt2d_mt1 (research): MT2 -> MT1 -> fake-MT1 device. Ctrl-C to stop.\n");

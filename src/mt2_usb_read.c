@@ -1,4 +1,4 @@
-#include "mt2_reader.h"
+#include "mt2_usb_read.h"
 #include <IOKit/IOKitLib.h>
 #include <IOKit/usb/IOUSBLib.h>
 #include <IOKit/IOCFPlugIn.h>
@@ -104,7 +104,7 @@ static void *read_loop(void *arg) {
     return NULL;
 }
 
-int mt2_reader_start(mt2_frame_cb cb, void *ctx) {
+int mt2_usb_read_start(mt2_frame_cb cb, void *ctx) {
     g_cb = cb; g_ctx = ctx;
     g_dev = open_device();
     if (!g_dev) return -1;
@@ -133,13 +133,13 @@ int mt2_reader_start(mt2_frame_cb cb, void *ctx) {
     return 0;
 }
 
-void mt2_reader_wait(void) {
+void mt2_usb_read_wait(void) {
     if (g_thread_valid) { pthread_join(g_thread, NULL); g_thread_valid = 0; }
 }
 
-void mt2_reader_stop(void) {
+void mt2_usb_read_stop(void) {
     g_run = 0;
     if (g_thread_valid && g_intf) (*g_intf)->AbortPipe(g_intf, g_pipe);  /* unblock ReadPipe */
-    mt2_reader_wait();
+    mt2_usb_read_wait();
     release_usb();
 }

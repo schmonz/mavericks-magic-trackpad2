@@ -1,6 +1,6 @@
 /* throwaway: verbose end-to-end pipeline. Confirms frames arrive, decode
  * succeeds, and IOHIDUserDeviceHandleReport accepts the MT1 reports. */
-#include "../src/mt2_reader.h"
+#include "../src/mt2_usb_read.h"
 #include "../src/mt2_usb_decode.h"
 #include "../src/mt1_encode.h"
 #include "../src/vhid_mt1.h"
@@ -32,11 +32,11 @@ static void on_frame(const uint8_t *f, size_t len, void *ctx){
         fprintf(stderr,"\n");
     }
 }
-static void sig(int s){(void)s; mt2_reader_stop(); _exit(0);}
+static void sig(int s){(void)s; mt2_usb_read_stop(); _exit(0);}
 int main(void){
     signal(SIGINT,sig); signal(SIGTERM,sig);
     v=vhid_create(); if(!v){fprintf(stderr,"vhid_create failed\n");return 1;}
-    if(mt2_reader_start(on_frame,NULL)!=0){fprintf(stderr,"reader start failed\n");return 1;}
+    if(mt2_usb_read_start(on_frame,NULL)!=0){fprintf(stderr,"reader start failed\n");return 1;}
     fprintf(stderr,"pipe_debug running; touch the pad\n");
     CFRunLoopRun(); return 0;
 }

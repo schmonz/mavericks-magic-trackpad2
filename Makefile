@@ -13,10 +13,10 @@ tools: dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed
 
 # Research daemon: feed MT1 reports to a fake-MT1 IOHIDUserDevice (gesture-engine
 # path; binds AppleMultitouchHIDEventDriver but no MultitouchDevice yet).
-mt2d_mt1: $(SRC)/mt2d_mt1.c $(SRC)/mt2_reader.c $(SRC)/mt2_usb_decode.c $(SRC)/mt1_encode.c $(SRC)/vhid_mt1.c
+mt2d_mt1: $(SRC)/mt2d_mt1.c $(SRC)/mt2_usb_read.c $(SRC)/mt2_usb_decode.c $(SRC)/mt1_encode.c $(SRC)/vhid_mt1.c
 	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
-dump_frames: tools/dump_frames.c $(SRC)/mt2_reader.c
+dump_frames: tools/dump_frames.c $(SRC)/mt2_usb_read.c
 	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
 vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c
@@ -26,7 +26,7 @@ mt2_reenumerate: tools/mt2_reenumerate.c
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
 
 # Milestone 4 feeder: MT2 frames -> MT1 reports -> MT2Gesture kext user client.
-mt2_gesture_feed: tools/mt2_gesture_feed.c $(SRC)/mt2_reader.c $(SRC)/mt2_usb_decode.c $(SRC)/mt1_encode.c
+mt2_gesture_feed: tools/mt2_gesture_feed.c $(SRC)/mt2_usb_read.c $(SRC)/mt2_usb_decode.c $(SRC)/mt1_encode.c
 	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
 # Build the interface-claim kext (delegates to its own makefile).

@@ -1,6 +1,6 @@
 /* mt2_gesture_feed - Milestone 4 userspace feeder.
  *
- * Reads raw MT2 multitouch frames (src/mt2_reader: needs the MT2Claim kext loaded
+ * Reads raw MT2 multitouch frames (src/mt2_usb_read: needs the MT2Claim kext loaded
  * + the device re-enumerated so interface 1 is free), decodes them to the neutral
  * touch model, re-encodes each as a Magic Trackpad 1 (0x28) input report, and
  * pushes the report into the MT2Gesture kext's user client via selector 0
@@ -18,7 +18,7 @@
  * enqueued to a connected MultitouchSupport client; kr=0xe00002bc means the device
  * has no client yet / is not ready (benign - just means nothing is listening).
  */
-#include "../src/mt2_reader.h"
+#include "../src/mt2_usb_read.h"
 #include "../src/mt2_usb_decode.h"
 #include "../src/mt1_encode.h"
 #include <IOKit/IOKitLib.h>
@@ -84,7 +84,7 @@ static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
 static void on_sig(int s) {
     (void)s;
     g_quit = 1;
-    mt2_reader_stop();
+    mt2_usb_read_stop();
     if (g_conn) IOServiceClose(g_conn);
     _exit(0);
 }
@@ -118,10 +118,10 @@ int main(void) {
     fprintf(stderr, "mt2_gesture_feed: waiting for Magic Trackpad 2 (MT2Claim kext required)...\n");
     while (!g_quit) {
         g_connect_ms = elapsed_ms();   /* restart the per-connection settle window */
-        if (mt2_reader_start(on_frame, NULL) == 0) {
+        if (mt2_usb_read_start(on_frame, NULL) == 0) {
             fprintf(stderr, "mt2_gesture_feed: trackpad connected; full-gesture feed active.\n");
-            mt2_reader_wait();      /* blocks until the device is lost */
-            mt2_reader_stop();      /* release the interface/device */
+            mt2_usb_read_wait();      /* blocks until the device is lost */
+            mt2_usb_read_stop();      /* release the interface/device */
             fprintf(stderr, "mt2_gesture_feed: trackpad disconnected; waiting...\n");
         }
         sleep(2);                   /* retry cadence */
