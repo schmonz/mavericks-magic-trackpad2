@@ -3,8 +3,9 @@
 # /Library/Extensions (older layout; it can't load there anyway due to signing).
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
 kextunload -b com.schmonz.MT2Gesture 2>/dev/null || true
-kextunload -b com.schmonz.MT2Claim 2>/dev/null || true
-rm -rf /Library/Extensions/MT2Claim.kext 2>/dev/null || true
+kextunload -b com.schmonz.MT2USBClaim 2>/dev/null || true
+kextunload -b com.schmonz.MT2Claim 2>/dev/null || true   # legacy id from pre-rename installs
+rm -rf /Library/Extensions/MT2USBClaim.kext /Library/Extensions/MT2Claim.kext 2>/dev/null || true
 # Remove binaries from an older /usr/local/bin layout.
 rm -f /usr/local/bin/mt2d /usr/local/bin/mt2_reenumerate /usr/local/bin/mt2d-run 2>/dev/null || true
 # Remove the retired synthesis daemon (no longer shipped).

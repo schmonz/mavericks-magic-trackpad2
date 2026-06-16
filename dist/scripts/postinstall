@@ -6,7 +6,7 @@
 # /Library/Extensions, no kextcache: the unsigned kexts only load from a loose path.
 set -e
 
-CLAIM=/usr/local/lib/mt2d/MT2Claim.kext
+CLAIM=/usr/local/lib/mt2d/MT2USBClaim.kext
 GESTURE=/usr/local/lib/mt2d/MT2Gesture.kext
 PLIST=/Library/LaunchDaemons/com.schmonz.mt2d.plist
 STATE=/var/db/mt2d-boot.state

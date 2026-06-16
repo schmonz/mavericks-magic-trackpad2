@@ -54,8 +54,8 @@ log "attempting full-gesture mode"
 
 # Load the input interface-claim kext; re-enumerate if it didn't win the match
 # (e.g. the MT2 enumerated before the kext was loadable at boot).
-kextload "$KEXT_DIR/MT2Claim.kext" 2>/dev/null || true
-if [ "$(ioclasscount com_schmonz_MT2Claim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
+kextload "$KEXT_DIR/MT2USBClaim.kext" 2>/dev/null || true
+if [ "$(ioclasscount com_schmonz_MT2USBClaim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
     "$SBIN/mt2_reenumerate" 2>/dev/null || true
 fi
 # Load the gesture transport kext (the IOResources-matching one the guard covers).

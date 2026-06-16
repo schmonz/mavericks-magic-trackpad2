@@ -10,7 +10,7 @@ build/
 /test_model
 /test_decode
 /test_encode
-kext/MT2Claim.kext/
+kext-usbclaim/MT2USBClaim.kext/
 /mt2d_mt1
 /test_gesture
 captures/raw_session.txt
