@@ -64,6 +64,30 @@
             <key>IOProbeScore</key>
             <integer>100000</integer>
         </dict>
+        <key>MT2BTReader</key>
+        <dict>
+            <!-- Bind the Magic Trackpad 2's Bluetooth L2CAP channel by its BT-SIG
+                 identity (VendorID 76 / ProductID 613 / VendorIDSource 1), the way
+                 bnbinject made Apple's BNBTrackpadDevice bind it. High IOProbeScore
+                 beats the generic IOBluetoothHIDDriver. On match, com_schmonz_MT2BTReader
+                 enables multitouch (0xF1) and feeds frames to the MT2Gesture nub. -->
+            <key>CFBundleIdentifier</key>
+            <string>com.schmonz.MT2Gesture</string>
+            <key>IOClass</key>
+            <string>com_schmonz_MT2BTReader</string>
+            <key>IOProviderClass</key>
+            <string>IOBluetoothL2CAPChannel</string>
+            <key>IOMatchCategory</key>
+            <string>com_schmonz_MT2BTReader</string>
+            <key>VendorID</key>
+            <integer>76</integer>
+            <key>ProductID</key>
+            <integer>613</integer>
+            <key>VendorIDSource</key>
+            <integer>1</integer>
+            <key>IOProbeScore</key>
+            <integer>100000</integer>
+        </dict>
     </dict>
     <key>OSBundleLibraries</key>
     <dict>
@@ -71,10 +95,14 @@
         <string>13.4</string>
         <key>com.apple.kpi.libkern</key>
         <string>13.4</string>
+        <key>com.apple.kpi.mach</key>
+        <string>13.4</string>
         <key>com.apple.driver.AppleMultitouchDriver</key>
         <string>193.8</string>
         <key>com.apple.iokit.IOHIDFamily</key>
         <string>1.5</string>
+        <key>com.apple.iokit.IOBluetoothFamily</key>
+        <string>2.0.0</string>
     </dict>
 </dict>
 </plist>

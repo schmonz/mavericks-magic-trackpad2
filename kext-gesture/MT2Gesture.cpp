@@ -39,6 +39,10 @@
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
 
+/* The active gesture nub, published for the in-kernel BT reader (MT2BTReader) to feed
+ * directly via feedFrame() — same kext, so no user client / IPC. Single instance. */
+com_schmonz_MT2Gesture *gActiveMT2Gesture = 0;
+
 /* Build the property table an IOHIDDevice needs to look like the BT Magic Trackpad
  * (matches BNBTrackpadEventDriver: VendorID 1452, VendorIDSource 2, usage 1/2,
  * Transport Bluetooth). Mirrors src/vhid_mt1.c's creation dict. */
@@ -136,6 +140,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fDevice = 0;
     fHidShell = 0;
     fLastButton = 0;
+    gActiveMT2Gesture = this;   /* let the BT reader feed us */
 
     /* Make IOServiceOpen on us instantiate our feeder user client. Also declared
      * in Info.plist; set here too so it is present regardless of match path. */
@@ -340,6 +345,7 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
         fDevice = 0;
         IOLog("MT2Gesture: device stopped + released\n");
     }
+    if (gActiveMT2Gesture == this) gActiveMT2Gesture = 0;
     IOService::stop(provider);
 }
 
