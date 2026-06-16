@@ -22,6 +22,11 @@ public:
      * REQUIREs these calls happen in-gate. arg0 = the com_schmonz_MT2BTReader. */
     static IOReturn setupInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
 
+    /* In-gate teardown: clears our listenAt callback so the channel's newDataIn stops
+     * dereferencing this (soon-to-be-freed) object — without it, unloading while
+     * connected leaves a dangling listener and panics IOBluetoothFamily. arg0 = reader. */
+    static IOReturn teardownInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
+
     /* IOBluetoothL2CAPChannel::listenAt callback: (target, channel, length, data). */
     static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
                              unsigned short length, void *data);

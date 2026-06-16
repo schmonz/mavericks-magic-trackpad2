@@ -114,7 +114,24 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
     return true;
 }
 
+/* In-gate: null our listenAt callback. newDataIn bails when the callback (channel+0x110)
+ * is NULL before it derefs the target (channel+0x118), so this makes it safe for the
+ * channel to outlive us. Same-target listenAt(self, NULL) is accepted by the family. */
+IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg0,
+                                                 void * /*a1*/, void * /*a2*/, void * /*a3*/) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    if (self && self->fChannel) self->fChannel->listenAt(self, 0);
+    return kIOReturnSuccess;
+}
+
 void com_schmonz_MT2BTReader::stop(IOService *provider) {
+    /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
+     * channel's newDataIn will dereference a dangling pointer (use-after-free panic
+     * seen when the installer unloaded the live kext while the trackpad streamed). */
+    if (fChannel) {
+        IOCommandGate *gate = fChannel->getCommandGate();
+        if (gate) gate->runAction(&com_schmonz_MT2BTReader::teardownInGate, this);
+    }
     fChannel = 0;
     IOService::stop(provider);
 }
