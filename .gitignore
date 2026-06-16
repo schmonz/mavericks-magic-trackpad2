@@ -9,6 +9,7 @@ build/
 /vhid_probe
 /test_model
 /test_decode
+/test_bt_decode
 /test_encode
 kext-usbclaim/MT2USBClaim.kext/
 /mt2d_mt1
