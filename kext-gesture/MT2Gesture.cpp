@@ -358,7 +358,20 @@ IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *buf, unsigned in
     if (len >= 2 && buf[0] == 0x28) {
         unsigned int btn = buf[1] & 0x01u;
         if (btn != fLastButton) {
-            fDevice->handlePointerEventFromDevice(0, 0, btn, 0);
+            unsigned int mask = 0;
+            if (btn) {
+                /* Primary (0x1) vs secondary/right (0x2). Apple's two-finger ->
+                 * secondary remap lives in the gesture path that our direct
+                 * device-button post bypasses (measured: output stayed 0x1 on a
+                 * two-finger click), so we make the same decision here from the
+                 * contact count in the MT1 frame (9 bytes per record after the
+                 * 4-byte header). Two fingers down at the press edge -> secondary,
+                 * matching the default "Secondary click: click with two fingers"
+                 * setting (TrackpadRightClick=1, corner-click off). */
+                unsigned int nfingers = (len > 4) ? (len - 4) / 9 : 0;
+                mask = (nfingers == 2) ? 0x2u : 0x1u;
+            }
+            fDevice->handlePointerEventFromDevice(0, 0, mask, 0);
             fLastButton = btn;
         }
     }
