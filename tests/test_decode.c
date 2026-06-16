@@ -1,4 +1,4 @@
-#include "../src/mt2_decode.h"
+#include "../src/mt2_usb_decode.h"
 #include "test.h"
 
 /* Real captured frames (captures/raw_{1,2}finger.txt). */
@@ -14,7 +14,7 @@ static const uint8_t FRAME_2F[] = {
 
 static void run_tests(void) {
     touch_frame_t f = {0};
-    int rc = mt2_decode(FRAME_1F, sizeof(FRAME_1F), &f);
+    int rc = mt2_usb_decode(FRAME_1F, sizeof(FRAME_1F), &f);
     CHECK_EQ(rc, 0);
     CHECK_EQ(f.ntouches, 1);
     /* Golden values hand-derived from the trackpad2-USB bit packing. */
@@ -29,12 +29,12 @@ static void run_tests(void) {
 
     /* Two-finger frame: two distinct contacts. */
     touch_frame_t f2 = {0};
-    CHECK_EQ(mt2_decode(FRAME_2F, sizeof(FRAME_2F), &f2), 0);
+    CHECK_EQ(mt2_usb_decode(FRAME_2F, sizeof(FRAME_2F), &f2), 0);
     CHECK_EQ(f2.ntouches, 2);
     CHECK(f2.touches[0].id != f2.touches[1].id);
 
     /* Malformed input is rejected. */
     uint8_t bad[] = {0x02,0x00,0x00};
-    CHECK_EQ(mt2_decode(bad, sizeof(bad), &f), -1);
+    CHECK_EQ(mt2_usb_decode(bad, sizeof(bad), &f), -1);
 }
 TEST_MAIN()

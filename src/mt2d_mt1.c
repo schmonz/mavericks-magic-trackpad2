@@ -2,7 +2,7 @@
  * Binds AppleMultitouchHIDEventDriver but does not yet yield a MultitouchDevice
  * (gesture engine). Kept for continued research into the full-gesture path. */
 #include "mt2_reader.h"
-#include "mt2_decode.h"
+#include "mt2_usb_decode.h"
 #include "mt1_encode.h"
 #include "vhid_mt1.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -23,7 +23,7 @@ static vhid_t *g_vhid;
 static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
     (void)ctx;
     touch_frame_t tf = {0};
-    if (mt2_decode(frame, len, &tf) != 0) return;
+    if (mt2_usb_decode(frame, len, &tf) != 0) return;
     uint8_t out[256];
     int n = mt1_encode(&tf, out, sizeof(out), elapsed_ms());
     if (n > 0) vhid_send(g_vhid, out, (size_t)n);

@@ -19,7 +19,7 @@
  * has no client yet / is not ready (benign - just means nothing is listening).
  */
 #include "../src/mt2_reader.h"
-#include "../src/mt2_decode.h"
+#include "../src/mt2_usb_decode.h"
 #include "../src/mt1_encode.h"
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -62,7 +62,7 @@ static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
     if (elapsed_ms() - g_connect_ms < MT2_SETTLE_MS) return;  /* link not yet stable */
 
     touch_frame_t tf = {0};
-    if (mt2_decode(frame, len, &tf) != 0) return;
+    if (mt2_usb_decode(frame, len, &tf) != 0) return;
 
     uint8_t out[256];
     int n = mt1_encode(&tf, out, sizeof(out), elapsed_ms());

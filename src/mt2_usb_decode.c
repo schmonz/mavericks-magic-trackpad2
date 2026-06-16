@@ -1,4 +1,4 @@
-#include "mt2_decode.h"
+#include "mt2_usb_decode.h"
 
 /* Frame layout (matches Linux hid-magicmouse.c TRACKPAD2_USB_REPORT_ID):
  * report id 0x02, 12-byte header, then N * 9-byte finger records. */
@@ -6,7 +6,7 @@
 #define MT2_HEADER    12
 #define MT2_RECSZ     9
 
-int mt2_decode(const uint8_t *report, size_t len, touch_frame_t *frame) {
+int mt2_usb_decode(const uint8_t *report, size_t len, touch_frame_t *frame) {
     if (!report || !frame) return -1;
     if (len < MT2_HEADER || report[0] != MT2_REPORT_ID) return -1;
     if ((len - MT2_HEADER) % MT2_RECSZ != 0) return -1;

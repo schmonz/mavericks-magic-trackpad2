@@ -1,7 +1,7 @@
 /* throwaway: verbose end-to-end pipeline. Confirms frames arrive, decode
  * succeeds, and IOHIDUserDeviceHandleReport accepts the MT1 reports. */
 #include "../src/mt2_reader.h"
-#include "../src/mt2_decode.h"
+#include "../src/mt2_usb_decode.h"
 #include "../src/mt1_encode.h"
 #include "../src/vhid_mt1.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -14,7 +14,7 @@ static long frames=0, decoded=0, sent_ok=0, sent_fail=0;
 static void on_frame(const uint8_t *f, size_t len, void *ctx){
     (void)ctx; frames++;
     touch_frame_t tf={0};
-    if (mt2_decode(f,len,&tf)!=0) return;
+    if (mt2_usb_decode(f,len,&tf)!=0) return;
     decoded++;
     uint8_t out[256];
     int n=mt1_encode(&tf,out,sizeof(out));

@@ -1,5 +1,5 @@
 /* replay_capture - replay recorded REAL MT2 frames through the full translation chain
- * (mt2_decode -> mt1_encode -> MT2Gesture kext), to verify the pipeline end-to-end on
+ * (mt2_usb_decode -> mt1_encode -> MT2Gesture kext), to verify the pipeline end-to-end on
  * genuine hardware frames without needing the live trackpad.
  *
  *   replay_capture <capture.txt>            # decode + PRINT each frame (no kext, non-disruptive)
@@ -7,7 +7,7 @@
  *
  * Capture lines look like: "len=21: 02 00 00 ... 09"  (hex bytes after the colon).
  */
-#include "../src/mt2_decode.h"
+#include "../src/mt2_usb_decode.h"
 #include "../src/mt1_encode.h"
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
         if (len < 1) continue;
         frames++;
         touch_frame_t tf;
-        if (mt2_decode(raw, (size_t)len, &tf) != 0) continue;
+        if (mt2_usb_decode(raw, (size_t)len, &tf) != 0) continue;
         decoded++;
         if (!feed) {
             printf("frame %lu: ntouches=%d", frames, tf.ntouches);
