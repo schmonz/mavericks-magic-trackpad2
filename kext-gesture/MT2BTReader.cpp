@@ -12,6 +12,8 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOCommandGate.h>
+#include <IOKit/IOTimerEventSource.h>
+#include <IOKit/IOWorkLoop.h>
 #include <kern/clock.h>
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
@@ -42,7 +44,19 @@ static uint32_t uptime_ms(void) {
 #define MT2_BT_SETTLE_MS 2000u
 static uint32_t gFeedSettleUntilMs = 0;
 
-void com_schmonz_MT2BTReader::incomingData(IOService * /*target*/,
+/* Deceleration mimic. After this much silence following a contact, the device is done;
+ * we then replay the held position twice (zero velocity) and lift, so the engine sees a
+ * STOP+lift rather than a flick. IDLE = silence detect; DECEL = spacing between replays. */
+#define MT2_BT_IDLE_MS  35
+#define MT2_BT_DECEL_MS 20
+
+static void feed_frame(const touch_frame_t *tf) {
+    uint8_t mt1[256];
+    int n = mt1_encode(tf, mt1, sizeof(mt1), uptime_ms());
+    if (n > 0 && gActiveMT2Gesture) gActiveMT2Gesture->feedFrame(mt1, (unsigned int)n);
+}
+
+void com_schmonz_MT2BTReader::incomingData(IOService *target,
                                            IOBluetoothL2CAPChannel *channel,
                                            unsigned short length, void *data) {
     const uint8_t *b = (const uint8_t *)data;
@@ -62,12 +76,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService * /*target*/,
      * device's connect-transition contact burst can't fling the cursor. */
     if (uptime_ms() < gFeedSettleUntilMs) return;
 
-    /* Drop lifted contacts (size 0). The BT trackpad reports a contact with size 0 on
-     * liftoff and then goes SILENT (it is event-driven, unlike USB which keeps streaming
-     * zero-contact frames). If we fed that size-0 contact as present, the gesture engine
-     * would keep a phantom finger down and capture the pointer — which made the user's
-     * mouse janky. Compacting size-0 contacts turns a liftoff into a true zero-contact
-     * frame, so the engine releases cleanly. */
+    /* Drop lifted contacts (size 0). */
     int kept = 0;
     for (int i = 0; i < tf.ntouches; i++) {
         if (tf.touches[i].size > 0) {
@@ -77,10 +86,45 @@ void com_schmonz_MT2BTReader::incomingData(IOService * /*target*/,
     }
     tf.ntouches = kept;
 
-    uint8_t mt1[256];
-    int n = mt1_encode(&tf, mt1, sizeof(mt1), uptime_ms());
-    if (n > 0 && gActiveMT2Gesture) {
-        gActiveMT2Gesture->feedFrame(mt1, (unsigned int)n);
+    com_schmonz_MT2BTReader *self = OSDynamicCast(com_schmonz_MT2BTReader, target);
+
+    if (kept > 0) {
+        /* Real contact: feed it, remember it for the held replay, and (re)arm the idle
+         * timer. While the gesture continues, each frame pushes the timer out. */
+        feed_frame(&tf);
+        if (self) {
+            self->fHeldFrame = tf;
+            self->fDecelStep = 0;
+            if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(MT2_BT_IDLE_MS);
+        }
+    } else {
+        /* The device's liftoff frame. Do NOT feed an abrupt zero-contact frame here
+         * (that reads as a flick → momentum). Let the idle timer run the deceleration:
+         * replay the held position at zero velocity, then a clean lift. */
+        if (self) {
+            self->fDecelStep = 0;
+            if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(MT2_BT_IDLE_MS);
+        }
+    }
+}
+
+/* On silence after a contact: replay the held position (zero velocity) so the engine
+ * registers the finger as STOPPED, then feed a clean lift. No momentum, no phantom. */
+void com_schmonz_MT2BTReader::idleTimeout(OSObject *owner, IOTimerEventSource * /*sender*/) {
+    com_schmonz_MT2BTReader *self = OSDynamicCast(com_schmonz_MT2BTReader, owner);
+    if (!self) return;
+
+    if (self->fDecelStep < 2) {
+        feed_frame(&self->fHeldFrame);          /* held: same position -> zero velocity */
+        self->fDecelStep++;
+        if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(MT2_BT_DECEL_MS);
+    } else if (self->fDecelStep == 2) {
+        touch_frame_t lift;
+        lift.ntouches = 0;
+        lift.button = 0;
+        lift.timestamp = 0;
+        feed_frame(&lift);                       /* clean lift -> engine releases */
+        self->fDecelStep = 3;                    /* done; do not rearm */
     }
 }
 
@@ -118,6 +162,18 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
 
     /* Our provider is the matched IOBluetoothL2CAPChannel. */
     fChannel = (IOBluetoothL2CAPChannel *)provider;
+    fIdleTimer = 0;
+    fDecelStep = 0;
+
+    /* Deceleration timer on the channel's workloop (serializes with incomingData/feed). */
+    IOWorkLoop *wl = fChannel->getWorkLoop();
+    if (wl) {
+        fIdleTimer = IOTimerEventSource::timerEventSource(this, &com_schmonz_MT2BTReader::idleTimeout);
+        if (fIdleTimer && wl->addEventSource(fIdleTimer) != kIOReturnSuccess) {
+            fIdleTimer->release();
+            fIdleTimer = 0;
+        }
+    }
 
     /* IOBluetoothFamily REQUIREs every IOBluetoothObject call to run inside its
      * workloop gate (mWorkLoop->inGate()) — calling sendTo/listenAt directly from this
@@ -146,6 +202,16 @@ IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg
 }
 
 void com_schmonz_MT2BTReader::stop(IOService *provider) {
+    /* Tear down the idle timer first: cancel any pending fire and remove it from the
+     * workloop before we can be freed, or it could fire on a freed object. */
+    if (fIdleTimer) {
+        fIdleTimer->cancelTimeout();
+        IOWorkLoop *wl = fChannel ? fChannel->getWorkLoop() : 0;
+        if (wl) wl->removeEventSource(fIdleTimer);
+        fIdleTimer->release();
+        fIdleTimer = 0;
+    }
+
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */
