@@ -42,8 +42,25 @@ static uint32_t elapsed_ms(void) {
 static io_connect_t g_conn = IO_OBJECT_NULL;
 static volatile int g_quit;
 
+/* Cold-boot defect: MT2Claim's re-enumerate makes the USB link flap (connect/
+ * disconnect repeatedly) for ~20s while it settles. Each freshly (re)connected
+ * connection delivers transitional frames whose contact positions are discontinuous
+ * with the gesture engine's retained state, which the engine integrates into a burst
+ * of relative cursor motion -- walking the cursor across the screen at boot with no
+ * one touching the pad. The flap is inherent to the re-enumerate (load-bearing for
+ * boot survival) and the device emits no idle/fingers-up frame we could key on (a
+ * lift is still a contact record, so ntouches never reaches 0), so the only honest
+ * signal that the storm has settled is temporal: forward a connection's frames only
+ * once it has stayed up MT2_SETTLE_MS without dropping. g_connect_ms resets on every
+ * reconnect, so each sub-settle flap is fully dropped and frames flow only from the
+ * connection that proves stable. Steady-state use is unaffected (reconnects rare). */
+#define MT2_SETTLE_MS 2500u
+static volatile uint32_t g_connect_ms;
+
 static void on_frame(const uint8_t *frame, size_t len, void *ctx) {
     (void)ctx;
+    if (elapsed_ms() - g_connect_ms < MT2_SETTLE_MS) return;  /* link not yet stable */
+
     touch_frame_t tf = {0};
     if (mt2_decode(frame, len, &tf) != 0) return;
 
@@ -100,6 +117,7 @@ int main(void) {
      * reconnects, which the gesture engine needs. */
     fprintf(stderr, "mt2_gesture_feed: waiting for Magic Trackpad 2 (MT2Claim kext required)...\n");
     while (!g_quit) {
+        g_connect_ms = elapsed_ms();   /* restart the per-connection settle window */
         if (mt2_reader_start(on_frame, NULL) == 0) {
             fprintf(stderr, "mt2_gesture_feed: trackpad connected; full-gesture feed active.\n");
             mt2_reader_wait();      /* blocks until the device is lost */
