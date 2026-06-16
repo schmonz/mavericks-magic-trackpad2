@@ -11,6 +11,7 @@
  */
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOCommandGate.h>
 #include <kern/clock.h>
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
@@ -34,10 +35,21 @@ static uint32_t uptime_ms(void) {
 }
 
 void com_schmonz_MT2BTReader::incomingData(IOService * /*target*/,
-                                           IOBluetoothL2CAPChannel * /*channel*/,
+                                           IOBluetoothL2CAPChannel *channel,
                                            unsigned short length, void *data) {
     const uint8_t *b = (const uint8_t *)data;
     if (!b || length < 2) return;
+
+    /* DIAGNOSTIC (throttled): show which PSM delivers what, so we can see whether the
+     * 0x31 multitouch frames are arriving and on which channel. */
+    static int dbg = 0;
+    if (dbg < 48) {
+        dbg++;
+        IOLog("MT2BTReader: rx PSM=%u len=%u: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+              channel ? channel->getPSM() : 0xffff, length,
+              length>0?b[0]:0, length>1?b[1]:0, length>2?b[2]:0, length>3?b[3]:0,
+              length>4?b[4]:0, length>5?b[5]:0, length>6?b[6]:0, length>7?b[7]:0);
+    }
 
     /* On the wire each interrupt frame is 0xA1 (HID-over-BT input header) + the HID
      * report (report id 0x31). Strip a leading 0xA1 if listenAt delivers it. */
@@ -55,22 +67,47 @@ void com_schmonz_MT2BTReader::incomingData(IOService * /*target*/,
     }
 }
 
+/* Runs in-gate (the channel's Bluetooth workloop): the only place IOBluetoothFamily
+ * allows IOBluetoothObject calls. arg0 is the reader. */
+IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
+                                              void * /*a1*/, void * /*a2*/, void * /*a3*/) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    if (!self || !self->fChannel) return kIOReturnNoDevice;
+
+    unsigned short psm = self->fChannel->getPSM();
+
+    /* Listen on every channel for now (diagnostic): we want to see which PSM the
+     * multitouch frames arrive on and what they look like. */
+    self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
+
+    /* Enable multitouch streaming on the CONTROL channel only (PSM 17 = 0x11). The
+     * MT2's Bluetooth enable is feature report 0xF1 {0xF1,0x02,0x01} (confirmed via
+     * IOHIDDeviceSetReport). Over raw L2CAP a SET_REPORT(feature) is the HIDP
+     * transaction byte (SET_REPORT<<4)|FEATURE = 0x53 then the report. */
+    if (psm == 0x11) {
+        static const uint8_t kEnable[] = { 0x53, 0xF1, 0x02, 0x01 };
+        self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
+    }
+    IOLog("MT2BTReader: setup on PSM=%u (enable sent=%d)\n", psm, psm == 0x11);
+    return kIOReturnSuccess;
+}
+
 bool com_schmonz_MT2BTReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
 
     /* Our provider is the matched IOBluetoothL2CAPChannel. */
     fChannel = (IOBluetoothL2CAPChannel *)provider;
 
-    /* Enable multitouch streaming. The MT2's Bluetooth enable is the feature report
-     * 0xF1 {0xF1,0x02,0x01} (confirmed live via IOHIDDeviceSetReport). Over the raw
-     * L2CAP control channel a SET_REPORT(feature) is the HIDP transaction byte
-     * (SET_REPORT<<4)|FEATURE = 0x53 followed by the report. EXACT PDU + whether this
-     * is the control vs interrupt channel are to be confirmed on-device. */
-    static const uint8_t kEnable[] = { 0x53, 0xF1, 0x02, 0x01 };
-    fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, this, 0, 0);
-
-    /* Receive interrupt frames. */
-    fChannel->listenAt(this, &com_schmonz_MT2BTReader::incomingData);
+    /* IOBluetoothFamily REQUIREs every IOBluetoothObject call to run inside its
+     * workloop gate (mWorkLoop->inGate()) — calling sendTo/listenAt directly from this
+     * start() thread panics ("NOT called in IOWorkLoop"). Marshal onto the channel's
+     * own command gate, which enters that workloop. */
+    IOCommandGate *gate = fChannel->getCommandGate();
+    if (!gate) {
+        IOLog("MT2BTReader: channel has no command gate; cannot enable\n");
+        return false;
+    }
+    gate->runAction(&com_schmonz_MT2BTReader::setupInGate, this);
 
     IOLog("MT2BTReader: bound L2CAP channel, enabled multitouch (0xF1), listening\n");
     registerService();

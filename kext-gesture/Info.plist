@@ -64,21 +64,43 @@
             <key>IOProbeScore</key>
             <integer>100000</integer>
         </dict>
-        <key>MT2BTReader</key>
+        <!-- Bind the Magic Trackpad 2's Bluetooth L2CAP channels by its BT-SIG identity
+             (VendorID 76 / ProductID 613 / VendorIDSource 1). NO IOMatchCategory: we
+             compete in the DEFAULT category against the generic IOBluetoothHIDDriver
+             (which matches PSM 17, default category, probe score 0) and win on our high
+             IOProbeScore + specific VID/PID, EXCLUDING it. That hands us the device so
+             our interrupt listener is the sole reader. Two personalities (control PSM 17,
+             interrupt PSM 19); both resolve to com_schmonz_MT2BTReader, which branches on
+             getPSM(): send the 0xF1 enable on control, listenAt on both. -->
+        <key>MT2BTControl</key>
         <dict>
-            <!-- Bind the Magic Trackpad 2's Bluetooth L2CAP channel by its BT-SIG
-                 identity (VendorID 76 / ProductID 613 / VendorIDSource 1), the way
-                 bnbinject made Apple's BNBTrackpadDevice bind it. High IOProbeScore
-                 beats the generic IOBluetoothHIDDriver. On match, com_schmonz_MT2BTReader
-                 enables multitouch (0xF1) and feeds frames to the MT2Gesture nub. -->
             <key>CFBundleIdentifier</key>
             <string>com.schmonz.MT2Gesture</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
             <key>IOProviderClass</key>
             <string>IOBluetoothL2CAPChannel</string>
-            <key>IOMatchCategory</key>
+            <key>PSM</key>
+            <integer>17</integer>
+            <key>VendorID</key>
+            <integer>76</integer>
+            <key>ProductID</key>
+            <integer>613</integer>
+            <key>VendorIDSource</key>
+            <integer>1</integer>
+            <key>IOProbeScore</key>
+            <integer>100000</integer>
+        </dict>
+        <key>MT2BTInterrupt</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.schmonz.MT2Gesture</string>
+            <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
+            <key>IOProviderClass</key>
+            <string>IOBluetoothL2CAPChannel</string>
+            <key>PSM</key>
+            <integer>19</integer>
             <key>VendorID</key>
             <integer>76</integer>
             <key>ProductID</key>

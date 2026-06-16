@@ -17,6 +17,11 @@ public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
 
+    /* Runs inside the channel's Bluetooth workloop gate (via getCommandGate()->runAction):
+     * sends the 0xF1 enable and registers the incoming-data listener. IOBluetoothFamily
+     * REQUIREs these calls happen in-gate. arg0 = the com_schmonz_MT2BTReader. */
+    static IOReturn setupInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
+
     /* IOBluetoothL2CAPChannel::listenAt callback: (target, channel, length, data). */
     static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
                              unsigned short length, void *data);

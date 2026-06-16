@@ -2,22 +2,33 @@
 #define BT_L2CAP_SHIM_H
 #include <IOKit/IOService.h>
 
-/* Minimal redeclaration of IOBluetoothL2CAPChannel so we can call its exported,
- * non-virtual kernel methods by symbol — the same technique amd_shim.h uses for
- * AppleMultitouchDevice. We never construct or OSDynamicCast to this type; we receive
- * the real channel as our IOService provider and reinterpret_cast it. The real class is
- * a single-inheritance IOService descendant (IOService subobject at offset 0), so the
- * cast needs no pointer adjustment. These signatures are matched byte-for-byte to the
+class IOCommandGate;
+
+/* Minimal redeclaration of IOBluetoothL2CAPChannel (and its IOBluetoothObject base) so
+ * we can call their exported, non-virtual kernel methods by symbol — the same technique
+ * amd_shim.h uses for AppleMultitouchDevice. We never construct or OSDynamicCast to these
+ * types; we receive the real channel as our IOService provider and reinterpret_cast it.
+ * The real class is a single-inheritance IOService descendant (IOService subobject at
+ * offset 0), so the cast needs no pointer adjustment. Signatures match byte-for-byte the
  * mangled symbols IOBluetoothFamily exports (verified against the 10.9 kext), so they
  * resolve at load via the OSBundleLibraries dependency on com.apple.iokit.IOBluetoothFamily:
  *
+ *   __ZNK17IOBluetoothObject14getCommandGateEv
  *   __ZN23IOBluetoothL2CAPChannel8listenAtEP9IOServicePFvS1_PS_tPvE
  *   __ZN23IOBluetoothL2CAPChannel6sendToEPvtPFvP9IOServicePS_iyyES2_yy
  *   __ZN23IOBluetoothL2CAPChannel13channelIsOpenEv
  *   __ZN23IOBluetoothL2CAPChannel14setOutgoingMTUEt
  *   __ZN23IOBluetoothL2CAPChannel6getPSMEv
  */
-class IOBluetoothL2CAPChannel : public IOService {
+class IOBluetoothObject : public IOService {
+public:
+    /* The command gate guarding this object's Bluetooth workloop. IOBluetoothFamily
+     * REQUIREs that all IOBluetoothObject calls (sendTo etc.) run inside this gate
+     * (mWorkLoop->inGate()); runAction() on it enters the gate from our start() thread. */
+    IOCommandGate *getCommandGate() const;
+};
+
+class IOBluetoothL2CAPChannel : public IOBluetoothObject {
 public:
     /* Incoming-data registration. The callback fires for each L2CAP frame received on
      * this channel: cb(target, channel, length, dataPtr). This is exactly the model
