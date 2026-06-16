@@ -135,6 +135,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     }
     fDevice = 0;
     fHidShell = 0;
+    fLastButton = 0;
 
     /* Make IOServiceOpen on us instantiate our feeder user client. Also declared
      * in Info.plist; set here too so it is present regardless of match path. */
@@ -206,6 +207,14 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     /* Belt-and-suspenders: ensure IsFake is in the device property table even if
      * init() did not adopt our dict wholesale. start() reads it via getProperty. */
     dev->setProperty("IsFake", kOSBooleanFalse);
+
+    /* Physical-click reliability: start() reads getProperty("ExtractAndPostDeviceButtonState")
+     * (== kOSBooleanTrue) and, when true, sets a flag (this+0xb0 struct, byte +9) that makes
+     * handlePointerEventFromDevice DISPATCH the device button immediately on the press/release
+     * edge -- not only when a later motion frame happens to OR it into the output. Without it,
+     * quick stationary taps (no motion between press and release) are dropped (RE'd live). Must
+     * be present before start() runs its gate check, hence set here alongside IsFake. */
+    dev->setProperty("ExtractAndPostDeviceButtonState", kOSBooleanTrue);
 
     amd->setEnableMultitouchHandler(&enableStub, this);
     amd->setGetReportHandler(&getReportStub, this);
@@ -338,6 +347,22 @@ IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *buf, unsigned in
     if (!fDevice || !buf || len == 0) {
         return kIOReturnNotReady;
     }
+    /* Physical click: the MT1 0x28 report carries the diving-button bit in
+     * buf[1]&0x01 (mt1_encode.c). Apple's gesture engine only consumes that for
+     * stats, never for output; the device button reaches the dispatched pointer
+     * event solely through AppleMultitouchDevice::handlePointerEventFromDevice,
+     * which sets the device-button field (this+0xb0 struct +0) that the engine ORs
+     * into every pointer event. Drive it on edges -- the same native device-button
+     * path a real trackpad's HID button uses -- BEFORE handleTouchFrame so this
+     * frame's gesture dispatch already sees the fresh button. */
+    if (len >= 2 && buf[0] == 0x28) {
+        unsigned int btn = buf[1] & 0x01u;
+        if (btn != fLastButton) {
+            fDevice->handlePointerEventFromDevice(0, 0, btn, 0);
+            fLastButton = btn;
+        }
+    }
+
     /* Verbatim hand-off: handleTouchFrame enqueues these exact bytes to the
      * connected AppleMultitouchDeviceUserClient (RE'd: no in-kernel reformatting). */
     return fDevice->handleTouchFrame((unsigned char *)buf, len);

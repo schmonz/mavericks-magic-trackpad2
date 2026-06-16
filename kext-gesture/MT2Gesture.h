@@ -14,6 +14,8 @@ class com_schmonz_MT2Gesture : public IOService {
     com_schmonz_MT2HIDShell *fHidShell;   /* in-kernel MT1 HID device under us;
                                              instantiates the started event driver
                                              the actuation wrapper wires to (M5) */
+    unsigned int fLastButton;             /* last physical-button bit posted to the
+                                             device-button path; edge-detect in feedFrame */
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;

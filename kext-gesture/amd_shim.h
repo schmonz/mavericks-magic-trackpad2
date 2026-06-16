@@ -23,5 +23,13 @@ public:
      * (C++ mangling ignores return type, so this matches the exported symbol
      * __ZN21AppleMultitouchDevice16handleTouchFrameEPhj regardless of bool vs int.) */
     IOReturn handleTouchFrame(unsigned char *frame, unsigned int length);
+    /* The native DEVICE-BUTTON input path (exported symbol
+     * __ZN21AppleMultitouchDevice28handlePointerEventFromDeviceEiijj). A real
+     * trackpad's physical HID button drives this; it writes the device-button
+     * field (this+0xb0 struct +0) that the gesture engine ORs into every
+     * dispatched pointer event. We call it on physical-button edges so a real
+     * click registers. dx/dy=0 for a button-only change; arg4 is event metadata
+     * (0 is fine). */
+    void handlePointerEventFromDevice(int dx, int dy, unsigned int button, unsigned int arg4);
 };
 #endif
