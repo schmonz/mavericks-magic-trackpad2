@@ -34,23 +34,21 @@ static uint32_t uptime_ms(void) {
     return (uint32_t)(ns / 1000000ULL);
 }
 
+/* Per-connection settle window. Frames are dropped (not fed) until uptime passes this,
+ * armed when the reader binds the channel. Suppresses the connect-transition contact
+ * burst the device emits at (re)connect, which would otherwise fling the cursor. The
+ * MT2 over BT sends NO idle/all-up frames, so a temporal gate is the only honest signal
+ * (same conclusion as the USB feeder's debounce). */
+#define MT2_BT_SETTLE_MS 2000u
+static uint32_t gFeedSettleUntilMs = 0;
+
 void com_schmonz_MT2BTReader::incomingData(IOService * /*target*/,
                                            IOBluetoothL2CAPChannel *channel,
                                            unsigned short length, void *data) {
     const uint8_t *b = (const uint8_t *)data;
     if (!b || length < 2) return;
 
-    /* DIAGNOSTIC (throttled): show which PSM delivers what, so we can see whether the
-     * 0x31 multitouch frames are arriving and on which channel. */
-    static int dbg = 0;
-    if (dbg < 48) {
-        dbg++;
-        IOLog("MT2BTReader: rx PSM=%u len=%u: %02x %02x %02x %02x %02x %02x %02x %02x\n",
-              channel ? channel->getPSM() : 0xffff, length,
-              length>0?b[0]:0, length>1?b[1]:0, length>2?b[2]:0, length>3?b[3]:0,
-              length>4?b[4]:0, length>5?b[5]:0, length>6?b[6]:0, length>7?b[7]:0);
-    }
-
+    (void)channel;
     /* On the wire each interrupt frame is 0xA1 (HID-over-BT input header) + the HID
      * report (report id 0x31). Strip a leading 0xA1 if listenAt delivers it. */
     const uint8_t *report = b;
@@ -59,6 +57,25 @@ void com_schmonz_MT2BTReader::incomingData(IOService * /*target*/,
 
     touch_frame_t tf;
     if (mt2_bt_decode(report, rlen, &tf) != 0) return;
+
+    /* Settle gate: ignore frames for MT2_BT_SETTLE_MS after the reader binds, so the
+     * device's connect-transition contact burst can't fling the cursor. */
+    if (uptime_ms() < gFeedSettleUntilMs) return;
+
+    /* Drop lifted contacts (size 0). The BT trackpad reports a contact with size 0 on
+     * liftoff and then goes SILENT (it is event-driven, unlike USB which keeps streaming
+     * zero-contact frames). If we fed that size-0 contact as present, the gesture engine
+     * would keep a phantom finger down and capture the pointer — which made the user's
+     * mouse janky. Compacting size-0 contacts turns a liftoff into a true zero-contact
+     * frame, so the engine releases cleanly. */
+    int kept = 0;
+    for (int i = 0; i < tf.ntouches; i++) {
+        if (tf.touches[i].size > 0) {
+            if (kept != i) tf.touches[kept] = tf.touches[i];
+            kept++;
+        }
+    }
+    tf.ntouches = kept;
 
     uint8_t mt1[256];
     int n = mt1_encode(&tf, mt1, sizeof(mt1), uptime_ms());
@@ -76,8 +93,12 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
 
     unsigned short psm = self->fChannel->getPSM();
 
-    /* Listen on every channel for now (diagnostic): we want to see which PSM the
-     * multitouch frames arrive on and what they look like. */
+    /* Arm the settle window from bind time: drop frames until it passes so the
+     * connect-transition contact burst doesn't reach the gesture engine. */
+    gFeedSettleUntilMs = uptime_ms() + MT2_BT_SETTLE_MS;
+
+    /* The multitouch frames arrive on the interrupt channel (PSM 19); listen on all the
+     * channels we win — harmless, and the decoder rejects non-0x31 reports. */
     self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
 
     /* Enable multitouch streaming on the CONTROL channel only (PSM 17 = 0x11). The
