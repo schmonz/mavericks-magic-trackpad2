@@ -50,8 +50,14 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     unsigned short psm = self->fChannel->getPSM();
 
     /* Arm the shared session from bind time: it owns the settle window (drops the
-     * connect-transition contact burst) and all post-decode logic. */
-    if (gActiveMT2Gesture) gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
+     * connect-transition contact burst) and all post-decode logic. Only the INTERRUPT
+     * channel (PSM 19 = 0x13) delivers touch frames, so only it registers as the
+     * session's active frame source. BT binds two L2CAP channels (control 0x11 +
+     * interrupt 0x13) as two separate reader instances; if the control reader claimed
+     * the source instead, the session's single-active guard would reject the interrupt
+     * reader's frames (== dead cursor). The control channel only sends the enable below. */
+    if (psm == 0x13 && gActiveMT2Gesture)
+        gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
 
     /* The multitouch frames arrive on the interrupt channel (PSM 19); listen on all the
      * channels we win — harmless, and the decoder rejects non-0x31 reports. */
