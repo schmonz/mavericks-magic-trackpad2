@@ -10,8 +10,10 @@
     </array>
     <key>RunAtLoad</key>
     <true/>
+    <!-- The wrapper loads the kext, confirms health, and exits; the kext runs
+         in-kernel on its own. Run once at boot, do NOT respawn. -->
     <key>KeepAlive</key>
-    <true/>
+    <false/>
     <key>StandardOutPath</key>
     <string>/var/log/mt2d.log</string>
     <key>StandardErrorPath</key>

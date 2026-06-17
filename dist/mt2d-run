@@ -2,19 +2,21 @@
 # Launchd boot wrapper: bring up full-gesture MT2 support, with a minimal
 # anti-brick-loop guard.
 #
-# Both unsigned kexts load from this loose path (kext-dev-mode permits unsigned
-# loads outside /Library/Extensions); they are NEVER placed in /Library/
+# The single unsigned kext loads from this loose path (kext-dev-mode permits
+# unsigned loads outside /Library/Extensions); it is NEVER placed in /Library/
 # Extensions or the boot caches, so the kernel always boots clean. MT2Gesture
 # matches IOResources; if loading it ever panics the machine, the guard below
 # stops re-loading it on the next boot so we never get a boot-crash loop.
 #
+# Both transports (Bluetooth L2CAP + cabled USB) now run in-kernel inside
+# MT2Gesture: loading the kext is enough — its reader personalities bind the
+# device directly. There is no userspace feeder.
+#
 # Sentinel /var/db/mt2d-boot.state:
-#   ok / missing -> load MT2Gesture and run the feeder (full gestures).
+#   ok / missing -> load MT2Gesture (full gestures).
 #   trying       -> a prior boot started full mode but never confirmed healthy
 #                   (likely an MT2Gesture load panic); SKIP loading MT2Gesture
 #                   until `mt2d-run --reset`. Use another pointing device meanwhile.
-# The feeder itself self-heals (waits for the device, reconnects on unplug), so
-# no synthesis fallback is needed.
 
 STATE_FILE="${MT2D_STATE_FILE:-/var/db/mt2d-boot.state}"
 KEXT_DIR="${MT2D_KEXT_DIR:-/usr/local/lib/mt2d}"
@@ -43,7 +45,7 @@ fi
 
 echo trying > "$STATE_FILE" 2>/dev/null || true
 
-# Dry-run: decide + record state only, no kextload/feeder (used by the unit test).
+# Dry-run: decide + record state only, no kextload (used by the unit test).
 if [ "${MT2D_DRYRUN:-0}" = "1" ]; then
     echo "MODE=full"
     echo "STATE=$(cat "$STATE_FILE" 2>/dev/null)"
@@ -52,30 +54,23 @@ fi
 
 log "attempting full-gesture mode"
 
-# Load the input interface-claim kext; re-enumerate if it didn't win the match
-# (e.g. the MT2 enumerated before the kext was loadable at boot).
-kextload "$KEXT_DIR/MT2USBClaim.kext" 2>/dev/null || true
-if [ "$(ioclasscount com_schmonz_MT2USBClaim 2>/dev/null | awk '{print $NF}')" = "0" ]; then
-    "$SBIN/mt2_reenumerate" 2>/dev/null || true
-fi
-# Load the gesture transport kext (the IOResources-matching one the guard covers).
+# Load the one gesture kext (the IOResources-matching one the guard covers). Its
+# BT + USB reader personalities bind the device on their own.
 kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 
-# Start the feeder as a child so this wrapper stays alive as the launchd job. It
-# self-heals: waits for the device and reconnects on unplug/replug.
-"$SBIN/mt2_gesture_feed" &
-FEEDER_PID=$!
-trap 'kill "$FEEDER_PID" 2>/dev/null' TERM INT
+# Force a USB re-enumeration so MT2USBReader's high-probe-score personality wins
+# interface 1 even if the cabled MT2 enumerated (and IOUSBHIDDriver matched it)
+# before the kext was loadable at boot. No-op when on Bluetooth only.
+"$SBIN/mt2_reenumerate" 2>/dev/null || true
 
 # Anti-brick-loop gate, INLINE (no background subshell, which doesn't survive in
-# the launchd no-TTY context): if MT2Gesture is instantiated and we're still
-# alive after the settling window, the load did not panic -> mark ok so the next
-# boot will try full mode again.
+# the launchd no-TTY context): if MT2Gesture is instantiated after the settling
+# window, the load did not panic -> mark ok so the next boot tries full mode
+# again. With no long-lived child, the wrapper then exits and launchd lets it
+# stay exited (KeepAlive=false); the kext keeps running in-kernel.
 sleep "$HEALTHY_DELAY"
 cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
 if [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
     echo ok > "$STATE_FILE" 2>/dev/null || true
     log "full-gesture mode confirmed healthy"
 fi
-
-wait "$FEEDER_PID"
