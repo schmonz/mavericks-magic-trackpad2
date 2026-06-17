@@ -58,10 +58,25 @@ log "attempting full-gesture mode"
 # BT + USB reader personalities bind the device on their own.
 kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 
-# Force a USB re-enumeration so MT2USBReader's high-probe-score personality wins
-# interface 1 even if the cabled MT2 enumerated (and IOUSBHIDDriver matched it)
-# before the kext was loadable at boot. No-op when on Bluetooth only.
-"$SBIN/mt2_reenumerate" 2>/dev/null || true
+# Conditional re-enumerate. Let IOKit matching settle, then check whether our USB
+# reader won interface 1. At cold boot the cabled MT2 is claimed by IOUSBHIDDriver
+# before this kext loads, and kextload does NOT preempt an already-matched nub, so we
+# force a re-enumeration to re-run matching (our 500000 probe score then wins). Only
+# when needed:
+#   USB reader bound (won on load)        -> skip, no disruption
+#   USB reader not bound, USB MT2 present  -> re-enumerate to reclaim interface 1
+#   USB reader not bound, no USB MT2       -> mt2_reenumerate exits nonzero (no device,
+#                                             e.g. Bluetooth-only boot) -> nothing to do
+sleep 5
+if [ "$(ioclasscount com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')" = "0" ]; then
+    if "$SBIN/mt2_reenumerate" >/dev/null 2>&1; then
+        log "USB reader lost interface 1 on load; re-enumerated to reclaim it"
+    else
+        log "USB reader not bound and no USB MT2 present (Bluetooth-only boot); no re-enumerate needed"
+    fi
+else
+    log "USB reader won interface 1 on load; skipping re-enumerate"
+fi
 
 # Anti-brick-loop gate, INLINE (no background subshell, which doesn't survive in
 # the launchd no-TTY context): if MT2Gesture is instantiated after the settling
