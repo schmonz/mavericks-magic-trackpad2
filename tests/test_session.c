@@ -71,5 +71,33 @@ static void run_tests(void) {
       rec_t t2={0}; k=mk(&t2); mt2_session_timer(&s,&k); CHECK_EQ(t2.n_feed,1); CHECK_EQ(t2.last_arm,MT2_DECEL_MS);
       rec_t t3={0}; k=mk(&t3); mt2_session_timer(&s,&k); CHECK_EQ(t3.n_feed,1); CHECK_EQ(t3.last_feed.ntouches,0); CHECK_EQ(t3.n_arm,0);
       rec_t t4={0}; k=mk(&t4); mt2_session_timer(&s,&k); CHECK_EQ(t4.n_feed,0); CHECK_EQ(t4.n_arm,0); }
+
+    /* source switch: a late frame from the OLD source is dropped after reconnect to a new one
+       (the real regression the single-active guard defends — the transport-handoff window) */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, USB, MT2_STREAMING, 0);
+      mt2_session_connect(&s, BT,  MT2_EVENT_DRIVEN, 0);   /* handoff: BT is now active */
+      touch_frame_t f=one(50);
+      mt2_session_frame(&s, USB, &f, 5000, &k); CHECK_EQ(r.n_feed, 0);   /* stale USB frame dropped */
+      mt2_session_frame(&s, BT,  &f, 5000, &k); CHECK_EQ(r.n_feed, 1); } /* BT flows */
+
+    /* reconnect re-arms the settle window: a frame fine for the OLD window is re-gated
+       after a later reconnect (this is the boot re-enumerate flap-storm guard) */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
+      touch_frame_t f=one(50);
+      mt2_session_frame(&s, BT, &f, 5000, &k); CHECK_EQ(r.n_feed, 1);    /* past the first window */
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 10000);             /* reconnect re-arms */
+      rec_t r2={0}; k=mk(&r2);
+      mt2_session_frame(&s, BT, &f, 10500, &k); CHECK_EQ(r2.n_feed, 0);  /* 500<2500: re-gated */
+      mt2_session_frame(&s, BT, &f, 13000, &k); CHECK_EQ(r2.n_feed, 1); }/* settled again */
+
+    /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
+      touch_frame_t f; memset(&f,0,sizeof f); f.ntouches=2;
+      f.touches[0].size=20; f.touches[1].size=20; f.button=1;
+      mt2_session_frame(&s, BT, &f, 5000, &k);
+      CHECK_EQ(r.n_click, 1); CHECK_EQ(r.last_mask, 0x2u); CHECK_EQ(r.n_feed, 1); }
 }
 TEST_MAIN()

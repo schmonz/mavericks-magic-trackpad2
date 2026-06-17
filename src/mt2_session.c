@@ -39,6 +39,9 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
     }
 }
 
+/* No source arg: a timer armed for a prior connection is neutralized because
+   mt2_session_connect resets decel.step = 3 (done), so a post-reconnect fire is a
+   harmless no-op. Keep that reset if you touch connect(). */
 void mt2_session_timer(mt2_session_t *s, const mt2_session_sink_t *sink) {
     touch_frame_t out; int has = 0; uint32_t rearm = 0;
     mt2_decel_step(&s->decel, &out, &has, &rearm);

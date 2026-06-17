@@ -6,7 +6,8 @@
 
 /* Effects seam: the session never touches IOKit/clock. The shell implements these
    to drive IOKit; tests implement them to record. feed_frame gets a touch_frame_t
-   (the shell encodes + feeds). */
+   (the shell encodes + feeds). CONTRACT: all three callbacks must be non-NULL —
+   the session calls them on hot paths with no NULL checks. */
 typedef struct {
     void (*post_click)(void *ctx, unsigned mask);
     void (*feed_frame)(void *ctx, const touch_frame_t *frame);
