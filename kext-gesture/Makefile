@@ -8,7 +8,7 @@ CXXFLAGS = -mmacosx-version-min=10.9 -fno-rtti -fno-exceptions -fapple-kext \
            -I/System/Library/Frameworks/IOKit.framework/Headers
 LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 
-OBJS = $(KEXT_NAME).o MT2GestureUserClient.o MT2HIDShell.o \
+OBJS = $(KEXT_NAME).o MT2HIDShell.o \
        MT2BTReader.o mt2_bt_decode.o mt1_encode.o \
        MT2USBReader.o mt2_usb_decode.o \
        mt2_pipeline.o mt2_session.o

@@ -36,8 +36,6 @@
             <string>com_schmonz_MT2Gesture</string>
             <key>IOResourceMatch</key>
             <string>IOKit</string>
-            <key>IOUserClientClass</key>
-            <string>com_schmonz_MT2GestureUserClient</string>
         </dict>
         <key>MT2HIDEventDriver</key>
         <dict>

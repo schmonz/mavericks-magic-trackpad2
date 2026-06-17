@@ -95,10 +95,9 @@ void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /
     if (self->fSessionLock) IOLockUnlock(self->fSessionLock);
 }
 
-/* The active gesture nub, published for the in-kernel readers (MT2BTReader, and the
- * USB reader) to feed via submitFrame() — same kext, so no user client / IPC. The USB
- * userspace path still uses feedFrame() until that transport moves in-kernel. Single
- * instance. */
+/* The active gesture nub, published for the in-kernel readers (MT2BTReader and
+ * MT2USBReader) to feed via submitFrame() — same kext, so no user client / IPC.
+ * Single instance. */
 com_schmonz_MT2Gesture *gActiveMT2Gesture = 0;
 
 /* Build the property table an IOHIDDevice needs to look like the BT Magic Trackpad
@@ -197,8 +196,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     }
     fDevice = 0;
     fHidShell = 0;
-    fLastButton = 0;
-    gActiveMT2Gesture = this;   /* let the BT reader feed us */
+    gActiveMT2Gesture = this;   /* let the in-kernel readers feed us */
 
     /* Functional-core init + the sink that drives IOKit, plus the decel timer the
      * session arms. The session owns all post-decode logic; this shell only supplies
@@ -223,13 +221,8 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
         }
     }
 
-    /* Make IOServiceOpen on us instantiate our feeder user client. Also declared
-     * in Info.plist; set here too so it is present regardless of match path. */
-    setProperty("IOUserClientClass", "com_schmonz_MT2GestureUserClient");
-
-    /* Publish ourselves so the userspace feeder can find us by class via
-     * IOServiceGetMatchingService("com_schmonz_MT2Gesture") and IOServiceOpen us.
-     * Without this the nub stays !registered and is invisible to that lookup. */
+    /* Publish ourselves so the in-kernel readers' providers resolve and IOKit
+     * finishes matching our subtree. */
     registerService();
 
     /* M5: stand up an in-kernel MT1 HID device UNDER US so Apple's
@@ -439,44 +432,6 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
     }
     if (gActiveMT2Gesture == this) gActiveMT2Gesture = 0;
     IOService::stop(provider);
-}
-
-IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *buf, unsigned int len) {
-    if (!fDevice || !buf || len == 0) {
-        return kIOReturnNotReady;
-    }
-    /* Physical click: the MT1 0x28 report carries the diving-button bit in
-     * buf[1]&0x01 (mt1_encode.c). Apple's gesture engine only consumes that for
-     * stats, never for output; the device button reaches the dispatched pointer
-     * event solely through AppleMultitouchDevice::handlePointerEventFromDevice,
-     * which sets the device-button field (this+0xb0 struct +0) that the engine ORs
-     * into every pointer event. Drive it on edges -- the same native device-button
-     * path a real trackpad's HID button uses -- BEFORE handleTouchFrame so this
-     * frame's gesture dispatch already sees the fresh button. */
-    if (len >= 2 && buf[0] == 0x28) {
-        unsigned int btn = buf[1] & 0x01u;
-        if (btn != fLastButton) {
-            unsigned int mask = 0;
-            if (btn) {
-                /* Primary (0x1) vs secondary/right (0x2). Apple's two-finger ->
-                 * secondary remap lives in the gesture path that our direct
-                 * device-button post bypasses (measured: output stayed 0x1 on a
-                 * two-finger click), so we make the same decision here from the
-                 * contact count in the MT1 frame (9 bytes per record after the
-                 * 4-byte header). Two fingers down at the press edge -> secondary,
-                 * matching the default "Secondary click: click with two fingers"
-                 * setting (TrackpadRightClick=1, corner-click off). */
-                unsigned int nfingers = (len > 4) ? (len - 4) / 9 : 0;
-                mask = (nfingers == 2) ? 0x2u : 0x1u;
-            }
-            fDevice->handlePointerEventFromDevice(0, 0, mask, 0);
-            fLastButton = btn;
-        }
-    }
-
-    /* Verbatim hand-off: handleTouchFrame enqueues these exact bytes to the
-     * connected AppleMultitouchDeviceUserClient (RE'd: no in-kernel reformatting). */
-    return fDevice->handleTouchFrame((unsigned char *)buf, len);
 }
 
 extern "C" {

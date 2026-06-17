@@ -4,9 +4,9 @@
 #include "amd_shim.h"
 #include "mt2_session.h"
 
-/* The transport nub: constructs/drives an AppleMultitouchDevice (see MT2Gesture.cpp)
- * and exposes feedFrame() so its user client (MT2GestureUserClient) can push
- * userspace-decoded MT1 frames into AppleMultitouchDevice::handleTouchFrame. */
+/* The transport nub: constructs/drives an AppleMultitouchDevice (see MT2Gesture.cpp).
+ * The in-kernel readers (MT2BTReader, MT2USBReader) submit decoded frames through
+ * connectionEstablished()/submitFrame(); the session decides what reaches the device. */
 class com_schmonz_MT2HIDShell;
 class IOTimerEventSource;
 class IOWorkLoop;
@@ -17,8 +17,6 @@ class com_schmonz_MT2Gesture : public IOService {
     com_schmonz_MT2HIDShell *fHidShell;   /* in-kernel MT1 HID device under us;
                                              instantiates the started event driver
                                              the actuation wrapper wires to (M5) */
-    unsigned int fLastButton;             /* last physical-button bit posted to the
-                                             device-button path; edge-detect in feedFrame */
     mt2_session_t fSession;               /* pure functional core: owns all post-decode
                                              logic (settle/guard/lift-drop/decel/click) */
     mt2_session_sink_t fSink;             /* effects seam: callbacks drive IOKit */
@@ -35,12 +33,6 @@ class com_schmonz_MT2Gesture : public IOService {
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
-
-    /* Push one MT1 (0x28) report into the gesture device verbatim. handleTouchFrame
-     * enqueues it to the connected AppleMultitouchDeviceUserClient (MultitouchSupport).
-     * Returns the device's IOReturn (kIOReturnSuccess, or 0xE00002BC if not yet
-     * ready / no client connected, etc.). */
-    IOReturn feedFrame(const unsigned char *buf, unsigned int len);
 
     /* Session-backed transport path: a reader arms a connection, then submits decoded
      * touch_frame_t frames; the session decides what reaches the device via the sink. */

@@ -5,33 +5,17 @@ SRC = src
 VERSION = 1.0.0
 PKG_ID  = com.schmonz.mt2d
 
-.PHONY: all test clean tools kext kext-gesture pkg
+.PHONY: all test clean tools kext-gesture pkg
 
 all: tools
 
-tools: dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed
-
-# Research daemon: feed MT1 reports to a fake-MT1 IOHIDUserDevice (gesture-engine
-# path; binds AppleMultitouchHIDEventDriver but no MultitouchDevice yet).
-mt2d_mt1: $(SRC)/mt2d_mt1.c $(SRC)/mt2_usb_read.c $(SRC)/mt2_usb_decode.c $(SRC)/mt1_encode.c $(SRC)/vhid_mt1.c
-	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
-
-dump_frames: tools/dump_frames.c $(SRC)/mt2_usb_read.c
-	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
+tools: vhid_probe mt2_reenumerate
 
 vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c
 	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
 mt2_reenumerate: tools/mt2_reenumerate.c
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
-
-# Milestone 4 feeder: MT2 frames -> MT1 reports -> MT2Gesture kext user client.
-mt2_gesture_feed: tools/mt2_gesture_feed.c $(SRC)/mt2_usb_read.c $(SRC)/mt2_usb_decode.c $(SRC)/mt1_encode.c
-	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
-
-# Build the interface-claim kext (delegates to its own makefile).
-kext:
-	$(MAKE) -C kext-usbclaim
 
 # Build the gesture kext (delegates to its own makefile).
 kext-gesture:
@@ -40,14 +24,13 @@ kext-gesture:
 # Assemble an installer. The unsigned kext goes under /usr/local/lib/mt2d (NOT
 # /Library/Extensions, which enforces signing); the launchd wrapper kextloads it
 # from there. Root-run binaries + wrapper -> /usr/local/sbin, LaunchDaemon -> /Library.
-pkg: mt2_gesture_feed mt2_reenumerate kext kext-gesture
+pkg: mt2_reenumerate kext-gesture
 	rm -rf build/pkgroot build/scripts
 	mkdir -p build/pkgroot/usr/local/lib/mt2d
 	mkdir -p build/pkgroot/usr/local/sbin
 	mkdir -p build/pkgroot/Library/LaunchDaemons
-	cp -R kext-usbclaim/MT2USBClaim.kext build/pkgroot/usr/local/lib/mt2d/
 	cp -R kext-gesture/MT2Gesture.kext build/pkgroot/usr/local/lib/mt2d/
-	cp mt2_gesture_feed mt2_reenumerate dist/mt2d-run build/pkgroot/usr/local/sbin/
+	cp mt2_reenumerate dist/mt2d-run build/pkgroot/usr/local/sbin/
 	chmod +x build/pkgroot/usr/local/sbin/mt2d-run
 	cp dist/com.schmonz.mt2d.plist build/pkgroot/Library/LaunchDaemons/
 	cp -R dist/scripts build/scripts
@@ -78,6 +61,5 @@ test_session: tests/test_session.c $(SRC)/mt2_session.c $(SRC)/mt2_pipeline.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f mt2d_mt1 dump_frames vhid_probe mt2_reenumerate mt2_gesture_feed test_gesture $(TESTS) *.o
+	rm -f vhid_probe mt2_reenumerate test_gesture $(TESTS) *.o
 	rm -rf build
-	$(MAKE) -C kext-usbclaim clean 2>/dev/null || true
