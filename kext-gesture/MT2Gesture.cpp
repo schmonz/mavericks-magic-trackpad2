@@ -95,8 +95,10 @@ void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /
     if (self->fSessionLock) IOLockUnlock(self->fSessionLock);
 }
 
-/* The active gesture nub, published for the in-kernel BT reader (MT2BTReader) to feed
- * directly via feedFrame() — same kext, so no user client / IPC. Single instance. */
+/* The active gesture nub, published for the in-kernel readers (MT2BTReader, and the
+ * USB reader) to feed via submitFrame() — same kext, so no user client / IPC. The USB
+ * userspace path still uses feedFrame() until that transport moves in-kernel. Single
+ * instance. */
 com_schmonz_MT2Gesture *gActiveMT2Gesture = 0;
 
 /* Build the property table an IOHIDDevice needs to look like the BT Magic Trackpad
