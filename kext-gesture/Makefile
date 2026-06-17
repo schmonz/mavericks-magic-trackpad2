@@ -10,6 +10,7 @@ LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 
 OBJS = $(KEXT_NAME).o MT2GestureUserClient.o MT2HIDShell.o \
        MT2BTReader.o mt2_bt_decode.o mt1_encode.o \
+       MT2USBReader.o mt2_usb_decode.o \
        mt2_pipeline.o mt2_session.o
 
 .PHONY: all clean load unload
@@ -26,6 +27,15 @@ MT2BTReader.o: MT2BTReader.cpp MT2BTReader.h bt_l2cap_shim.h MT2Gesture.h
 mt2_bt_decode.o: ../src/mt2_bt_decode.c ../src/mt2_bt_decode.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 mt1_encode.o: ../src/mt1_encode.c ../src/mt1_encode.h ../src/touch_model.h
+	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
+# The in-kernel USB reader + the pure-C USB decoder shared with the (now removed)
+# userspace path (compiled as C++ under the kext toolchain).
+# -DKERNEL=1: the Kernel.framework USB headers gate the kernel-only
+# IOUSBDevRequestDesc (memory-descriptor control request) behind #if KERNEL.
+# Scoped to this object so the working BT/gesture path compiles unchanged.
+MT2USBReader.o: MT2USBReader.cpp MT2USBReader.h MT2Gesture.h
+	$(CXX) $(CXXFLAGS) -DKERNEL=1 -c -o $@ $<
+mt2_usb_decode.o: ../src/mt2_usb_decode.c ../src/mt2_usb_decode.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 mt2_pipeline.o: ../src/mt2_pipeline.c ../src/mt2_pipeline.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
