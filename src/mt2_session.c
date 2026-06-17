@@ -40,5 +40,8 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
 }
 
 void mt2_session_timer(mt2_session_t *s, const mt2_session_sink_t *sink) {
-    (void)s; (void)sink;   /* implemented in Task 6 */
+    touch_frame_t out; int has = 0; uint32_t rearm = 0;
+    mt2_decel_step(&s->decel, &out, &has, &rearm);
+    if (has) emit(s, &out, sink);            /* held replay / clean lift (click re-checked, no-op) */
+    if (rearm) sink->arm_timer(sink->ctx, rearm);
 }

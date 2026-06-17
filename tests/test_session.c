@@ -48,5 +48,28 @@ static void run_tests(void) {
       f.touches[0].size=20; f.touches[1].size=20; f.button=1;
       mt2_session_frame(&s, USB, &f, 5000, &k);
       CHECK_EQ(r.n_click, 1); CHECK_EQ(r.last_mask, 0x2u); CHECK_EQ(r.n_feed, 1); }
+
+    /* EVENT_DRIVEN real contact: lift-drop applied, feed, arm IDLE */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
+      touch_frame_t f; memset(&f,0,sizeof f); f.ntouches=2;
+      f.touches[0].size=20; f.touches[0].x=70; f.touches[1].size=0;   /* one lifted */
+      mt2_session_frame(&s, BT, &f, 5000, &k);
+      CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.last_feed.ntouches, 1);
+      CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS); }
+
+    /* EVENT_DRIVEN liftoff -> no abrupt feed, then decel: held, held, lift, done */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
+      touch_frame_t real=one(70); mt2_session_frame(&s, BT, &real, 5000, &k);
+      rec_t r2={0}; k=mk(&r2);
+      touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
+      mt2_session_frame(&s, BT, &lift, 5010, &k);
+      CHECK_EQ(r2.n_feed, 0); CHECK_EQ(r2.n_arm, 1); CHECK_EQ(r2.last_arm, MT2_IDLE_MS);
+      rec_t t1={0}; k=mk(&t1); mt2_session_timer(&s,&k);
+      CHECK_EQ(t1.n_feed,1); CHECK_EQ(t1.last_feed.touches[0].x,70); CHECK_EQ(t1.last_arm,MT2_DECEL_MS);
+      rec_t t2={0}; k=mk(&t2); mt2_session_timer(&s,&k); CHECK_EQ(t2.n_feed,1); CHECK_EQ(t2.last_arm,MT2_DECEL_MS);
+      rec_t t3={0}; k=mk(&t3); mt2_session_timer(&s,&k); CHECK_EQ(t3.n_feed,1); CHECK_EQ(t3.last_feed.ntouches,0); CHECK_EQ(t3.n_arm,0);
+      rec_t t4={0}; k=mk(&t4); mt2_session_timer(&s,&k); CHECK_EQ(t4.n_feed,0); CHECK_EQ(t4.n_arm,0); }
 }
 TEST_MAIN()
