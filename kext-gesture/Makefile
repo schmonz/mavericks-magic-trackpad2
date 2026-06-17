@@ -9,7 +9,8 @@ CXXFLAGS = -mmacosx-version-min=10.9 -fno-rtti -fno-exceptions -fapple-kext \
 LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 
 OBJS = $(KEXT_NAME).o MT2GestureUserClient.o MT2HIDShell.o \
-       MT2BTReader.o mt2_bt_decode.o mt1_encode.o
+       MT2BTReader.o mt2_bt_decode.o mt1_encode.o \
+       mt2_pipeline.o mt2_session.o
 
 .PHONY: all clean load unload
 
@@ -25,6 +26,10 @@ MT2BTReader.o: MT2BTReader.cpp MT2BTReader.h bt_l2cap_shim.h MT2Gesture.h
 mt2_bt_decode.o: ../src/mt2_bt_decode.c ../src/mt2_bt_decode.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 mt1_encode.o: ../src/mt1_encode.c ../src/mt1_encode.h ../src/touch_model.h
+	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
+mt2_pipeline.o: ../src/mt2_pipeline.c ../src/mt2_pipeline.h ../src/touch_model.h
+	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
+mt2_session.o: ../src/mt2_session.c ../src/mt2_session.h ../src/mt2_pipeline.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 
 $(KEXT_NAME).kext: $(OBJS) Info.plist

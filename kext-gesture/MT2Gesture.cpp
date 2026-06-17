@@ -33,11 +33,59 @@
 #include <libkern/c++/OSBoolean.h>
 #include <libkern/c++/OSString.h>
 #include <libkern/c++/OSNumber.h>
+#include <kern/clock.h>
+#include <IOKit/IOTimerEventSource.h>
+#include <IOKit/IOWorkLoop.h>
 #include "amd_shim.h"
 #include "MT2Gesture.h"
 #include "MT2HIDShell.h"
+#include "mt1_encode.h"
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
+
+/* Kernel uptime in milliseconds — the clock the session reads through the shell. */
+static uint32_t uptime_ms(void) {
+    uint64_t abs_t, ns;
+    clock_get_uptime(&abs_t);
+    absolutetime_to_nanoseconds(abs_t, &ns);
+    return (uint32_t)(ns / 1000000ULL);
+}
+
+/* Sink: post a device-button edge (mask 0/0x1/0x2) through the native path. */
+void com_schmonz_MT2Gesture::sink_post_click(void *ctx, unsigned mask) {
+    com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
+    if (self->fDevice) self->fDevice->handlePointerEventFromDevice(0, 0, mask, 0);
+}
+/* Sink: MT1-encode the touch frame and feed it to the device verbatim. */
+void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const touch_frame_t *frame) {
+    com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
+    if (!self->fDevice) return;
+    uint8_t mt1[256];
+    int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
+    if (n > 0) self->fDevice->handleTouchFrame(mt1, (unsigned int)n);
+}
+/* Sink: (re)arm the decel timer. */
+void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
+    com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
+    if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(ms);
+}
+
+/* A reader (BT/USB) announces its transport; the session resets and arms settle. */
+void com_schmonz_MT2Gesture::connectionEstablished(IOService *source,
+                                                   mt2_transport_mode_t mode) {
+    if (fIdleTimer) fIdleTimer->cancelTimeout();
+    mt2_session_connect(&fSession, (uintptr_t)source, mode, uptime_ms());
+    IOLog("MT2Gesture: connection established (src=%p mode=%d)\n", source, (int)mode);
+}
+/* A reader submits one decoded frame; the session decides what reaches the device. */
+void com_schmonz_MT2Gesture::submitFrame(IOService *source, const touch_frame_t *tf) {
+    mt2_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
+}
+/* The decel timer fired; let the session emit the next held-replay / clean-lift. */
+void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /*s*/) {
+    com_schmonz_MT2Gesture *self = OSDynamicCast(com_schmonz_MT2Gesture, owner);
+    if (self) mt2_session_timer(&self->fSession, &self->fSink);
+}
 
 /* The active gesture nub, published for the in-kernel BT reader (MT2BTReader) to feed
  * directly via feedFrame() — same kext, so no user client / IPC. Single instance. */
@@ -141,6 +189,28 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fHidShell = 0;
     fLastButton = 0;
     gActiveMT2Gesture = this;   /* let the BT reader feed us */
+
+    /* Functional-core init + the sink that drives IOKit, plus the decel timer the
+     * session arms. The session owns all post-decode logic; this shell only supplies
+     * the clock, the source token, and these effect callbacks. */
+    fSession.active_source = 0;
+    fSession.mode = MT2_EVENT_DRIVEN;
+    fSession.settle_until_ms = 0;
+    fSession.last_button = 0;
+    fSession.decel.step = 3;
+    fSink.post_click = &com_schmonz_MT2Gesture::sink_post_click;
+    fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
+    fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
+    fSink.ctx = this;
+    fPipeWL = IOWorkLoop::workLoop();
+    fIdleTimer = 0;
+    if (fPipeWL) {
+        fIdleTimer = IOTimerEventSource::timerEventSource(
+            this, &com_schmonz_MT2Gesture::idleTimeout);
+        if (fIdleTimer && fPipeWL->addEventSource(fIdleTimer) != kIOReturnSuccess) {
+            fIdleTimer->release(); fIdleTimer = 0;
+        }
+    }
 
     /* Make IOServiceOpen on us instantiate our feeder user client. Also declared
      * in Info.plist; set here too so it is present regardless of match path. */
@@ -337,6 +407,14 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
         fHidShell = 0;
         IOLog("MT2Gesture: MT1 HID shell terminated + released\n");
     }
+    /* Tear the decel timer down BEFORE releasing fDevice so a late fire can't drive a
+     * freed device through the sink. */
+    if (fIdleTimer) {
+        fIdleTimer->cancelTimeout();
+        if (fPipeWL) fPipeWL->removeEventSource(fIdleTimer);
+        fIdleTimer->release(); fIdleTimer = 0;
+    }
+    if (fPipeWL) { fPipeWL->release(); fPipeWL = 0; }
     if (fDevice) {
         IOService *dev = (IOService *)fDevice;
         dev->stop(this);
