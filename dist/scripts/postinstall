@@ -1,18 +1,18 @@
 #!/bin/sh
 # Activate: fix kext ownership (kextload requires root:wheel), reset the boot
 # sentinel to ok (a fresh install should attempt full-gesture mode), and
-# start the daemon. The launchd wrapper (mt2d-run) loads the kexts from
-# /usr/local, re-enumerates the device if needed, and runs the feeder. No
-# /Library/Extensions, no kextcache: the unsigned kexts only load from a loose path.
+# start the daemon. The launchd wrapper (mt2d-run) loads the one kext from
+# /usr/local and re-enumerates the device so the in-kernel readers win their
+# matches. No /Library/Extensions, no kextcache: the unsigned kext only loads
+# from a loose path.
 set -e
 
-CLAIM=/usr/local/lib/mt2d/MT2USBClaim.kext
 GESTURE=/usr/local/lib/mt2d/MT2Gesture.kext
 PLIST=/Library/LaunchDaemons/com.schmonz.mt2d.plist
 STATE=/var/db/mt2d-boot.state
 
-chown -R root:wheel "$CLAIM" "$GESTURE"
-chmod -R 755 "$CLAIM" "$GESTURE"
+chown -R root:wheel "$GESTURE"
+chmod -R 755 "$GESTURE"
 chmod +x /usr/local/sbin/mt2d-run
 
 mkdir -p /var/db
