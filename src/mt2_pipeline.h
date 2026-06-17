@@ -11,8 +11,8 @@ typedef enum {
 /* 1 if frames may flow (now >= until), else 0. */
 int mt2_settle_passed(uint32_t now_ms, uint32_t settle_until_ms);
 
-/* Compact out lifted contacts (size<=0) in place; ntouches := real contacts.
-   EVENT_DRIVEN only. Ported from MT2BTReader. */
+/* Drop lifted contacts (keep only size > 0) by compacting them out in place;
+   ntouches := number of real contacts kept. EVENT_DRIVEN only. From MT2BTReader. */
 void mt2_drop_lifted(touch_frame_t *frame);
 
 /* Click edge (ported from MT2Gesture::feedFrame). On a change of button bit,
