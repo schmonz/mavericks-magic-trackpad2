@@ -70,6 +70,14 @@ kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 # stay exited (KeepAlive=false); the kext keeps running in-kernel.
 sleep "$HEALTHY_DELAY"
 cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
+# Record which transport reader actually bound. The nub (cnt) is IOResources-matched
+# so it loads whenever the kext loads — it can NOT tell us whether BT or USB won its
+# device match. Logging the reader counts leaves evidence in /var/log/mt2d.log of the
+# boot-time match race (esp. BT, which has no mt2_reenumerate fallback): BT>0 means
+# MT2BTReader bound the L2CAP channels; USB>0 means MT2USBReader bound interface 1.
+btn="$(ioclasscount com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
+usbn="$(ioclasscount com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
+log "transport readers bound: BT=$btn USB=$usbn (gesture nub=$cnt)"
 if [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
     echo ok > "$STATE_FILE" 2>/dev/null || true
     log "full-gesture mode confirmed healthy"
