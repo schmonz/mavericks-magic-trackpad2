@@ -22,7 +22,10 @@ int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
 
 #define MT2_IDLE_MS  35u   /* silence-detect after a contact */
 #define MT2_DECEL_MS 20u   /* spacing between held replays */
-#define MT2_SETTLE_MS 2500u   /* the single settle window (was USB 2500 / BT 2000) */
+#define MT2_SETTLE_MS 0u   /* no settle delay: cold-boot measurement (2026-06-17) found no
+                              post-connect burst reaching the pipeline on either transport
+                              (interrupt/event endpoints deliver only on touch), and the boot
+                              screensaver bug was proven external. Gate seam retained at zero. */
 
 typedef struct {
     touch_frame_t held;  /* last real contact, replayed at zero velocity */

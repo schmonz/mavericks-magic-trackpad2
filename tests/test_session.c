@@ -20,12 +20,16 @@ static touch_frame_t one(int x){ touch_frame_t f; memset(&f,0,sizeof f);
     f.ntouches=1; f.touches[0].size=20; f.touches[0].x=x; return f; }
 
 static void run_tests(void) {
-    /* settle gate: drops inside window, flows after */
+    /* settle gate calibrated to 0 (MT2_SETTLE_MS): cold-boot measurement on both
+       transports showed NO post-connect burst reaching the pipeline (interrupt/event
+       endpoints deliver only on touch), so frames flow immediately from connect with
+       no startup delay. The gate mechanism is retained (mt2_settle_passed, covered in
+       test_pipeline) as a zero-cost seam should a future device ever need it. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 1000);
       touch_frame_t f=one(50);
-      mt2_session_frame(&s, BT, &f, 1500, &k); CHECK_EQ(r.n_feed, 0);   /* 500<2500 */
-      mt2_session_frame(&s, BT, &f, 4000, &k); CHECK_EQ(r.n_feed, 1); } /* settled */
+      mt2_session_frame(&s, BT, &f, 1000, &k); CHECK_EQ(r.n_feed, 1);   /* flows at connect, no gate */
+      mt2_session_frame(&s, BT, &f, 1500, &k); CHECK_EQ(r.n_feed, 2); } /* keeps flowing */
 
     /* single-active guard: non-active source ignored */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
@@ -81,16 +85,17 @@ static void run_tests(void) {
       mt2_session_frame(&s, USB, &f, 5000, &k); CHECK_EQ(r.n_feed, 0);   /* stale USB frame dropped */
       mt2_session_frame(&s, BT,  &f, 5000, &k); CHECK_EQ(r.n_feed, 1); } /* BT flows */
 
-    /* reconnect re-arms the settle window: a frame fine for the OLD window is re-gated
-       after a later reconnect (this is the boot re-enumerate flap-storm guard) */
+    /* reconnect re-arms the settle window, but with MT2_SETTLE_MS=0 the window is empty,
+       so there is no re-gate: frames flow immediately after a reconnect too. The boot
+       flap-storm guard is unneeded — cold-boot measurement found no post-connect burst. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
       touch_frame_t f=one(50);
-      mt2_session_frame(&s, BT, &f, 5000, &k); CHECK_EQ(r.n_feed, 1);    /* past the first window */
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 10000);             /* reconnect re-arms */
+      mt2_session_frame(&s, BT, &f, 5000, &k); CHECK_EQ(r.n_feed, 1);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 10000);             /* reconnect */
       rec_t r2={0}; k=mk(&r2);
-      mt2_session_frame(&s, BT, &f, 10500, &k); CHECK_EQ(r2.n_feed, 0);  /* 500<2500: re-gated */
-      mt2_session_frame(&s, BT, &f, 13000, &k); CHECK_EQ(r2.n_feed, 1); }/* settled again */
+      mt2_session_frame(&s, BT, &f, 10000, &k); CHECK_EQ(r2.n_feed, 1);  /* flows at reconnect, no re-gate */
+      mt2_session_frame(&s, BT, &f, 10500, &k); CHECK_EQ(r2.n_feed, 2); }/* keeps flowing */
 
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
