@@ -22,3 +22,25 @@ int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
     *out_mask = button ? (nfingers == 2 ? 0x2u : 0x1u) : 0x0u;
     return 1;
 }
+
+void mt2_decel_arm(mt2_decel_t *d, const touch_frame_t *held) {
+    d->held = *held;
+    d->step = 0;
+}
+void mt2_decel_step(mt2_decel_t *d, touch_frame_t *out,
+                    int *out_has_frame, uint32_t *out_rearm_ms) {
+    if (d->step < 2) {
+        *out = d->held;
+        *out_has_frame = 1;
+        *out_rearm_ms = MT2_DECEL_MS;
+        d->step++;
+    } else if (d->step == 2) {
+        out->ntouches = 0; out->button = 0; out->timestamp = 0;
+        *out_has_frame = 1;
+        *out_rearm_ms = 0;
+        d->step = 3;
+    } else {
+        *out_has_frame = 0;
+        *out_rearm_ms = 0;
+    }
+}

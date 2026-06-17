@@ -27,5 +27,15 @@ static void run_tests(void) {
     CHECK_EQ(mt2_click_changed(0, 0, &last, &mask), 1); CHECK_EQ(mask, 0x0u);
     last = 0;
     CHECK_EQ(mt2_click_changed(1, 2, &last, &mask), 1); CHECK_EQ(mask, 0x2u);
+
+    mt2_decel_t d;
+    touch_frame_t held = {0}; held.ntouches = 1; held.touches[0].size = 20; held.touches[0].x = 77;
+    mt2_decel_arm(&d, &held);
+    CHECK_EQ(d.step, 0);
+    touch_frame_t out; int has; uint32_t rearm;
+    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(out.touches[0].x, 77); CHECK_EQ(rearm, MT2_DECEL_MS);
+    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(rearm, MT2_DECEL_MS);
+    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(out.ntouches, 0); CHECK_EQ(rearm, 0u);
+    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 0); CHECK_EQ(rearm, 0u);
 }
 TEST_MAIN()

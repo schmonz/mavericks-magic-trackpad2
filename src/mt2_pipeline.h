@@ -19,4 +19,16 @@ void mt2_drop_lifted(touch_frame_t *frame);
    writes mask (0 release / 0x1 primary / 0x2 two-finger secondary) and returns 1. */
 int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
                       unsigned *out_mask);
+
+#define MT2_IDLE_MS  35u   /* silence-detect after a contact */
+#define MT2_DECEL_MS 20u   /* spacing between held replays */
+
+typedef struct {
+    touch_frame_t held;  /* last real contact, replayed at zero velocity */
+    int step;            /* 0,1 = held replays; 2 = lift; >=3 = done */
+} mt2_decel_t;
+
+void mt2_decel_arm(mt2_decel_t *d, const touch_frame_t *held);
+void mt2_decel_step(mt2_decel_t *d, touch_frame_t *out,
+                    int *out_has_frame, uint32_t *out_rearm_ms);
 #endif
