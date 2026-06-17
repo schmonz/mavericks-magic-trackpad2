@@ -1,131 +1,43 @@
 /* MT2BTReader — in-kernel Bluetooth transport for the Magic Trackpad 2.
  *
- * Mirrors the USB path (MT2USBClaim frees the interface; userspace decodes + feeds)
- * but in-kernel, because the MT2's multitouch frames are unreachable over BT from
- * userspace (the BT HID descriptor is boot-mouse-only; see the BT findings doc). We
- * bind the L2CAP channel directly (proven feasible by the bnbinject experiment),
- * enable multitouch with the 0xF1 SET_REPORT (the MT2's command; Apple's stock
+ * A thin decoder. The MT2's multitouch frames are unreachable over BT from userspace
+ * (the BT HID descriptor is boot-mouse-only; see the BT findings doc). We bind the
+ * L2CAP channel directly (proven feasible by the bnbinject experiment), enable
+ * multitouch with the 0xF1 SET_REPORT (the MT2's command; Apple's stock
  * BNBTrackpadDevice sends the MT1 0xD7 and so never completes), decode each frame
- * (mt2_bt_decode), re-encode as an MT1 report (mt1_encode), and feed the MT2Gesture
- * nub in-process. Decode/encode are the same pure C the USB path uses.
+ * (mt2_bt_decode), and push the touch_frame_t to the MT2Gesture nub via
+ * submitFrame(MT2_EVENT_DRIVEN). The shared mt2_session owns the settle gate,
+ * lift-drop, deceleration/clean-lift, and click — there is no decision logic here.
  */
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOCommandGate.h>
-#include <IOKit/IOTimerEventSource.h>
-#include <IOKit/IOWorkLoop.h>
-#include <kern/clock.h>
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
 #include "MT2Gesture.h"
 
-/* Compiled as C++ under the kext toolchain (so are mt2_bt_decode.c / mt1_encode.c),
- * so these resolve with C++ linkage on both sides — no extern "C". */
+/* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
+ * with C++ linkage on both sides — no extern "C". */
 #include "mt2_bt_decode.h"
-#include "mt1_encode.h"
+#include "mt2_pipeline.h"   /* MT2_EVENT_DRIVEN */
 
 /* Set by com_schmonz_MT2Gesture::start (same kext). */
 extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 
-static uint32_t uptime_ms(void) {
-    uint64_t abs_t, ns;
-    clock_get_uptime(&abs_t);
-    absolutetime_to_nanoseconds(abs_t, &ns);
-    return (uint32_t)(ns / 1000000ULL);
-}
-
-/* Per-connection settle window. Frames are dropped (not fed) until uptime passes this,
- * armed when the reader binds the channel. Suppresses the connect-transition contact
- * burst the device emits at (re)connect, which would otherwise fling the cursor. The
- * MT2 over BT sends NO idle/all-up frames, so a temporal gate is the only honest signal
- * (same conclusion as the USB feeder's debounce). */
-#define MT2_BT_SETTLE_MS 2000u
-static uint32_t gFeedSettleUntilMs = 0;
-
-/* Deceleration mimic. After this much silence following a contact, the device is done;
- * we then replay the held position twice (zero velocity) and lift, so the engine sees a
- * STOP+lift rather than a flick. IDLE = silence detect; DECEL = spacing between replays. */
-#define MT2_BT_IDLE_MS  35
-#define MT2_BT_DECEL_MS 20
-
-static void feed_frame(const touch_frame_t *tf) {
-    uint8_t mt1[256];
-    int n = mt1_encode(tf, mt1, sizeof(mt1), uptime_ms());
-    if (n > 0 && gActiveMT2Gesture) gActiveMT2Gesture->feedFrame(mt1, (unsigned int)n);
-}
-
 void com_schmonz_MT2BTReader::incomingData(IOService *target,
                                            IOBluetoothL2CAPChannel *channel,
                                            unsigned short length, void *data) {
+    (void)channel;
     const uint8_t *b = (const uint8_t *)data;
     if (!b || length < 2) return;
-
-    (void)channel;
-    /* On the wire each interrupt frame is 0xA1 (HID-over-BT input header) + the HID
-     * report (report id 0x31). Strip a leading 0xA1 if listenAt delivers it. */
     const uint8_t *report = b;
     size_t rlen = length;
-    if (b[0] == 0xA1) { report = b + 1; rlen = length - 1; }
-
+    if (b[0] == 0xA1) { report = b + 1; rlen = length - 1; }   /* strip transport byte */
     touch_frame_t tf;
     if (mt2_bt_decode(report, rlen, &tf) != 0) return;
-
-    /* Settle gate: ignore frames for MT2_BT_SETTLE_MS after the reader binds, so the
-     * device's connect-transition contact burst can't fling the cursor. */
-    if (uptime_ms() < gFeedSettleUntilMs) return;
-
-    /* Drop lifted contacts (size 0). */
-    int kept = 0;
-    for (int i = 0; i < tf.ntouches; i++) {
-        if (tf.touches[i].size > 0) {
-            if (kept != i) tf.touches[kept] = tf.touches[i];
-            kept++;
-        }
-    }
-    tf.ntouches = kept;
-
-    com_schmonz_MT2BTReader *self = OSDynamicCast(com_schmonz_MT2BTReader, target);
-
-    if (kept > 0) {
-        /* Real contact: feed it, remember it for the held replay, and (re)arm the idle
-         * timer. While the gesture continues, each frame pushes the timer out. */
-        feed_frame(&tf);
-        if (self) {
-            self->fHeldFrame = tf;
-            self->fDecelStep = 0;
-            if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(MT2_BT_IDLE_MS);
-        }
-    } else {
-        /* The device's liftoff frame. Do NOT feed an abrupt zero-contact frame here
-         * (that reads as a flick → momentum). Let the idle timer run the deceleration:
-         * replay the held position at zero velocity, then a clean lift. */
-        if (self) {
-            self->fDecelStep = 0;
-            if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(MT2_BT_IDLE_MS);
-        }
-    }
-}
-
-/* On silence after a contact: replay the held position (zero velocity) so the engine
- * registers the finger as STOPPED, then feed a clean lift. No momentum, no phantom. */
-void com_schmonz_MT2BTReader::idleTimeout(OSObject *owner, IOTimerEventSource * /*sender*/) {
-    com_schmonz_MT2BTReader *self = OSDynamicCast(com_schmonz_MT2BTReader, owner);
-    if (!self) return;
-
-    if (self->fDecelStep < 2) {
-        feed_frame(&self->fHeldFrame);          /* held: same position -> zero velocity */
-        self->fDecelStep++;
-        if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(MT2_BT_DECEL_MS);
-    } else if (self->fDecelStep == 2) {
-        touch_frame_t lift;
-        lift.ntouches = 0;
-        lift.button = 0;
-        lift.timestamp = 0;
-        feed_frame(&lift);                       /* clean lift -> engine releases */
-        self->fDecelStep = 3;                    /* done; do not rearm */
-    }
+    if (gActiveMT2Gesture) gActiveMT2Gesture->submitFrame(target, &tf);   /* target = this reader */
 }
 
 /* Runs in-gate (the channel's Bluetooth workloop): the only place IOBluetoothFamily
@@ -137,9 +49,9 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
 
     unsigned short psm = self->fChannel->getPSM();
 
-    /* Arm the settle window from bind time: drop frames until it passes so the
-     * connect-transition contact burst doesn't reach the gesture engine. */
-    gFeedSettleUntilMs = uptime_ms() + MT2_BT_SETTLE_MS;
+    /* Arm the shared session from bind time: it owns the settle window (drops the
+     * connect-transition contact burst) and all post-decode logic. */
+    if (gActiveMT2Gesture) gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
 
     /* The multitouch frames arrive on the interrupt channel (PSM 19); listen on all the
      * channels we win — harmless, and the decoder rejects non-0x31 reports. */
@@ -162,18 +74,6 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
 
     /* Our provider is the matched IOBluetoothL2CAPChannel. */
     fChannel = (IOBluetoothL2CAPChannel *)provider;
-    fIdleTimer = 0;
-    fDecelStep = 0;
-
-    /* Deceleration timer on the channel's workloop (serializes with incomingData/feed). */
-    IOWorkLoop *wl = fChannel->getWorkLoop();
-    if (wl) {
-        fIdleTimer = IOTimerEventSource::timerEventSource(this, &com_schmonz_MT2BTReader::idleTimeout);
-        if (fIdleTimer && wl->addEventSource(fIdleTimer) != kIOReturnSuccess) {
-            fIdleTimer->release();
-            fIdleTimer = 0;
-        }
-    }
 
     /* IOBluetoothFamily REQUIREs every IOBluetoothObject call to run inside its
      * workloop gate (mWorkLoop->inGate()) — calling sendTo/listenAt directly from this
@@ -202,16 +102,6 @@ IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg
 }
 
 void com_schmonz_MT2BTReader::stop(IOService *provider) {
-    /* Tear down the idle timer first: cancel any pending fire and remove it from the
-     * workloop before we can be freed, or it could fire on a freed object. */
-    if (fIdleTimer) {
-        fIdleTimer->cancelTimeout();
-        IOWorkLoop *wl = fChannel ? fChannel->getWorkLoop() : 0;
-        if (wl) wl->removeEventSource(fIdleTimer);
-        fIdleTimer->release();
-        fIdleTimer = 0;
-    }
-
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */

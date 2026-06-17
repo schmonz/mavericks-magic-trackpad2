@@ -4,20 +4,17 @@
 #include "touch_model.h"
 
 class IOBluetoothL2CAPChannel;
-class IOTimerEventSource;
 
 /* Matches the Magic Trackpad 2's Bluetooth L2CAP channel (its BT-SIG identity:
  * VendorID 76 / ProductID 613 / VendorIDSource 1) with a high IOProbeScore, the way
  * bnbinject made Apple's BNBTrackpadDevice bind it. On start it enables multitouch
  * (0xF1) and registers an incoming-data listener; each interrupt frame is decoded
- * (mt2_bt_decode), re-encoded as an MT1 report (mt1_encode), and fed to the active
- * MT2Gesture nub in-kernel. The BT counterpart of the USB MT2USBClaim + feeder. */
+ * (mt2_bt_decode) and pushed to the active MT2Gesture nub via submitFrame
+ * (MT2_EVENT_DRIVEN) — the shared session owns settle/lift-drop/decel/click. The BT
+ * counterpart of the USB transport. */
 class com_schmonz_MT2BTReader : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2BTReader)
     IOBluetoothL2CAPChannel *fChannel;
-    IOTimerEventSource *fIdleTimer;   /* drives the deceleration sequence on silence */
-    touch_frame_t fHeldFrame;         /* last contact frame, replayed at zero velocity */
-    int fDecelStep;                   /* deceleration state: held replays then a lift */
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
@@ -35,10 +32,5 @@ public:
     /* IOBluetoothL2CAPChannel::listenAt callback: (target, channel, length, data). */
     static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
                              unsigned short length, void *data);
-
-    /* Deceleration timer: when the event-driven device falls silent after a contact,
-     * replay the held position (zero velocity) a couple times, then a clean lift, so the
-     * gesture engine sees the finger STOP and lift — not flick — and adds no momentum. */
-    static void idleTimeout(OSObject *owner, IOTimerEventSource *sender);
 };
 #endif
