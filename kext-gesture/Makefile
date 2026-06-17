@@ -48,9 +48,14 @@ $(KEXT_NAME).kext: $(OBJS) Info.plist
 	cp Info.plist $(KEXT_NAME).kext/Contents/
 	chmod -R 755 $(KEXT_NAME).kext
 
+# kextload refuses any kext not owned by root:wheel, so we stage a copy in /tmp
+# and chown it. Every step that touches that staged copy needs root: the prior
+# load left it root-owned, so even the cleanup rm must be sudo. Keeping all the
+# privileged steps under sudo makes this work as a plain `make load` AND as
+# `sudo make load` (nested sudo is harmless) — pick either, both are idempotent.
 load: $(KEXT_NAME).kext
-	rm -rf /tmp/$(KEXT_NAME).kext
-	cp -R $(KEXT_NAME).kext /tmp/
+	sudo rm -rf /tmp/$(KEXT_NAME).kext
+	sudo cp -R $(KEXT_NAME).kext /tmp/
 	sudo chown -R root:wheel /tmp/$(KEXT_NAME).kext
 	sudo kextload /tmp/$(KEXT_NAME).kext
 
