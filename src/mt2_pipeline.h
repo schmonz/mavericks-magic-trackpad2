@@ -14,4 +14,9 @@ int mt2_settle_passed(uint32_t now_ms, uint32_t settle_until_ms);
 /* Compact out lifted contacts (size<=0) in place; ntouches := real contacts.
    EVENT_DRIVEN only. Ported from MT2BTReader. */
 void mt2_drop_lifted(touch_frame_t *frame);
+
+/* Click edge (ported from MT2Gesture::feedFrame). On a change of button bit,
+   writes mask (0 release / 0x1 primary / 0x2 two-finger secondary) and returns 1. */
+int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
+                      unsigned *out_mask);
 #endif

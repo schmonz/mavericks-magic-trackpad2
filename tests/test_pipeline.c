@@ -19,5 +19,13 @@ static void run_tests(void) {
     touch_frame_t up = {0}; up.ntouches = 1; up.touches[0].size = 0;
     mt2_drop_lifted(&up);
     CHECK_EQ(up.ntouches, 0);
+
+    unsigned last = 0, mask = 0xdead;
+    CHECK_EQ(mt2_click_changed(0, 0, &last, &mask), 0);
+    CHECK_EQ(mt2_click_changed(1, 1, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
+    CHECK_EQ(mt2_click_changed(1, 1, &last, &mask), 0);
+    CHECK_EQ(mt2_click_changed(0, 0, &last, &mask), 1); CHECK_EQ(mask, 0x0u);
+    last = 0;
+    CHECK_EQ(mt2_click_changed(1, 2, &last, &mask), 1); CHECK_EQ(mask, 0x2u);
 }
 TEST_MAIN()

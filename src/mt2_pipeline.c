@@ -13,3 +13,12 @@ void mt2_drop_lifted(touch_frame_t *frame) {
     }
     frame->ntouches = kept;
 }
+
+int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
+                      unsigned *out_mask) {
+    button = button ? 1u : 0u;
+    if (button == *last_button) return 0;
+    *last_button = button;
+    *out_mask = button ? (nfingers == 2 ? 0x2u : 0x1u) : 0x0u;
+    return 1;
+}
