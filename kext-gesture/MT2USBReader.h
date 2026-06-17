@@ -21,8 +21,13 @@ class com_schmonz_MT2USBReader : public IOService {
     IOBufferMemoryDescriptor *fBuf;
     uint16_t fMaxPacket;
     bool fStopping;
+    void releaseInterface(void);   /* drop our exclusive open; idempotent */
 public:
     virtual bool start(IOService *provider) override;
+    /* Release the interface here, NOT just in stop(): on device unplug/re-enumerate
+       IOKit defers stop() until our open() is relinquished, so a stop()-only close
+       deadlocks teardown and leaks the dead device subtree. */
+    virtual bool willTerminate(IOService *provider, IOOptionBits options) override;
     virtual void stop(IOService *provider) override;
     void armRead(void);
     static void readComplete(void *target, void *param, IOReturn status,

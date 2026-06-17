@@ -85,11 +85,27 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
     }
 }
 
-void com_schmonz_MT2USBReader::stop(IOService *provider) {
+/* Relinquish our exclusive hold on the interface so the provider subtree can
+ * finalize. MUST run during the willTerminate handshake (device unplug / re-
+ * enumerate): IOKit does not call stop() until our open() is released, so closing
+ * only in stop() deadlocks teardown — the reader stays inactive/busy and pins the
+ * whole dead device subtree (leaked, never freed; one per unplug). Idempotent.
+ * We drop fPipe WITHOUT Abort(): it is unowned and may already be torn down with
+ * the device; close() lets the interface abort+close its own pipes. */
+void com_schmonz_MT2USBReader::releaseInterface(void) {
     fStopping = true;
-    if (fPipe) { fPipe->Abort(); fPipe = 0; }
+    fPipe = 0;
     if (fIntf) { fIntf->close(this); fIntf = 0; }
-    if (fBuf) { fBuf->release(); fBuf = 0; }
+}
+
+bool com_schmonz_MT2USBReader::willTerminate(IOService *provider, IOOptionBits options) {
+    releaseInterface();
+    return IOService::willTerminate(provider, options);
+}
+
+void com_schmonz_MT2USBReader::stop(IOService *provider) {
+    releaseInterface();                          /* no-op if willTerminate already did it */
+    if (fBuf) { fBuf->release(); fBuf = 0; }     /* safe now: interface closed, no I/O in flight */
     IOLog("MT2USBReader: stopped\n");
     IOService::stop(provider);
 }
