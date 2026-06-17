@@ -24,6 +24,9 @@ class com_schmonz_MT2Gesture : public IOService {
     mt2_session_sink_t fSink;             /* effects seam: callbacks drive IOKit */
     IOWorkLoop *fPipeWL;                  /* hosts the decel timer */
     IOTimerEventSource *fIdleTimer;       /* the idle/decel timer the session arms */
+    IOLock *fSessionLock;                 /* serializes all fSession access: the timer
+                                             fires on fPipeWL while submitFrame runs on
+                                             the caller's transport workloop */
 
     /* Sink callbacks (ctx = this): translate session effects into IOKit calls. */
     static void sink_post_click(void *ctx, unsigned mask);

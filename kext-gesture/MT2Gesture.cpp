@@ -27,6 +27,7 @@
  */
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
+#include <IOKit/IOLocks.h>
 #include <libkern/c++/OSMetaClass.h>
 #include <libkern/c++/OSObject.h>
 #include <libkern/c++/OSDictionary.h>
@@ -73,18 +74,25 @@ void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
 /* A reader (BT/USB) announces its transport; the session resets and arms settle. */
 void com_schmonz_MT2Gesture::connectionEstablished(IOService *source,
                                                    mt2_transport_mode_t mode) {
+    if (fSessionLock) IOLockLock(fSessionLock);
     if (fIdleTimer) fIdleTimer->cancelTimeout();
     mt2_session_connect(&fSession, (uintptr_t)source, mode, uptime_ms());
+    if (fSessionLock) IOLockUnlock(fSessionLock);
     IOLog("MT2Gesture: connection established (src=%p mode=%d)\n", source, (int)mode);
 }
 /* A reader submits one decoded frame; the session decides what reaches the device. */
 void com_schmonz_MT2Gesture::submitFrame(IOService *source, const touch_frame_t *tf) {
+    if (fSessionLock) IOLockLock(fSessionLock);
     mt2_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
+    if (fSessionLock) IOLockUnlock(fSessionLock);
 }
 /* The decel timer fired; let the session emit the next held-replay / clean-lift. */
 void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /*s*/) {
     com_schmonz_MT2Gesture *self = OSDynamicCast(com_schmonz_MT2Gesture, owner);
-    if (self) mt2_session_timer(&self->fSession, &self->fSink);
+    if (!self) return;
+    if (self->fSessionLock) IOLockLock(self->fSessionLock);
+    mt2_session_timer(&self->fSession, &self->fSink);
+    if (self->fSessionLock) IOLockUnlock(self->fSessionLock);
 }
 
 /* The active gesture nub, published for the in-kernel BT reader (MT2BTReader) to feed
@@ -202,6 +210,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
     fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
     fSink.ctx = this;
+    fSessionLock = IOLockAlloc();   /* serializes timer vs submitFrame fSession access */
     fPipeWL = IOWorkLoop::workLoop();
     fIdleTimer = 0;
     if (fPipeWL) {
@@ -415,6 +424,9 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
         fIdleTimer->release(); fIdleTimer = 0;
     }
     if (fPipeWL) { fPipeWL->release(); fPipeWL = 0; }
+    /* Timer is fully removed above (no more idleTimeout), so the lock has no more
+     * users and is safe to free. */
+    if (fSessionLock) { IOLockFree(fSessionLock); fSessionLock = 0; }
     if (fDevice) {
         IOService *dev = (IOService *)fDevice;
         dev->stop(this);
