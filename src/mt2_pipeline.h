@@ -10,4 +10,8 @@ typedef enum {
 
 /* 1 if frames may flow (now >= until), else 0. */
 int mt2_settle_passed(uint32_t now_ms, uint32_t settle_until_ms);
+
+/* Compact out lifted contacts (size<=0) in place; ntouches := real contacts.
+   EVENT_DRIVEN only. Ported from MT2BTReader. */
+void mt2_drop_lifted(touch_frame_t *frame);
 #endif
