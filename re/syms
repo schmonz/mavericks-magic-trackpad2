@@ -1,0 +1,8 @@
+#!/bin/sh
+# syms - list (demangled) symbols of a Mach-O slice, optionally filtered.
+# Unix filter: writes "addr type name" lines to stdout.
+# Usage: syms <binary> [regex] [arch]
+#   syms .../MultitouchHID 'Tap|Chord|Slide'
+bin=$1; pat=${2:-.}; arch=${3:-x86_64}
+[ -n "$bin" ] || { echo "usage: $(basename "$0") <binary> [regex] [arch]" >&2; exit 2; }
+nm -arch "$arch" "$bin" 2>/dev/null | c++filt | grep -iE "$pat"

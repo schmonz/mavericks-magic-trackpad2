@@ -1,0 +1,11 @@
+#!/bin/sh
+# mt-devices - list MultitouchSupport-enumerated devices and their
+# parser-type / parser-options / transport / family / built-in flags.
+# (Answers: is our synthetic device enumerated? what does it look like?)
+# Builds tools/mt_transport on demand. Unix filter: one line per device to stdout.
+root=$(cd "$(dirname "$0")/.." && pwd)
+bin=$root/tools/mt_transport
+[ -x "$bin" ] || clang -o "$bin" "$root/tools/mt_transport.c" \
+  -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation \
+  || { echo "build failed" >&2; exit 1; }
+sudo "$bin"

@@ -1,0 +1,17 @@
+#!/bin/sh
+# disasm - print a bounded function/range disassembly of a Mach-O slice (x86_64).
+# Unix filter: writes "address  instruction" lines to stdout.
+# Usage: disasm <binary> <start-hex> [end-hex] [arch]
+#   start/end are file offsets like 227d0 or 0x227d0 (matched against otool addresses).
+#   With no end, prints up to 80 instructions from start.
+#   disasm .../MultitouchHID 227d0 22932
+bin=$1; start=$2; end=$3; arch=${4:-x86_64}
+[ -n "$bin" ] && [ -n "$start" ] || {
+  echo "usage: $(basename "$0") <binary> <start-hex> [end-hex] [arch]" >&2; exit 2; }
+norm() { printf '%016x' "0x${1#0x}"; }   # 16-digit zero-padded address, leading 0x optional
+s=$(norm "$start"); e=""; [ -n "$end" ] && e=$(norm "$end")
+otool -tV -arch "$arch" "$bin" 2>/dev/null | awk -v s="$s" -v e="$e" -v max=80 '
+  $1==s { p=1 }
+  p     { print; c++ }
+  e!="" && p && $1==e { exit }
+  e=="" && c>=max     { exit }'

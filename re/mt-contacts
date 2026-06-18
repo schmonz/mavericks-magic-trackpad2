@@ -1,0 +1,11 @@
+#!/bin/sh
+# mt-contacts - stream the per-frame contacts the recognizer receives:
+# state (3=MakeTouch 4=Touching 5=BreakTouch 7=OutOfRange), size, pressure, zDensity, ts.
+# (Answers: does our lifecycle/strength reach the recognizer correctly?)
+# Builds tools/mt_contacts on demand. Runs until Ctrl-C (or pkill). Touch / inject to see frames.
+root=$(cd "$(dirname "$0")/.." && pwd)
+bin=$root/tools/mt_contacts
+[ -x "$bin" ] || clang -o "$bin" "$root/tools/mt_contacts.c" \
+  -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation \
+  || { echo "build failed" >&2; exit 1; }
+sudo "$bin"

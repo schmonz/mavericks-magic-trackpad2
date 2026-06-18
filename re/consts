@@ -1,0 +1,10 @@
+#!/bin/sh
+# consts - dump a Mach-O section (for resolving constants / float thresholds).
+# Unix filter: writes the section contents to stdout.
+# Usage: consts <binary> [segment] [section] [arch]
+#   defaults: segment __TEXT, section __const
+#   consts .../MultitouchHID __TEXT __const
+#   consts .../MultitouchHID __DATA  __data
+bin=$1; seg=${2:-__TEXT}; sec=${3:-__const}; arch=${4:-x86_64}
+[ -n "$bin" ] || { echo "usage: $(basename "$0") <binary> [seg] [sec] [arch]" >&2; exit 2; }
+otool -v -arch "$arch" -s "$seg" "$sec" "$bin" 2>/dev/null

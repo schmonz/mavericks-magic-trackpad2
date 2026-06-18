@@ -1,0 +1,8 @@
+#!/bin/sh
+# ioreg-props - dump a live IORegistry class's node(s) + properties (read-only).
+# Unix filter: writes the ioreg subtree to stdout.
+# Usage: ioreg-props <IOClassName>
+#   ioreg-props AppleMultitouchDevice
+cls=$1
+[ -n "$cls" ] || { echo "usage: $(basename "$0") <IOClassName>" >&2; exit 2; }
+sudo ioreg -r -c "$cls" -l -w0
