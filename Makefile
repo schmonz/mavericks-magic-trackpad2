@@ -49,9 +49,9 @@ test: $(TESTS)
 
 test_model: tests/test_model.c
 	$(CC) $(CFLAGS) -o $@ $<
-test_decode: tests/test_decode.c $(SRC)/mt2_usb_decode.c
+test_decode: tests/test_decode.c $(SRC)/mt2_usb_decode.c $(SRC)/mt2_decode.c
 	$(CC) $(CFLAGS) -o $@ $^
-test_bt_decode: tests/test_bt_decode.c $(SRC)/mt2_bt_decode.c
+test_bt_decode: tests/test_bt_decode.c $(SRC)/mt2_bt_decode.c $(SRC)/mt2_decode.c
 	$(CC) $(CFLAGS) -o $@ $^
 test_encode: tests/test_encode.c $(SRC)/mt1_encode.c
 	$(CC) $(CFLAGS) -o $@ $^
