@@ -39,5 +39,9 @@ public:
     void connectionEstablished(IOService *source, mt2_transport_mode_t mode);
     void submitFrame(IOService *source, const touch_frame_t *tf);
     static void idleTimeout(OSObject *owner, IOTimerEventSource *sender);
+
+    /* DEBUG/TEST seam: the user client routes injected encoded 0x28 bytes here, straight
+     * to the device (bypasses the session) for hands-free on-device testing. */
+    IOReturn feedFrame(const unsigned char *bytes, unsigned int len);
 };
 #endif

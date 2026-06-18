@@ -86,6 +86,15 @@ void com_schmonz_MT2Gesture::submitFrame(IOService *source, const touch_frame_t 
     mt2_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
     if (fSessionLock) IOLockUnlock(fSessionLock);
 }
+
+/* DEBUG/TEST seam (user client selector 0): inject an already-encoded MT1 0x28 report
+ * straight to the device, same as sink_feed_frame's final step. Bypasses the session so a
+ * test tool can run the session/encode in userspace and feed the exact bytes. Returns the
+ * device's status (e.g. ~0xE00002BC if not yet ready) -- benign, never panics. */
+IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *bytes, unsigned int len) {
+    if (!fDevice) return kIOReturnNotReady;
+    return fDevice->handleTouchFrame((unsigned char *)bytes, len);
+}
 /* The silence-watchdog timer fired; let the session flush any outstanding BreakTouch. */
 void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /*s*/) {
     com_schmonz_MT2Gesture *self = OSDynamicCast(com_schmonz_MT2Gesture, owner);
@@ -197,6 +206,12 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fDevice = 0;
     fHidShell = 0;
     gActiveMT2Gesture = this;   /* let the in-kernel readers feed us */
+
+    /* DEBUG/TEST seam: advertise a user client so userspace tools can inject encoded
+     * 0x28 frames (selector 0 -> feedFrame -> handleTouchFrame) for hands-free on-device
+     * testing without a physical trackpad (tools/synth_tap, synth_feed). Read path only;
+     * the in-kernel readers remain the production input. */
+    setProperty("IOUserClientClass", "com_schmonz_MT2GestureUserClient");
 
     /* Functional-core init + the sink that drives IOKit, plus the silence-watchdog
      * timer the session arms. The session owns all post-decode logic; this shell only

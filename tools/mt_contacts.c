@@ -30,13 +30,19 @@ extern void MTRegisterContactFrameCallback(MTDeviceRef, MTContactCallback);
 extern void MTDeviceStart(MTDeviceRef, int);
 
 static int onFrame(MTDeviceRef d, MTTouch *touches, int n, double ts, int frame) {
-    (void)d; (void)ts;
-    if (n <= 0) return 0;
+    (void)d;
+    if (n <= 0) {                                  /* show empty frames too (the lift) */
+        printf("frame %d ts=%.4f  (no contacts)\n", frame, ts);
+        fflush(stdout);
+        return 0;
+    }
     for (int i = 0; i < n; i++) {
         MTTouch *t = &touches[i];
-        printf("frame %d id=%d st=%d fingerID=%d handID=%d  norm(%.3f,%.3f) sz=%.2f maj=%.1f\n",
-               frame, t->identifier, t->state, t->fingerID, t->handID,
-               t->normalized.pos.x, t->normalized.pos.y, t->size, t->majorAxis);
+        /* state, size, pressure, and zDensity are the tap-strength inputs; ts gives duration. */
+        printf("frame %d ts=%.4f id=%d st=%d fingerID=%d  norm(%.3f,%.3f) sz=%.2f press=%d maj=%.1f min=%.1f den=%.2f\n",
+               frame, ts, t->identifier, t->state, t->fingerID,
+               t->normalized.pos.x, t->normalized.pos.y, t->size, t->pressure,
+               t->majorAxis, t->minorAxis, t->zDensity);
     }
     fflush(stdout);
     return 0;

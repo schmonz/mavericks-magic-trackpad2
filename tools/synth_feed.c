@@ -19,9 +19,11 @@ static io_connect_t g_conn = IO_OBJECT_NULL;
 static volatile int g_run = 1;
 
 static uint32_t elapsed_ms(void) {
-    static mach_timebase_info_data_t tb; static uint64_t t0;
-    if (tb.denom == 0) { mach_timebase_info(&tb); t0 = mach_absolute_time(); }
-    uint64_t ns = (mach_absolute_time() - t0) * tb.numer / tb.denom;
+    /* ABSOLUTE uptime ms (monotonic, large) -- a clock starting at 0 makes the
+     * recognizer reject frames as "timestamp invalid". Matches the kext's uptime_ms. */
+    static mach_timebase_info_data_t tb;
+    if (tb.denom == 0) mach_timebase_info(&tb);
+    uint64_t ns = mach_absolute_time() * (uint64_t)tb.numer / (uint64_t)tb.denom;
     return (uint32_t)(ns / 1000000ULL);
 }
 static void on_sig(int s) { (void)s; g_run = 0; }
