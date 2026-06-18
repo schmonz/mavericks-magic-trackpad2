@@ -65,7 +65,7 @@ void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const touch_frame_t *fra
     int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
     if (n > 0) self->fDevice->handleTouchFrame(mt1, (unsigned int)n);
 }
-/* Sink: (re)arm the decel timer. */
+/* Sink: (re)arm the silence-watchdog timer. */
 void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
     if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(ms);
@@ -86,7 +86,7 @@ void com_schmonz_MT2Gesture::submitFrame(IOService *source, const touch_frame_t 
     mt2_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
     if (fSessionLock) IOLockUnlock(fSessionLock);
 }
-/* The decel timer fired; let the session emit the next held-replay / clean-lift. */
+/* The silence-watchdog timer fired; let the session flush any outstanding BreakTouch. */
 void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /*s*/) {
     com_schmonz_MT2Gesture *self = OSDynamicCast(com_schmonz_MT2Gesture, owner);
     if (!self) return;
@@ -198,14 +198,14 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fHidShell = 0;
     gActiveMT2Gesture = this;   /* let the in-kernel readers feed us */
 
-    /* Functional-core init + the sink that drives IOKit, plus the decel timer the
-     * session arms. The session owns all post-decode logic; this shell only supplies
-     * the clock, the source token, and these effect callbacks. */
+    /* Functional-core init + the sink that drives IOKit, plus the silence-watchdog
+     * timer the session arms. The session owns all post-decode logic; this shell only
+     * supplies the clock, the source token, and these effect callbacks. */
     fSession.active_source = 0;
     fSession.mode = MT2_EVENT_DRIVEN;
     fSession.settle_until_ms = 0;
     fSession.last_button = 0;
-    fSession.decel.step = 3;
+    mt2_lifecycle_reset(&fSession.lifecycle);
     fSink.post_click = &com_schmonz_MT2Gesture::sink_post_click;
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
     fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
@@ -411,7 +411,7 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
         fHidShell = 0;
         IOLog("MT2Gesture: MT1 HID shell terminated + released\n");
     }
-    /* Tear the decel timer down BEFORE releasing fDevice so a late fire can't drive a
+    /* Tear the watchdog timer down BEFORE releasing fDevice so a late fire can't drive a
      * freed device through the sink. */
     if (fIdleTimer) {
         fIdleTimer->cancelTimeout();

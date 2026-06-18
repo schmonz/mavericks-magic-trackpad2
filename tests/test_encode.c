@@ -46,6 +46,14 @@ static void run_tests(void) {
     CHECK_EQ(n, 4 + 9);
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
     CHECK_EQ(state, 0x30);        /* first frame -> MakeTouch */
+
+    /* A lifting contact is TS_END and must encode to BreakTouch (0x50): the
+     * recognizer needs the MakeTouch->...->BreakTouch transition to commit a tap. */
+    f.touches[0].state = TS_END;
+    n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
+    CHECK_EQ(n, 4 + 9);
+    mt1_decode_record(buf + 4, &id, &x, &y, &state);
+    CHECK_EQ(state, 0x50);        /* lift -> BreakTouch */
     f.touches[0].state = TS_TOUCHING;  /* restore for later cases */
     /* Expected scaled coords (independently computed): MT2(752,556) -> MT1. */
     CHECK(x >= 625 && x <= 629);  /* ~627 */

@@ -38,12 +38,12 @@ static void run_tests(void) {
       mt2_session_frame(&s, BT,  &f, 9999, &k); CHECK_EQ(r.n_feed, 0);
       mt2_session_frame(&s, USB, &f, 9999, &k); CHECK_EQ(r.n_feed, 1); }
 
-    /* STREAMING passes a lift through and arms NO timer */
+    /* A lone lift frame with no contact ever down produces nothing (no phantom feed). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, USB, MT2_STREAMING, 0);
       touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
       mt2_session_frame(&s, USB, &lift, 5000, &k);
-      CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.n_arm, 0); }
+      CHECK_EQ(r.n_feed, 0); CHECK_EQ(r.n_arm, 0); }
 
     /* click: two-finger press -> secondary then feed (post-settle) */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
@@ -62,19 +62,22 @@ static void run_tests(void) {
       CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.last_feed.ntouches, 1);
       CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS); }
 
-    /* EVENT_DRIVEN liftoff -> no abrupt feed, then decel: held, held, lift, done */
+    /* EVENT_DRIVEN clean lift: the lift frame emits a BreakTouch (TS_END) for the ended
+       contact at its last-known position and arms NO watchdog (cleanly lifted). The native
+       BreakTouch replaces the old held-replay deceleration. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
       touch_frame_t real=one(70); mt2_session_frame(&s, BT, &real, 5000, &k);
       rec_t r2={0}; k=mk(&r2);
       touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
       mt2_session_frame(&s, BT, &lift, 5010, &k);
-      CHECK_EQ(r2.n_feed, 0); CHECK_EQ(r2.n_arm, 1); CHECK_EQ(r2.last_arm, MT2_IDLE_MS);
+      CHECK_EQ(r2.n_feed, 1);                                   /* BreakTouch delivered once */
+      CHECK_EQ(r2.last_feed.ntouches, 1);
+      CHECK_EQ(r2.last_feed.touches[0].state, TS_END);
+      CHECK_EQ(r2.last_feed.touches[0].x, 70);                  /* last-known position */
+      CHECK_EQ(r2.n_arm, 0);                                    /* clean lift: no watchdog */
       rec_t t1={0}; k=mk(&t1); mt2_session_timer(&s,&k);
-      CHECK_EQ(t1.n_feed,1); CHECK_EQ(t1.last_feed.touches[0].x,70); CHECK_EQ(t1.last_arm,MT2_DECEL_MS);
-      rec_t t2={0}; k=mk(&t2); mt2_session_timer(&s,&k); CHECK_EQ(t2.n_feed,1); CHECK_EQ(t2.last_arm,MT2_DECEL_MS);
-      rec_t t3={0}; k=mk(&t3); mt2_session_timer(&s,&k); CHECK_EQ(t3.n_feed,1); CHECK_EQ(t3.last_feed.ntouches,0); CHECK_EQ(t3.n_arm,0);
-      rec_t t4={0}; k=mk(&t4); mt2_session_timer(&s,&k); CHECK_EQ(t4.n_feed,0); CHECK_EQ(t4.n_arm,0); }
+      CHECK_EQ(t1.n_feed, 0); }                                 /* nothing left to flush */
 
     /* source switch: a late frame from the OLD source is dropped after reconnect to a new one
        (the real regression the single-active guard defends — the transport-handoff window) */
@@ -118,18 +121,19 @@ static void run_tests(void) {
       mt2_session_frame(&s, USB, &f, 5005, &k);
       CHECK_EQ(r.last_feed.touches[0].state, TS_TOUCHING); }
 
-    /* lifecycle: the decel replay after a 1-frame tap must NOT re-fire MakeTouch
-       (a held replay is a continuation -> Touching, not Start). */
+    /* Silence watchdog: if the stream simply STOPS while a contact is down (no lift
+       frame arrives), the armed timer flushes a BreakTouch so the lift still registers. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
       touch_frame_t f; memset(&f,0,sizeof f);
-      f.ntouches=1; f.touches[0].id=2; f.touches[0].size=20; f.touches[0].state=TS_TOUCHING;
-      mt2_session_frame(&s, BT, &f, 5000, &k);            /* first frame -> START + arm decel */
+      f.ntouches=1; f.touches[0].id=2; f.touches[0].size=20; f.touches[0].x=88; f.touches[0].state=TS_TOUCHING;
+      mt2_session_frame(&s, BT, &f, 5000, &k);             /* contact down -> START + arm watchdog */
       CHECK_EQ(r.last_feed.touches[0].state, TS_START);
-      touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
-      mt2_session_frame(&s, BT, &lift, 5005, &k);          /* liftoff -> decel will replay held */
-      rec_t t={0}; k=mk(&t); mt2_session_timer(&s,&k);
-      CHECK_EQ(t.n_feed, 1); CHECK_EQ(t.last_feed.touches[0].state, TS_TOUCHING); }
+      CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS);
+      rec_t t={0}; k=mk(&t); mt2_session_timer(&s,&k);     /* stream went silent */
+      CHECK_EQ(t.n_feed, 1);
+      CHECK_EQ(t.last_feed.touches[0].state, TS_END);
+      CHECK_EQ(t.last_feed.touches[0].x, 88); }
 
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);

@@ -21,8 +21,7 @@ typedef struct {
     mt2_transport_mode_t mode;
     uint32_t settle_until_ms;
     unsigned last_button;
-    mt2_decel_t decel;
-    mt2_lifecycle_t lifecycle;   /* first-frame -> TS_START (MakeTouch) tracking */
+    mt2_lifecycle_t lifecycle;   /* MakeTouch/BreakTouch lifecycle synthesis */
 } mt2_session_t;
 
 void mt2_session_connect(mt2_session_t *s, uintptr_t source,
