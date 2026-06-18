@@ -55,6 +55,17 @@ static void run_tests(void) {
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
     CHECK_EQ(state, 0x50);        /* lift -> BreakTouch */
     f.touches[0].state = TS_TOUCHING;  /* restore for later cases */
+
+    /* Native tap-to-click gates on contact DENSITY = size*400/radii, which must exceed
+     * 0.75 (RE'd: MTChordCycling::tapHasValidTimingAndStrength reads MTContact+0x5c, fed
+     * by t[6]&0x3f). MT2 size units are far smaller than the MT1 recognizer expects, so a
+     * tap never reaches the strength threshold. A present (touching) contact must report a
+     * firm size for the gate to pass -- independent of the small MT2-derived value. */
+    f.touches[0].state = TS_TOUCHING;
+    f.touches[0].size = 3;                 /* small MT2-derived size */
+    n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
+    CHECK_EQ(n, 4 + 9);
+    CHECK_EQ(buf[4 + 6] & 0x3f, 0x3f);     /* boosted to full strength for the density gate */
     /* Expected scaled coords (independently computed): MT2(752,556) -> MT1. */
     CHECK(x >= 625 && x <= 629);  /* ~627 */
     CHECK(y >= 549 && y <= 553);  /* ~551 */

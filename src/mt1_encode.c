@@ -72,13 +72,23 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
          * finger needs fingerID in 1..5 (thumb..pinky). Assign distinct ids per contact slot. */
         int finger_id = (i % 5) + 1;
 
+        /* Contact size feeds the native tap-to-click strength gate. The recognizer
+         * computes density = size*400/radii and requires it > 0.75 (RE'd in
+         * MultitouchHID: MTChordCycling::tapHasValidTimingAndStrength reads
+         * MTContact+0x5c, sourced from this size field). MT2's size units are far
+         * smaller than the MT1 recognizer expects, so passing the raw value through
+         * leaves density below threshold and no tap ever commits. Report a firm size
+         * (the full 6-bit field) for a present finger so the density gate passes; a
+         * lifting contact (TS_END) keeps its natural decaying size. */
+        int sz6 = (in->state == TS_END) ? (in->size & 0x3f) : 0x3f;
+
         t[0] = (uint8_t)(X & 0xff);
         t[1] = (uint8_t)(((X >> 8) & 0x1f) | ((V & 0x07) << 5));
         t[2] = (uint8_t)((V >> 3) & 0xff);
         t[3] = (uint8_t)((V >> 11) & 0x03);
         t[4] = (uint8_t)(in->touch_major & 0xff);
         t[5] = (uint8_t)(in->touch_minor & 0xff);
-        t[6] = (uint8_t)((in->size & 0x3f) | ((id & 0x03) << 6));
+        t[6] = (uint8_t)(sz6 | ((id & 0x03) << 6));
         t[7] = (uint8_t)((orient << 2) | ((id >> 2) & 0x03));
         t[8] = (uint8_t)((state & 0xf0) | (finger_id & 0x0f));
     }
