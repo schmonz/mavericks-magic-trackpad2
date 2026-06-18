@@ -80,6 +80,22 @@ static void run_tests(void) {
       touch_frame_t f2 = frame_of(1, ids); mt2_lifecycle_step(&lc, &f2);
       CHECK_EQ(f2.touches[0].state, TS_START); }
 
+    /* PRESENCE-BASED: the device reports a transition state on touchdown that our
+       decode mislabels TS_END. A present contact must still be promoted by its
+       PRESENCE -- first frame -> TS_START, continuing -> TS_TOUCHING -- regardless of
+       the incoming per-frame state. (Root cause of "recognizer never sees MakeTouch".) */
+    { mt2_lifecycle_t lc; mt2_lifecycle_reset(&lc);
+      touch_frame_t f; memset(&f, 0, sizeof f);
+      f.ntouches = 1; f.touches[0].id = 3; f.touches[0].size = 20;
+      f.touches[0].state = TS_END;                 /* decode mislabeled the touchdown frame */
+      mt2_lifecycle_step(&lc, &f);
+      CHECK_EQ(f.touches[0].state, TS_START);       /* presence wins: first frame = MakeTouch */
+      touch_frame_t f2; memset(&f2, 0, sizeof f2);
+      f2.ntouches = 1; f2.touches[0].id = 3; f2.touches[0].size = 20;
+      f2.touches[0].state = TS_END;                 /* still mislabeled mid-contact */
+      mt2_lifecycle_step(&lc, &f2);
+      CHECK_EQ(f2.touches[0].state, TS_TOUCHING); } /* continuing = Touching, not a lift */
+
     /* flush: emits TS_END for all still-active ids, then clears. */
     { mt2_lifecycle_t lc; mt2_lifecycle_reset(&lc);
       int ids2[] = {2, 5}; touch_frame_t f1 = frame_of(2, ids2); mt2_lifecycle_step(&lc, &f1);

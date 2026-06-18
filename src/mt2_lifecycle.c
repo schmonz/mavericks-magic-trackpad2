@@ -8,12 +8,16 @@ void mt2_lifecycle_reset(mt2_lifecycle_t *lc) {
 void mt2_lifecycle_step(mt2_lifecycle_t *lc, touch_frame_t *frame) {
     uint32_t now_ids = 0;
 
-    /* Pass 1: promote new contacts to TS_START and record present ids + positions. */
+    /* Pass 1: state by PRESENCE, not by the device's per-frame state bits. The MT2
+     * device reports a transition state on touchdown that mt2_decode mislabels TS_END;
+     * surfacing that as a lift means the recognizer never sees MakeTouch and never
+     * commits a tap. A contact that is present here (it survived mt2_drop_lifted, which
+     * keys on size) is touching: its first frame for an id is TS_START (MakeTouch),
+     * later frames are TS_TOUCHING. Only a VANISHED contact (pass 2) is a real lift. */
     for (int i = 0; i < frame->ntouches; i++) {
         int id = frame->touches[i].id & 0x0f;
         uint32_t bit = (uint32_t)1u << id;
-        if (frame->touches[i].state == TS_TOUCHING && !(lc->prev_ids & bit))
-            frame->touches[i].state = TS_START;
+        frame->touches[i].state = (lc->prev_ids & bit) ? TS_TOUCHING : TS_START;
         now_ids |= bit;
         lc->last[id] = frame->touches[i];
     }
