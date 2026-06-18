@@ -14,9 +14,14 @@
 #define MT1_HEADER    4
 #define MT1_RECSZ     9
 
-/* MT1 touch states (Linux): NONE 0x00, START 0x30, DRAG 0x40; mask 0xf0. */
-#define MT1_STATE_NONE 0x00
-#define MT1_STATE_DRAG 0x40
+/* MT1 touch states (Linux): NONE 0x00, START 0x30, DRAG 0x40; mask 0xf0.
+ * Confirmed vs the 10.9.5 CompactV4 decode: the state nibble IS the MTTouchState
+ * directly (no remap) -- 0x30 -> MakeTouch(3), 0x40 -> Touching(4). The recognizer
+ * keys tap-to-click on a distinct MakeTouch first frame, so a contact's first frame
+ * must carry START (0x30), not DRAG. */
+#define MT1_STATE_NONE  0x00
+#define MT1_STATE_START 0x30
+#define MT1_STATE_DRAG  0x40
 
 static int scale(int v, int inMin, int inMax, int outMin, int outMax) {
     long span = inMax - inMin;
@@ -55,8 +60,9 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
 
         int id = in->id & 0xf;
         int orient = (in->orientation + 32) & 0x3f;
-        int state = (in->state == TS_TOUCHING || in->state == TS_START)
-                    ? MT1_STATE_DRAG : MT1_STATE_NONE;
+        int state = (in->state == TS_START)    ? MT1_STATE_START :
+                    (in->state == TS_TOUCHING) ? MT1_STATE_DRAG  :
+                                                 MT1_STATE_NONE;
         /* Finger-role identity: Apple's MTParse_CompactV4BinaryPath reads the LOW nibble
          * of the per-touch state byte (t[8] & 0x0f) as the fingerID, then mt_GetProtocolFingerID
          * returns it. fingerID 0 = "unidentified" -> MultitouchSupport's recognizer classifies

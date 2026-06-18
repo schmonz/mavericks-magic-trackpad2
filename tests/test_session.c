@@ -97,6 +97,40 @@ static void run_tests(void) {
       mt2_session_frame(&s, BT, &f, 10000, &k); CHECK_EQ(r2.n_feed, 1);  /* flows at reconnect, no re-gate */
       mt2_session_frame(&s, BT, &f, 10500, &k); CHECK_EQ(r2.n_feed, 2); }/* keeps flowing */
 
+    /* lifecycle: a new contact's FIRST emitted frame is TS_START (MakeTouch),
+       subsequent frames are TS_TOUCHING -- the transition tap-to-click needs. */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
+      touch_frame_t f; memset(&f,0,sizeof f);
+      f.ntouches=1; f.touches[0].id=3; f.touches[0].size=20; f.touches[0].state=TS_TOUCHING;
+      mt2_session_frame(&s, BT, &f, 5000, &k);
+      CHECK_EQ(r.last_feed.touches[0].state, TS_START);     /* first frame -> MakeTouch */
+      mt2_session_frame(&s, BT, &f, 5005, &k);
+      CHECK_EQ(r.last_feed.touches[0].state, TS_TOUCHING); }/* continuation */
+
+    /* lifecycle (STREAMING/USB too): first frame of a contact -> TS_START */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, USB, MT2_STREAMING, 0);
+      touch_frame_t f; memset(&f,0,sizeof f);
+      f.ntouches=1; f.touches[0].id=7; f.touches[0].size=20; f.touches[0].state=TS_TOUCHING;
+      mt2_session_frame(&s, USB, &f, 5000, &k);
+      CHECK_EQ(r.last_feed.touches[0].state, TS_START);
+      mt2_session_frame(&s, USB, &f, 5005, &k);
+      CHECK_EQ(r.last_feed.touches[0].state, TS_TOUCHING); }
+
+    /* lifecycle: the decel replay after a 1-frame tap must NOT re-fire MakeTouch
+       (a held replay is a continuation -> Touching, not Start). */
+    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
+      touch_frame_t f; memset(&f,0,sizeof f);
+      f.ntouches=1; f.touches[0].id=2; f.touches[0].size=20; f.touches[0].state=TS_TOUCHING;
+      mt2_session_frame(&s, BT, &f, 5000, &k);            /* first frame -> START + arm decel */
+      CHECK_EQ(r.last_feed.touches[0].state, TS_START);
+      touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
+      mt2_session_frame(&s, BT, &lift, 5005, &k);          /* liftoff -> decel will replay held */
+      rec_t t={0}; k=mk(&t); mt2_session_timer(&s,&k);
+      CHECK_EQ(t.n_feed, 1); CHECK_EQ(t.last_feed.touches[0].state, TS_TOUCHING); }
+
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);

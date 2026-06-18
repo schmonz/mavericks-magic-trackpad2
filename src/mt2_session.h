@@ -1,6 +1,7 @@
 #ifndef MT2_SESSION_H
 #define MT2_SESSION_H
 #include "mt2_pipeline.h"
+#include "mt2_lifecycle.h"
 #include "touch_model.h"
 #include <stdint.h>
 
@@ -21,6 +22,7 @@ typedef struct {
     uint32_t settle_until_ms;
     unsigned last_button;
     mt2_decel_t decel;
+    mt2_lifecycle_t lifecycle;   /* first-frame -> TS_START (MakeTouch) tracking */
 } mt2_session_t;
 
 void mt2_session_connect(mt2_session_t *s, uintptr_t source,

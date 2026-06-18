@@ -34,7 +34,19 @@ static void run_tests(void) {
     int id, x, y, state;
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
     CHECK_EQ(id, 9);
-    CHECK_EQ(state, 0x40);        /* down -> DRAG */
+    CHECK_EQ(state, 0x40);        /* down -> DRAG (Touching) */
+
+    /* A contact's FIRST frame is TS_START and must encode to MakeTouch (0x30):
+     * the gesture recognizer keys tap-to-click on the MakeTouch->BreakTouch
+     * transition; without a distinct first frame the contact reads as already
+     * Touching and a tap never commits. (state nibble verified vs the 10.9.5
+     * CompactV4 decode: 0x30 -> MTTouchState MakeTouch(3).) */
+    f.touches[0].state = TS_START;
+    n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
+    CHECK_EQ(n, 4 + 9);
+    mt1_decode_record(buf + 4, &id, &x, &y, &state);
+    CHECK_EQ(state, 0x30);        /* first frame -> MakeTouch */
+    f.touches[0].state = TS_TOUCHING;  /* restore for later cases */
     /* Expected scaled coords (independently computed): MT2(752,556) -> MT1. */
     CHECK(x >= 625 && x <= 629);  /* ~627 */
     CHECK(y >= 549 && y <= 553);  /* ~551 */

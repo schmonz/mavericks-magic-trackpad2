@@ -11,7 +11,7 @@ LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 OBJS = $(KEXT_NAME).o MT2HIDShell.o \
        MT2BTReader.o mt2_bt_decode.o mt1_encode.o \
        MT2USBReader.o mt2_usb_decode.o mt2_decode.o \
-       mt2_pipeline.o mt2_session.o
+       mt2_pipeline.o mt2_lifecycle.o mt2_session.o
 
 .PHONY: all clean load unload
 
@@ -41,7 +41,9 @@ mt2_decode.o: ../src/mt2_decode.c ../src/mt2_decode.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 mt2_pipeline.o: ../src/mt2_pipeline.c ../src/mt2_pipeline.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-mt2_session.o: ../src/mt2_session.c ../src/mt2_session.h ../src/mt2_pipeline.h ../src/touch_model.h
+mt2_lifecycle.o: ../src/mt2_lifecycle.c ../src/mt2_lifecycle.h ../src/touch_model.h
+	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
+mt2_session.o: ../src/mt2_session.c ../src/mt2_session.h ../src/mt2_pipeline.h ../src/mt2_lifecycle.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 
 $(KEXT_NAME).kext: $(OBJS) Info.plist

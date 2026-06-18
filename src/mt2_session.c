@@ -7,6 +7,7 @@ void mt2_session_connect(mt2_session_t *s, uintptr_t source,
     s->settle_until_ms = now_ms + MT2_SETTLE_MS;
     s->last_button = 0;
     s->decel.step = 3;                       /* idle until a contact arms it */
+    mt2_lifecycle_reset(&s->lifecycle);      /* next contacts read as new (MakeTouch) */
 }
 
 static void emit(mt2_session_t *s, const touch_frame_t *tf,
@@ -22,14 +23,25 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
                        const mt2_session_sink_t *sink) {
     if (source != s->active_source) return;                       /* single-active guard */
     if (!mt2_settle_passed(now_ms, s->settle_until_ms)) return;   /* settle gate */
-    if (s->mode == MT2_STREAMING) { emit(s, tf, sink); return; }  /* pass-through */
+    if (s->mode == MT2_STREAMING) {                               /* pass-through */
+        touch_frame_t f = *tf;
+        mt2_lifecycle_mark(&s->lifecycle, &f);                    /* first frame -> MakeTouch */
+        emit(s, &f, sink);
+        return;
+    }
 
     /* EVENT_DRIVEN: lift-drop + idle-decel/clean-lift (decel replays in Task 6) */
     {
         touch_frame_t f = *tf;
         mt2_drop_lifted(&f);
         if (f.ntouches > 0) {
+            mt2_lifecycle_mark(&s->lifecycle, &f);   /* mark on the post-lift-drop frame */
             emit(s, &f, sink);
+            /* decel replays `held` as a CONTINUATION at zero velocity, so it must not
+             * re-fire MakeTouch: downgrade any first-frame START to Touching before
+             * arming. (Reachable only for a 1-frame tap, but keeps the replay honest.) */
+            for (int i = 0; i < f.ntouches; i++)
+                if (f.touches[i].state == TS_START) f.touches[i].state = TS_TOUCHING;
             mt2_decel_arm(&s->decel, &f);
             sink->arm_timer(sink->ctx, MT2_IDLE_MS);
         } else {
