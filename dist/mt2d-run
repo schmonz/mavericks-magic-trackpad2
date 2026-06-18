@@ -2,8 +2,8 @@
 # Launchd boot wrapper: bring up full-gesture MT2 support, with a minimal
 # anti-brick-loop guard.
 #
-# The single unsigned kext loads from this loose path (kext-dev-mode permits
-# unsigned loads outside /Library/Extensions); it is NEVER placed in /Library/
+# The single unsigned kext loads from this loose path: on 10.9, unsigned kexts
+# load from outside /Library/Extensions; it is NEVER placed in /Library/
 # Extensions or the boot caches, so the kernel always boots clean. MT2Gesture
 # matches IOResources; if loading it ever panics the machine, the guard below
 # stops re-loading it on the next boot so we never get a boot-crash loop.
