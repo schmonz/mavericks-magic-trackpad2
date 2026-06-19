@@ -23,28 +23,44 @@ static int frame_has_breaktouch(const touch_frame_t *f) {
     return 0;
 }
 
-/* Emit a frame, then -- if it carried a BreakTouch (a contact's clean lift) -- emit one
-   trailing zero-contact frame. The gesture recognizer finalizes a contact's path liftoff
-   only when it observes the contact ABSENT in a frame AFTER the BreakTouch; the session
-   otherwise emits only frames that contain contacts, so without this the path never lifts
-   (its liftoff stage timestamp stays unset, the chord-cycling tap gate never re-arms) and
-   no tap-to-click ever commits. RE'd on 10.9.5: MTChordCyclingTrackpad::chk4newTapChord
-   bails until the path's stage clock advances, which only happens once the absence lands. */
-/* EXPERIMENT (2026-06-19): the trailing empty frame was added (round-8) so the recognizer
- * would finalize liftoff and commit a tap -- but that was BEFORE the density fix. With proper
- * MakeTouch/strength now, the BreakTouch (st=5) frame may finalize the lift on its own, and the
- * extra empty frame appears to drive a SECOND handleChordLiftoff per tap (-> erratic double /
- * tap-drag-cycle toggle). Toggle to compare. Shared path => both transports. */
-#define MT2_LIFTOFF_EMPTY 1   /* REQUIRED for tap-commit (tested 2026-06-19: 0 => taps don't click) */
+/* Emit a frame, then -- if it carried a BreakTouch (a contact's clean lift) -- stage the
+   rest of the native liftoff sequence: an explicit NotTracking (inactive) frame for the
+   ended contacts, then one trailing zero-contact (absence) frame.
+
+   Staging mirrors the shipping MT2 simulator (acidanthera/VoodooInput
+   VoodooInputSimulatorDevice: Stop -> Inactive -> absence). Two reasons it matters:
+   - The absence frame is what finalizes the path liftoff: the recognizer advances a
+     contact's liftoff stage clock only once it observes the contact ABSENT in a frame
+     AFTER the BreakTouch (RE'd on 10.9.5: MTChordCyclingTrackpad::chk4newTapChord bails
+     until the stage clock advances). Without it no tap-to-click ever commits.
+   - Walking the contact through an explicit NotTracking frame BEFORE the absence (rather
+     than jumping BreakTouch -> absence) keeps the recognizer from reading the absence as a
+     SECOND liftoff -- the round-8 bare-absence path drove a phantom second click ~6ms after
+     the real one (handleChordTaps -> MTTapDragManager::handleTapsForDrag), the tap-drag-cycle
+     toggle. The inactive frame is a present-but-NotTracking record (zeroed strength, so
+     mt1_encode reads it as torn-down, not a fresh firm touch).
+   Shared path => both transports. */
+static void emit_inactive(mt2_session_t *s, const touch_frame_t *tf,
+                          const mt2_session_sink_t *sink) {
+    touch_frame_t inactive = {0};
+    for (int i = 0; i < tf->ntouches; i++) {
+        if (tf->touches[i].state != TS_END) continue;
+        touch_t t = tf->touches[i];          /* keep id + last-known position */
+        t.state = TS_NONE;                   /* NotTracking */
+        t.size = t.touch_major = t.touch_minor = 0;   /* torn-down: zeroed strength */
+        inactive.touches[inactive.ntouches++] = t;
+    }
+    if (inactive.ntouches > 0) emit(s, &inactive, sink);
+}
+
 static void emit_with_liftoff(mt2_session_t *s, const touch_frame_t *tf,
                               const mt2_session_sink_t *sink) {
     emit(s, tf, sink);
-#if MT2_LIFTOFF_EMPTY
     if (frame_has_breaktouch(tf)) {
+        emit_inactive(s, tf, sink);
         touch_frame_t empty = {0};
         emit(s, &empty, sink);
     }
-#endif
 }
 
 void mt2_session_frame(mt2_session_t *s, uintptr_t source,

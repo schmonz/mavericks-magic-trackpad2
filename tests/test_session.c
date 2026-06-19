@@ -71,11 +71,15 @@ static void run_tests(void) {
       rec_t r2={0}; k=mk(&r2);
       touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
       mt2_session_frame(&s, BT, &lift, 5010, &k);
-      CHECK_EQ(r2.n_feed, 2);                                   /* BreakTouch, then trailing empty */
+      CHECK_EQ(r2.n_feed, 3);                                   /* BreakTouch, inactive, trailing empty */
       CHECK_EQ(r2.feeds[0].ntouches, 1);
       CHECK_EQ(r2.feeds[0].touches[0].state, TS_END);
       CHECK_EQ(r2.feeds[0].touches[0].x, 70);                  /* last-known position */
-      CHECK_EQ(r2.feeds[1].ntouches, 0);                       /* absence frame finalizes the path liftoff */
+      CHECK_EQ(r2.feeds[1].ntouches, 1);                       /* explicit NotTracking before absence */
+      CHECK_EQ(r2.feeds[1].touches[0].state, TS_NONE);
+      CHECK_EQ(r2.feeds[1].touches[0].x, 70);                  /* same last-known position */
+      CHECK_EQ(r2.feeds[1].touches[0].size, 0);                /* torn-down: zeroed strength */
+      CHECK_EQ(r2.feeds[2].ntouches, 0);                       /* absence frame finalizes the path liftoff */
       CHECK_EQ(r2.n_arm, 0);                                    /* clean lift: no watchdog */
       rec_t t1={0}; k=mk(&t1); mt2_session_timer(&s,&k);
       CHECK_EQ(t1.n_feed, 0); }                                 /* nothing left to flush */
@@ -132,10 +136,12 @@ static void run_tests(void) {
       CHECK_EQ(r.last_feed.touches[0].state, TS_START);
       CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS);
       rec_t t={0}; k=mk(&t); mt2_session_timer(&s,&k);     /* stream went silent */
-      CHECK_EQ(t.n_feed, 2);                               /* BreakTouch, then trailing empty */
+      CHECK_EQ(t.n_feed, 3);                               /* BreakTouch, inactive, trailing empty */
       CHECK_EQ(t.feeds[0].touches[0].state, TS_END);
       CHECK_EQ(t.feeds[0].touches[0].x, 88);
-      CHECK_EQ(t.feeds[1].ntouches, 0); }                  /* absence finalizes the lift */
+      CHECK_EQ(t.feeds[1].touches[0].state, TS_NONE);      /* explicit NotTracking before absence */
+      CHECK_EQ(t.feeds[1].touches[0].x, 88);
+      CHECK_EQ(t.feeds[2].ntouches, 0); }                  /* absence finalizes the lift */
 
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);

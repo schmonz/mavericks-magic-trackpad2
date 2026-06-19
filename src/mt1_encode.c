@@ -86,15 +86,21 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
          * finger needs fingerID in 1..5 (thumb..pinky). Assign distinct ids per contact slot. */
         int finger_id = (i % 5) + 1;
 
+        /* The firm-strength/radius boost below applies only to a PRESENT (touching) contact.
+         * A contact being torn down -- TS_END (BreakTouch, lifting) or TS_NONE (NotTracking,
+         * the explicit inactive frame of the liftoff staging) -- keeps its natural (decaying
+         * or zeroed) values, so the teardown frames read as a genuine lift, not a fresh firm
+         * touch. */
+        int present = (in->state == TS_START || in->state == TS_TOUCHING);
+
         /* Contact size feeds the native tap-to-click strength gate. The recognizer
          * computes density = size*400/radii and requires it > 0.75 (RE'd in
          * MultitouchHID: MTChordCycling::tapHasValidTimingAndStrength reads
          * MTContact+0x5c, sourced from this size field). MT2's size units are far
          * smaller than the MT1 recognizer expects, so passing the raw value through
          * leaves density below threshold and no tap ever commits. Report a firm size
-         * (the full 6-bit field) for a present finger so the density gate passes; a
-         * lifting contact (TS_END) keeps its natural decaying size. */
-        int sz6 = (in->state == TS_END) ? (in->size & 0x3f) : 0x3f;
+         * (the full 6-bit field) for a present finger so the density gate passes. */
+        int sz6 = present ? 0x3f : (in->size & 0x3f);
 
         /* The same density = size*400/radii gate divides by the touch radii (major/minor).
          * size is force-maxed above, but the RAW MT2 radii were passed through -- and MT2's
@@ -102,9 +108,9 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
          * density below the strength threshold (measured: BT den~7 PASSES, USB den~3.8 FAILS;
          * USB reports larger radii). Compensate the radii the same way size is compensated:
          * report a firm (small) radius for a present finger so density clears the gate on
-         * BOTH transports; a lifting contact (TS_END) keeps its natural radii. TUNABLE. */
-        int maj = (in->state == TS_END) ? (in->touch_major & 0xff) : MT1_FIRM_RADIUS;
-        int min = (in->state == TS_END) ? (in->touch_minor & 0xff) : MT1_FIRM_RADIUS;
+         * BOTH transports. TUNABLE. */
+        int maj = present ? MT1_FIRM_RADIUS : (in->touch_major & 0xff);
+        int min = present ? MT1_FIRM_RADIUS : (in->touch_minor & 0xff);
 
         t[0] = (uint8_t)(X & 0xff);
         t[1] = (uint8_t)(((X >> 8) & 0x1f) | ((V & 0x07) << 5));
