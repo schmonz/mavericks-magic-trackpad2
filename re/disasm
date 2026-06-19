@@ -1,17 +1,62 @@
 #!/bin/sh
-# disasm - print a bounded function/range disassembly of a Mach-O slice (x86_64).
-# Unix filter: writes "address  instruction" lines to stdout.
-# Usage: disasm <binary> <start-hex> [end-hex] [arch]
-#   start/end are file offsets like 227d0 or 0x227d0 (matched against otool addresses).
-#   With no end, prints up to 80 instructions from start.
-#   disasm .../MultitouchHID 227d0 22932
-bin=$1; start=$2; end=$3; arch=${4:-x86_64}
-[ -n "$bin" ] && [ -n "$start" ] || {
-  echo "usage: $(basename "$0") <binary> <start-hex> [end-hex] [arch]" >&2; exit 2; }
-norm() { printf '%016x' "0x${1#0x}"; }   # 16-digit zero-padded address, leading 0x optional
-s=$(norm "$start"); e=""; [ -n "$end" ] && e=$(norm "$end")
-otool -tV -arch "$arch" "$bin" 2>/dev/null | awk -v s="$s" -v e="$e" -v max=80 '
-  $1==s { p=1 }
-  p     { print; c++ }
-  e!="" && p && $1==e { exit }
-  e=="" && c>=max     { exit }'
+# disasm - show a function's machine code BY NAME, in a stable, readable layout.
+#
+# You name the function; this finds where it lives and how long it is (the cryptic
+# otool/nm address arithmetic is hidden). Output is designed to be both pipe-parseable
+# and legible to a programmer who doesn't live in disassemblers:
+#
+#   # function: <demangled C++ signature>
+#   # binary:   <path> (<arch>)   range 0x<start>..0x<end>
+#   # columns:  offset  address  instruction       (offset = bytes from function start)
+#   +0x0      0x227d0  push %rbp
+#   +0x1      0x227d1  mov %rsp, %rbp
+#   ...
+#
+# '#' lines are comments (skip with `grep -v '^#'`); body columns split on whitespace
+# (offset=$1, address=$2, instruction=$3..). Symbol references are demangled.
+#
+# Usage: disasm <binary> "<function name>"      # substring of the demangled C++ name
+#        disasm <binary> <start-hex> [end-hex]   # raw address range, for unnamed code
+#   Arch defaults to x86_64; override with RE_ARCH=i386.
+#
+# Examples:
+#   disasm .../MultitouchHID "tapHasValidTimingAndStrength"
+#   disasm .../MultitouchHID "MTChordTable::findMatchingChord"
+bin=$1; want=$2; endarg=$3
+arch=${RE_ARCH:-x86_64}
+[ -n "$bin" ] && [ -n "$want" ] || {
+  echo "usage: $(basename "$0") <binary> \"<function name>\" | <start-hex> [end-hex]" >&2; exit 2; }
+
+pad() { printf '%016x' "0x${1#0x}"; }
+sig=""
+if printf '%s' "$want" | grep -qiE '^(0x)?[0-9a-f]+$'; then
+  start=$(pad "$want"); end=""; [ -n "$endarg" ] && end=$(pad "$endarg")
+  sig="(raw range)"
+else
+  # function-name mode: start = the symbol's address, end = the next symbol's address.
+  # `nm -n` is address-sorted; `c++filt` demangles the names so the match reads naturally.
+  hit=$(nm -n -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v q="$want" '
+    $2=="T" || $2=="t" { n++; addr[n]=$1; line[n]=$0 }
+    END { for (i=1;i<=n;i++) if (index(line[i],q)>0) {
+            print addr[i]; print (i<n?addr[i+1]:""); print line[i]; exit } }')
+  [ -n "$hit" ] || { echo "no function matching: $want" >&2; exit 1; }
+  start=$(pad "$(printf '%s\n' "$hit" | sed -n 1p)")
+  eraw=$(printf '%s\n' "$hit" | sed -n 2p); end=""; [ -n "$eraw" ] && end=$(pad "$eraw")
+  sig=$(printf '%s\n' "$hit" | sed -n 3p | sed -E 's/^[0-9a-f]+[[:space:]]+[A-Za-z][[:space:]]+//')
+fi
+
+si=$(printf '%d' "0x$start"); ei=""; [ -n "$end" ] && ei=$(printf '%d' "0x$end")
+echo "# function: $sig"
+echo "# binary:   $bin ($arch)   range 0x$(printf %x "$si")$([ -n "$ei" ] && printf '..0x%x' "$ei")"
+echo "# columns:  offset  address  instruction"
+otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v si="$si" -v ei="$ei" -v max=400 '
+  function h2i(x,  n,i,c){ sub(/^0x/,"",x); x=tolower(x); n=0
+    for(i=1;i<=length(x);i++){ c=index("0123456789abcdef",substr(x,i,1))-1; n=n*16+c } return n }
+  $1 ~ /^[0-9a-f]{5,16}$/ {
+    a=h2i($1)
+    if (a < si) next
+    if (ei!="" && a >= ei) exit
+    instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
+    printf "+0x%-5x 0x%x  %s\n", a-si, a, instr
+    shown++; if (ei=="" && shown>=max) exit
+  }'

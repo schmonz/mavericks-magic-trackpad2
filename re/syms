@@ -1,8 +1,41 @@
 #!/bin/sh
-# syms - list (demangled) symbols of a Mach-O slice, optionally filtered.
-# Unix filter: writes "addr type name" lines to stdout.
-# Usage: syms <binary> [regex] [arch]
-#   syms .../MultitouchHID 'Tap|Chord|Slide'
-bin=$1; pat=${2:-.}; arch=${3:-x86_64}
-[ -n "$bin" ] || { echo "usage: $(basename "$0") <binary> [regex] [arch]" >&2; exit 2; }
-nm -arch "$arch" "$bin" 2>/dev/null | c++filt | grep -iE "$pat"
+# syms - list a binary's symbols by readable name, in a stable, parseable layout.
+#
+# Hides nm's cryptic single-letter type codes and mangled names. Output:
+#
+#   # symbols in <path> (<arch>) matching: <filter>
+#   # columns: address  kind  name
+#   0x227d0  text  MTChordCycling::tapHasValidTimingAndStrength(...)
+#   -        undefined  IOService::registerService(unsigned int)
+#
+# '#' lines are comments; body splits on whitespace (address=$1, kind=$2, name=$3..).
+# kind is a word (text/data/bss/const/symbol/undefined/absolute), not a letter.
+#
+# Usage: syms <binary> ["name filter"]     # filter is a regex over the demangled name
+#   Arch defaults to x86_64; override with RE_ARCH=i386.
+#
+# Examples:
+#   syms .../MultitouchHID "Tap|Chord"
+#   syms .../AppleBluetoothMultitouch "BNBTrackpad"
+bin=$1; pat=${2:-.}; arch=${RE_ARCH:-x86_64}
+[ -n "$bin" ] || { echo "usage: $(basename "$0") <binary> [\"name filter\"]" >&2; exit 2; }
+
+echo "# symbols in $bin ($arch) matching: $pat"
+echo "# columns: address  kind  name"
+nm -n -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v q="$pat" '
+  function kindword(k){
+    if(k=="T"||k=="t") return "text"
+    if(k=="D"||k=="d") return "data"
+    if(k=="B"||k=="b") return "bss"
+    if(k=="S"||k=="s") return "symbol"
+    if(k=="C"||k=="c") return "const"
+    if(k=="U")         return "undefined"
+    if(k=="A")         return "absolute"
+    return k
+  }
+  {
+    if (NF>=3 && $1 ~ /^[0-9a-f]+$/) { addr="0x"$1; kind=kindword($2); sub(/^[0-9a-f]+[ \t]+[A-Za-z][ \t]+/,"") }
+    else                            { addr="-";     kind=kindword($1); sub(/^[ \t]*[A-Za-z][ \t]+/,"") }
+    if ($0=="" ) next
+    if ($0 ~ q) printf "%s\t%s\t%s\n", addr, kind, $0
+  }'
