@@ -30,13 +30,21 @@ static int frame_has_breaktouch(const touch_frame_t *f) {
    (its liftoff stage timestamp stays unset, the chord-cycling tap gate never re-arms) and
    no tap-to-click ever commits. RE'd on 10.9.5: MTChordCyclingTrackpad::chk4newTapChord
    bails until the path's stage clock advances, which only happens once the absence lands. */
+/* EXPERIMENT (2026-06-19): the trailing empty frame was added (round-8) so the recognizer
+ * would finalize liftoff and commit a tap -- but that was BEFORE the density fix. With proper
+ * MakeTouch/strength now, the BreakTouch (st=5) frame may finalize the lift on its own, and the
+ * extra empty frame appears to drive a SECOND handleChordLiftoff per tap (-> erratic double /
+ * tap-drag-cycle toggle). Toggle to compare. Shared path => both transports. */
+#define MT2_LIFTOFF_EMPTY 1   /* REQUIRED for tap-commit (tested 2026-06-19: 0 => taps don't click) */
 static void emit_with_liftoff(mt2_session_t *s, const touch_frame_t *tf,
                               const mt2_session_sink_t *sink) {
     emit(s, tf, sink);
+#if MT2_LIFTOFF_EMPTY
     if (frame_has_breaktouch(tf)) {
         touch_frame_t empty = {0};
         emit(s, &empty, sink);
     }
+#endif
 }
 
 void mt2_session_frame(mt2_session_t *s, uintptr_t source,

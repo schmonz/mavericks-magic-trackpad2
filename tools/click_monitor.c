@@ -7,20 +7,26 @@
 #include <stdlib.h>
 
 static int g_clicks = 0;
+static double g_prev_ms = -1;
 
 static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef e, void *ctx) {
     (void)proxy; (void)ctx;
     const char *name = 0;
     switch (type) {
-        case kCGEventLeftMouseDown:  name = "LeftDown";  break;
-        case kCGEventLeftMouseUp:    name = "LeftUp";    break;
-        case kCGEventRightMouseDown: name = "RightDown"; break;
-        case kCGEventRightMouseUp:   name = "RightUp";   break;
+        case kCGEventLeftMouseDown:   name = "LeftDown";  break;
+        case kCGEventLeftMouseUp:     name = "LeftUp";    break;
+        case kCGEventLeftMouseDragged:name = "LeftDrag";  break;
+        case kCGEventRightMouseDown:  name = "RightDown"; break;
+        case kCGEventRightMouseUp:    name = "RightUp";   break;
         default: return e;
     }
     CGPoint p = CGEventGetLocation(e);
-    g_clicks++;
-    printf("CLICK %-9s at (%.0f,%.0f)\n", name, p.x, p.y);
+    /* event timestamp -> ms; dt = gap since previous event (reveals double-clicks). */
+    double ms = (double)CGEventGetTimestamp(e) / 1.0e6;
+    double dt = (g_prev_ms < 0) ? 0.0 : (ms - g_prev_ms);
+    g_prev_ms = ms;
+    if (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown) g_clicks++;
+    printf("%-9s at (%.0f,%.0f)  dt=%+8.1fms\n", name, p.x, p.y, dt);
     fflush(stdout);
     return e;
 }
@@ -28,6 +34,7 @@ static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef e, void
 int main(int argc, char **argv) {
     int secs = (argc > 1) ? atoi(argv[1]) : 6;
     CGEventMask mask = CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventLeftMouseUp) |
+                       CGEventMaskBit(kCGEventLeftMouseDragged) |
                        CGEventMaskBit(kCGEventRightMouseDown) | CGEventMaskBit(kCGEventRightMouseUp);
     CFMachPortRef tap = CGEventTapCreate(kCGHIDEventTap, kCGTailAppendEventTap,
                                          kCGEventTapOptionListenOnly, mask, cb, NULL);

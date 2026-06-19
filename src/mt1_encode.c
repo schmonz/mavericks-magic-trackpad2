@@ -24,6 +24,11 @@
 #define MT1_STATE_DRAG  0x40   /* Touching(4)   -- contact held */
 #define MT1_STATE_BREAK 0x50   /* BreakTouch(5) -- contact lifting */
 
+/* Firm touch radius (major/minor) for a present contact, to lift density (size*400/radii)
+ * above the recognizer's strength gate on both transports. Tuned empirically vs mt_contacts
+ * `den` (target comfortably > the BT-passing ~7). Smaller => higher density. */
+#define MT1_FIRM_RADIUS 0x20
+
 static int scale(int v, int inMin, int inMax, int outMin, int outMax) {
     long span = inMax - inMin;
     if (span == 0) return outMin;
@@ -91,12 +96,22 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
          * lifting contact (TS_END) keeps its natural decaying size. */
         int sz6 = (in->state == TS_END) ? (in->size & 0x3f) : 0x3f;
 
+        /* The same density = size*400/radii gate divides by the touch radii (major/minor).
+         * size is force-maxed above, but the RAW MT2 radii were passed through -- and MT2's
+         * radii units are LARGER than the MT1 recognizer expects, so the denominator kept
+         * density below the strength threshold (measured: BT den~7 PASSES, USB den~3.8 FAILS;
+         * USB reports larger radii). Compensate the radii the same way size is compensated:
+         * report a firm (small) radius for a present finger so density clears the gate on
+         * BOTH transports; a lifting contact (TS_END) keeps its natural radii. TUNABLE. */
+        int maj = (in->state == TS_END) ? (in->touch_major & 0xff) : MT1_FIRM_RADIUS;
+        int min = (in->state == TS_END) ? (in->touch_minor & 0xff) : MT1_FIRM_RADIUS;
+
         t[0] = (uint8_t)(X & 0xff);
         t[1] = (uint8_t)(((X >> 8) & 0x1f) | ((V & 0x07) << 5));
         t[2] = (uint8_t)((V >> 3) & 0xff);
         t[3] = (uint8_t)((V >> 11) & 0x03);
-        t[4] = (uint8_t)(in->touch_major & 0xff);
-        t[5] = (uint8_t)(in->touch_minor & 0xff);
+        t[4] = (uint8_t)(maj & 0xff);
+        t[5] = (uint8_t)(min & 0xff);
         t[6] = (uint8_t)(sz6 | ((id & 0x03) << 6));
         t[7] = (uint8_t)((orient << 2) | ((id >> 2) & 0x03));
         t[8] = (uint8_t)((state & 0xf0) | (finger_id & 0x0f));
