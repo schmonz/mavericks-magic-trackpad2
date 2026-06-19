@@ -42,7 +42,8 @@ pid$target:MultitouchHID:*Trackpad*handleChordTaps*:entry
 }
 pid$target:MultitouchHID:*handleTapsForDrag*:entry
 {
-    printf("[%u]   -> handleTapsForDrag  (drag/phantom path)\n", (uint32_t)(timestamp/1000000));
+    this->st = *(uint32_t *)copyin(arg0 + 0xc, 4);   /* MTTapDragManager state @+0xc */
+    printf("[%u]   -> handleTapsForDrag  state(0xc)=%u\n", (uint32_t)(timestamp/1000000), this->st);
     @drag = count();
 }
 pid$target:MultitouchHID:*clearCycle*:entry
@@ -64,6 +65,11 @@ pid$target:MultitouchHID:*handleChordLiftoff*:entry
 {
     printf("[%u] handleChordLiftoff\n", (uint32_t)(timestamp/1000000));
     @lift = count();
+}
+pid$target:MultitouchHID:*dispatchEvents*:entry
+{
+    printf("[%u]   .. dispatchEvents phase=0x%x\n", (uint32_t)(timestamp/1000000), (int)arg2);
+    @disp = count();
 }
 
 profile:::tick-1sec { secs++; }
