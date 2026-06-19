@@ -11,7 +11,7 @@
 #   sudo tools/tap_clicks.sh [ntaps] [gap_ms]
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd); ROOT=$(cd "$HERE/.." && pwd)
-N=${1:-10}; GAP=${2:-500}
+N=${1:-10}; GAP=${2:-500}; DF=${3:-5}; FMS=${4:-12}
 cc -I "$ROOT/src" -o "$HERE/synth_tap" "$HERE/synth_tap.c" \
    "$ROOT/src/mt2_session.c" "$ROOT/src/mt2_lifecycle.c" \
    "$ROOT/src/mt2_pipeline.c" "$ROOT/src/mt1_encode.c" \
@@ -21,7 +21,7 @@ WINDOW=$(( (N * (GAP + 80)) / 1000 + 6 ))
 "$HERE/click_monitor" "$WINDOW" >"$CM" 2>&1 &
 CMPID=$!
 sleep 1
-SYNTH_TAPS="$N" SYNTH_GAP_MS="$GAP" "$HERE/synth_tap" 5 12 0 0 >/dev/null 2>&1 || true
+SYNTH_TAPS="$N" SYNTH_GAP_MS="$GAP" "$HERE/synth_tap" "$DF" "$FMS" 0 0 >/dev/null 2>&1 || true
 wait "$CMPID" 2>/dev/null || true
 # classify: a LeftDown with dt < 25ms after the prior event is a phantom; else clean.
 awk '
