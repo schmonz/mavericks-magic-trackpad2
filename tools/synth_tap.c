@@ -79,26 +79,38 @@ int main(int argc, char **argv) {
     mt2_session_connect(&s, (uintptr_t)SRC, MT2_EVENT_DRIVEN, now);
     printf("synth_tap: %d down-frames @ %dms at MT2(%d,%d)\n", downframes, frame_ms, x, y);
 
-    for (int i = 0; i < downframes; i++) {
-        touch_frame_t f; memset(&f, 0, sizeof f);
-        f.ntouches = 1;
-        f.touches[0].id = 1; f.touches[0].state = TS_TOUCHING;
-        /* tiny per-frame jitter: a real finger is never mathematically static; identical
-         * frames may not advance the recognizer's path/tap state machine. */
-        f.touches[0].x = x + i * 6; f.touches[0].y = y + (i & 1 ? 4 : -4);
-        f.touches[0].touch_major = 600; f.touches[0].touch_minor = 500;
-        f.touches[0].size = 40; f.touches[0].orientation = 0;
+    /* SYNTH_TAPS=N: repeat N taps in ONE open connection (default 1). The recognizer queues a
+     * tap-click but only FLUSHES it on a later chord frame; a single open/inject/close never
+     * pumps it again, so the queued click never reaches CGEvents. Streaming several taps (and
+     * holding the connection open after) gives the recognizer cycles to dispatch the queue. */
+    const char *nt = getenv("SYNTH_TAPS");
+    int ntaps = nt ? atoi(nt) : 1;
+    const char *g = getenv("SYNTH_GAP_MS");
+    int gap_ms = g ? atoi(g) : 200;   /* between taps in one connection */
+    for (int tap = 0; tap < ntaps; tap++) {
+        for (int i = 0; i < downframes; i++) {
+            touch_frame_t f; memset(&f, 0, sizeof f);
+            f.ntouches = 1;
+            f.touches[0].id = 1; f.touches[0].state = TS_TOUCHING;
+            /* tiny per-frame jitter: a real finger is never mathematically static; identical
+             * frames may not advance the recognizer's path/tap state machine. */
+            f.touches[0].x = x + i * 6; f.touches[0].y = y + (i & 1 ? 4 : -4);
+            f.touches[0].touch_major = 600; f.touches[0].touch_minor = 500;
+            f.touches[0].size = 40; f.touches[0].orientation = 0;
+            now = elapsed_ms();
+            mt2_session_frame(&s, (uintptr_t)SRC, &f, now, &sink);
+            usleep((useconds_t)frame_ms * 1000);
+        }
+        /* lift: empty frame -> session synthesizes the BreakTouch AND a trailing zero-contact
+         * frame so the recognizer finalizes the path lift. */
+        touch_frame_t lift; memset(&lift, 0, sizeof lift); lift.ntouches = 0;
         now = elapsed_ms();
-        mt2_session_frame(&s, (uintptr_t)SRC, &f, now, &sink);
-        usleep((useconds_t)frame_ms * 1000);
+        mt2_session_frame(&s, (uintptr_t)SRC, &lift, now, &sink);
+        usleep((useconds_t)gap_ms * 1000);
     }
-    /* lift: empty frame -> session synthesizes the BreakTouch AND (since the liftoff fix in
-     * mt2_session) a trailing zero-contact frame so the recognizer finalizes the path lift. */
-    touch_frame_t lift; memset(&lift, 0, sizeof lift); lift.ntouches = 0;
-    now = elapsed_ms();
-    mt2_session_frame(&s, (uintptr_t)SRC, &lift, now, &sink);
-
+    /* hold the connection open so any deferred queue-flush / event delivery can land. */
+    usleep(1500 * 1000);
     IOServiceClose(g_conn);
-    printf("synth_tap: done\n");
+    printf("synth_tap: done (%d taps)\n", ntaps);
     return 0;
 }
