@@ -17,8 +17,18 @@
 # Examples:
 #   syms .../MultitouchHID "Tap|Chord"
 #   syms .../AppleBluetoothMultitouch "BNBTrackpad"
-bin=$1; pat=${2:-.}; arch=${RE_ARCH:-x86_64}
-[ -n "$bin" ] || { echo "usage: $(basename "$0") <binary> [\"name filter\"]" >&2; exit 2; }
+arch=${RE_ARCH:-x86_64}
+resolve() {
+  case "$1" in
+    MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/MacOS/MultitouchHID" ;;
+    MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/A/MultitouchSupport" ;;
+    AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/MacOS/AppleBluetoothMultitouch" ;;
+    AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/MacOS/AppleMultitouchDriver" ;;
+    *)                        echo "$1" ;;
+  esac
+}
+bin=$(resolve "$1"); pat=${2:-.}
+[ -n "$1" ] || { echo "usage: $(basename "$0") <target> [\"name filter\"]   (target: path or alias MultitouchHID/MultitouchSupport/AppleBluetoothMultitouch/AppleMultitouchDriver)" >&2; exit 2; }
 
 echo "# symbols in $bin ($arch) matching: $pat"
 echo "# columns: address  kind  name"
