@@ -27,9 +27,10 @@ static void run_tests(void) {
     CHECK_EQ(buf[0], 0x28);       /* MT1 report id */
     CHECK_EQ(buf[1] & 0x01, 1);   /* button */
 
-    /* Timestamp round-trips through the header where hid-magicmouse.c reads it. */
-    uint32_t ts = (uint32_t)(buf[1] >> 6) | ((uint32_t)buf[2] << 2) | ((uint32_t)buf[3] << 10);
-    CHECK_EQ(ts, 0x25abc & 0x3ffff);
+    /* Timestamp round-trips through the header bytes the way MultitouchSupport's CompactV4
+     * parser reads it: ts = (byte1>>2) | (byte2<<6) | (byte3<<14), 22-bit, full resolution. */
+    uint32_t ts = (uint32_t)(buf[1] >> 2) | ((uint32_t)buf[2] << 6) | ((uint32_t)buf[3] << 14);
+    CHECK_EQ(ts, 0x25abc & 0x3fffff);
 
     int id, x, y, state;
     mt1_decode_record(buf + 4, &id, &x, &y, &state);

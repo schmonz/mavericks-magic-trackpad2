@@ -41,13 +41,22 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
     size_t need = MT1_HEADER + (size_t)nt * MT1_RECSZ;
     if (cap < need) return -1;
 
-    /* 18-bit device timestamp, packed where hid-magicmouse.c reads it:
-     * ts = data[1]>>6 | data[2]<<2 | data[3]<<10. button stays in bit 0. */
-    uint32_t ts = timestamp & 0x3ffff;
+    /* Device frame timestamp, packed exactly where MultitouchSupport's CompactV4 parser
+     * reads it (RE'd from _MTCompactV4HeaderUnpack): a 22-bit value spread as
+     *   byte1 = button:1, flag:1, ts[0:5]:6   (ts low 6 bits in bits 2-7)
+     *   byte2 = ts[6:13]
+     *   byte3 = ts[14:21]
+     * so the recognizer recovers ts = (byte1>>2) | (byte2<<6) | (byte3<<14).
+     * The old hid-magicmouse layout put ts[0:1] in byte1 bits 6-7 -- 4 positions too high
+     * -- so CompactV4 read the value ~16x too large, the gesture-recognizer clock ran
+     * ~16x fast, and every tap overran the 250ms tap-duration gate (tap-to-click never
+     * committed). This positions the FULL-resolution ms value correctly: the clock now
+     * tracks real time AND inter-frame deltas survive (cursor motion intact). */
+    uint32_t ts = timestamp & 0x3fffff;
     buf[0] = MT1_REPORT_ID;
-    buf[1] = (uint8_t)((frame->button & 0x01) | ((ts & 0x03) << 6));
-    buf[2] = (uint8_t)((ts >> 2) & 0xff);
-    buf[3] = (uint8_t)((ts >> 10) & 0xff);
+    buf[1] = (uint8_t)((frame->button & 0x01) | ((ts & 0x3f) << 2));
+    buf[2] = (uint8_t)((ts >> 6) & 0xff);
+    buf[3] = (uint8_t)((ts >> 14) & 0xff);
 
     for (int i = 0; i < nt; i++) {
         const touch_t *in = &frame->touches[i];
