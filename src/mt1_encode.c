@@ -83,8 +83,14 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
          * of the per-touch state byte (t[8] & 0x0f) as the fingerID, then mt_GetProtocolFingerID
          * returns it. fingerID 0 = "unidentified" -> MultitouchSupport's recognizer classifies
          * the contact as a non-finger and forms no chord (no cursor/scroll/gestures). A valid
-         * finger needs fingerID in 1..5 (thumb..pinky). Assign distinct ids per contact slot. */
-        int finger_id = (i % 5) + 1;
+         * finger needs fingerID in 1..5 (thumb..pinky).
+         *
+         * fingerID 1 == THUMB, and a thumb chord does NOT take the tap-click path: with slot0
+         * mapped to 1, the recognizer ran handleChordTaps but NEVER reached the click-queueing
+         * MTTapDragManager::handleTapsForDrag (verified hands-free with tools/iter_tap.sh:
+         * handleTapsForDrag 0 -> N once slot0 is a non-thumb finger). So map slot0 -> 2 (index)
+         * and keep distinct ids per slot, all within 1..5. */
+        int finger_id = ((i + 1) % 5) + 1;   /* slot0->2(index), 1->3, 2->4, 3->5, 4->1 */
 
         /* Contact size feeds the native tap-to-click strength gate. The recognizer
          * computes density = size*400/radii and requires it > 0.75 (RE'd in

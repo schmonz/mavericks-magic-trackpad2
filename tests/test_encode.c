@@ -37,6 +37,13 @@ static void run_tests(void) {
     CHECK_EQ(id, 9);
     CHECK_EQ(state, 0x40);        /* down -> DRAG (Touching) */
 
+    /* Finger-role: the primary contact (slot 0) must NOT be fingerID 1 (thumb). A thumb chord
+     * never reaches the tap-click path (MTTapDragManager::handleTapsForDrag) -- verified via
+     * tools/iter_tap.sh. fingerID is the low nibble of t[8]; it must be a valid finger 1..5. */
+    int finger_id0 = buf[4 + 8] & 0x0f;
+    CHECK_EQ(finger_id0, 2);                       /* slot0 -> index, not thumb */
+    CHECK(finger_id0 >= 1 && finger_id0 <= 5);
+
     /* A contact's FIRST frame is TS_START and must encode to MakeTouch (0x30):
      * the gesture recognizer keys tap-to-click on the MakeTouch->BreakTouch
      * transition; without a distinct first frame the contact reads as already

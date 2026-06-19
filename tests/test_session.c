@@ -62,22 +62,19 @@ static void run_tests(void) {
       CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.last_feed.ntouches, 1);
       CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS); }
 
-    /* EVENT_DRIVEN clean lift: the lift frame emits a BreakTouch (TS_END) for the ended
-       contact at its last-known position and arms NO watchdog (cleanly lifted). The native
-       BreakTouch replaces the old held-replay deceleration. */
+    /* EVENT_DRIVEN clean (full) lift: emit ONE absence frame (ntouches=0) -- NOT a separate
+       BreakTouch frame then an absence. Emitting both made the native recognizer fire
+       handleChordLiftoff TWICE per tap (~0ms apart), destabilising the tap-drag cycle (verified
+       hands-free via tools/iter_tap.sh). The absence alone finalizes the path liftoff and is
+       what tap recognition needs. Arms NO watchdog (cleanly lifted). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
       touch_frame_t real=one(70); mt2_session_frame(&s, BT, &real, 5000, &k);
       rec_t r2={0}; k=mk(&r2);
       touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
       mt2_session_frame(&s, BT, &lift, 5010, &k);
-      CHECK_EQ(r2.n_feed, 2);                                   /* BreakTouch, then trailing absence */
-      CHECK_EQ(r2.feeds[0].ntouches, 1);
-      CHECK_EQ(r2.feeds[0].touches[0].state, TS_END);
-      CHECK_EQ(r2.feeds[0].touches[0].x, 70);                  /* last-known position */
-      CHECK_EQ(r2.feeds[0].ts_offset_ms, 0u);                  /* lift frame stamped at "now" */
-      CHECK_EQ(r2.feeds[1].ntouches, 0);                       /* absence frame finalizes the path liftoff */
-      CHECK_EQ(r2.feeds[1].ts_offset_ms, MT2_LIFTOFF_GAP_MS);  /* ...a gap LATER, so not coincident with the lift */
+      CHECK_EQ(r2.n_feed, 1);                                   /* full lift: ONE absence frame, no BreakTouch frame */
+      CHECK_EQ(r2.feeds[0].ntouches, 0);                       /* absence finalizes the path liftoff (single handleChordLiftoff) */
       CHECK_EQ(r2.n_arm, 0);                                    /* clean lift: no watchdog */
       rec_t t1={0}; k=mk(&t1); mt2_session_timer(&s,&k);
       CHECK_EQ(t1.n_feed, 0); }                                 /* nothing left to flush */
@@ -125,7 +122,8 @@ static void run_tests(void) {
       CHECK_EQ(r.last_feed.touches[0].state, TS_TOUCHING); }
 
     /* Silence watchdog: if the stream simply STOPS while a contact is down (no lift
-       frame arrives), the armed timer flushes a BreakTouch so the lift still registers. */
+       frame arrives), the armed timer flushes the lift. A full lift emits ONE absence frame
+       (the flushed contacts are all BreakTouch -> emit absence only, not BreakTouch+absence). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
       touch_frame_t f; memset(&f,0,sizeof f);
@@ -134,11 +132,8 @@ static void run_tests(void) {
       CHECK_EQ(r.last_feed.touches[0].state, TS_START);
       CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS);
       rec_t t={0}; k=mk(&t); mt2_session_timer(&s,&k);     /* stream went silent */
-      CHECK_EQ(t.n_feed, 2);                               /* BreakTouch, then trailing absence */
-      CHECK_EQ(t.feeds[0].touches[0].state, TS_END);
-      CHECK_EQ(t.feeds[0].touches[0].x, 88);
-      CHECK_EQ(t.feeds[1].ntouches, 0);                    /* absence finalizes the lift */
-      CHECK_EQ(t.feeds[1].ts_offset_ms, MT2_LIFTOFF_GAP_MS); }  /* spaced after the lift */
+      CHECK_EQ(t.n_feed, 1);                               /* full lift: ONE absence frame */
+      CHECK_EQ(t.feeds[0].ntouches, 0); }                  /* absence finalizes the lift */
 
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);

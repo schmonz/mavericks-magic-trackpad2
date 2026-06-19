@@ -22,12 +22,6 @@ int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
 
 #define MT2_IDLE_MS  35u   /* silence-detect after a contact */
 #define MT2_DECEL_MS 20u   /* spacing between held replays */
-#define MT2_LIFTOFF_GAP_MS 10u  /* device-time gap stamped on the trailing absence frame so it
-                                   lands after (not coincident with) the BreakTouch frame. Mirrors
-                                   the shipping MT2 simulator's ~10ms teardown spacing
-                                   (acidanthera/VoodooInput); separates the lift in time so the
-                                   recognizer finalizes ONE liftoff, not two (the per-tap phantom
-                                   double-click). TUNABLE -- sweep on-device if 10 underseparates. */
 #define MT2_SETTLE_MS 0u   /* no settle delay: cold-boot measurement (2026-06-17) found no
                               post-connect burst reaching the pipeline on either transport
                               (interrupt/event endpoints deliver only on touch), and the boot

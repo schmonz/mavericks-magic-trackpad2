@@ -23,28 +23,36 @@ static int frame_has_breaktouch(const touch_frame_t *f) {
     return 0;
 }
 
-/* Emit a frame, then -- if it carried a BreakTouch (a contact's clean lift) -- emit one
-   trailing zero-contact (absence) frame, stamped a few ms LATER in device time.
+/* 1 iff the frame is a PURE lift -- has contacts and every one is BreakTouch (TS_END), i.e. a
+   full hand-off-the-pad with nothing still down. (A partial lift -- some present + some TS_END --
+   is not "all".) */
+static int frame_all_breaktouch(const touch_frame_t *f) {
+    if (f->ntouches == 0) return 0;
+    for (int i = 0; i < f->ntouches; i++)
+        if (f->touches[i].state != TS_END) return 0;
+    return 1;
+}
 
-   The absence frame finalizes the path liftoff: the recognizer advances a contact's liftoff
-   stage clock only once it observes the contact ABSENT in a frame AFTER the BreakTouch (RE'd
-   on 10.9.5: MTChordCyclingTrackpad::chk4newTapChord bails until the stage clock advances).
-   Without it no tap-to-click ever commits.
+/* On a FULL lift, emit ONLY a zero-contact (absence) frame -- NOT the BreakTouch frame then an
+   absence frame.
 
-   The ts_offset_ms spaces that absence frame ~MT2_LIFTOFF_GAP_MS after the BreakTouch frame.
-   Emitted back-to-back the shell stamps both at the same uptime_ms() -- a BreakTouch and an
-   absence at the SAME device timestamp read as two coincident liftoffs, driving a phantom
-   second click ~6ms after the real one (handleChordTaps -> MTTapDragManager::handleTapsForDrag,
-   the tap-drag-cycle toggle). Separating them in device time mirrors the shipping MT2 simulator
-   (acidanthera/VoodooInput, ~10ms teardown spacing) so the recognizer finalizes ONE liftoff.
-   Shared path => both transports. */
+   The absence frame is what finalizes the path liftoff AND is required for tap recognition
+   (verified hands-free with tools/iter_tap.sh: dropping it collapses selectTapChord to ~0; the
+   recognizer needs to observe the contact ABSENT to finalize the tap). But emitting a BreakTouch
+   frame AND an absence frame made the native recognizer fire MTChordCycling::handleChordLiftoff
+   TWICE per tap (~0ms apart -- both frames are fed back-to-back), which destabilises the tap-drag
+   cycle and the click commits erratically. Emitting only the absence collapses it to ONE liftoff
+   per tap (iter_tap.sh: handleChordLiftoff 2N -> N, selectTapChord still N).
+
+   A partial lift still emits the frame as-is (present contacts + the lifting one's TS_END); there
+   are still contacts down, so no absence and no full liftoff. Shared path => both transports. */
 static void emit_with_liftoff(mt2_session_t *s, const touch_frame_t *tf,
                               const mt2_session_sink_t *sink) {
-    emit(s, tf, sink);
-    if (frame_has_breaktouch(tf)) {
+    if (frame_all_breaktouch(tf)) {
         touch_frame_t empty = {0};
-        empty.ts_offset_ms = MT2_LIFTOFF_GAP_MS;
         emit(s, &empty, sink);
+    } else {
+        emit(s, tf, sink);
     }
 }
 
@@ -60,7 +68,6 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
        last-known position -- the native clean-lift signal that also prevents fling, so no
        held-replay deceleration is needed. */
     touch_frame_t f = *tf;
-    f.ts_offset_ms = 0;                           /* only the trailing absence frame is delayed */
     mt2_drop_lifted(&f);                          /* keep only real (size>0) contacts */
     mt2_lifecycle_step(&s->lifecycle, &f);        /* +START for new, +BreakTouch for vanished */
     if (f.ntouches > 0) emit_with_liftoff(s, &f, sink);
