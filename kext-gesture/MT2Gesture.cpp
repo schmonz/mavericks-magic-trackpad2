@@ -62,7 +62,10 @@ void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const touch_frame_t *fra
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
     if (!self->fDevice) return;
     uint8_t mt1[256];
-    int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
+    /* ts_offset_ms spaces the trailing liftoff (absence) frame a few ms after the BreakTouch
+     * frame in device time (both are fed back-to-back, so they'd otherwise share one uptime_ms()
+     * -- two coincident liftoffs => the per-tap phantom click). */
+    int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms() + frame->ts_offset_ms);
     if (n > 0) self->fDevice->handleTouchFrame(mt1, (unsigned int)n);
 }
 /* Sink: (re)arm the silence-watchdog timer. */

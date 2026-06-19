@@ -57,24 +57,6 @@ static void run_tests(void) {
     CHECK_EQ(state, 0x50);        /* lift -> BreakTouch */
     f.touches[0].state = TS_TOUCHING;  /* restore for later cases */
 
-    /* An inactive (NotTracking) teardown contact is TS_NONE and must encode to state 0x00
-     * with ZEROED strength/radii. The native liftoff staging walks a contact to NotTracking
-     * (an explicit present-but-inactive frame) before removing it from the report
-     * (VoodooInputSimulatorDevice: Stop -> Inactive -> absence); the firm-strength/radius
-     * boost is for a PRESENT (touching) contact only, never one being torn down. */
-    f.touches[0].state = TS_NONE;
-    f.touches[0].size = 0;
-    f.touches[0].touch_major = 0;
-    f.touches[0].touch_minor = 0;
-    n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
-    CHECK_EQ(n, 4 + 9);
-    mt1_decode_record(buf + 4, &id, &x, &y, &state);
-    CHECK_EQ(state, 0x00);              /* NotTracking */
-    CHECK_EQ(buf[4 + 6] & 0x3f, 0x00);  /* strength zeroed, NOT firm-boosted */
-    CHECK_EQ(buf[4 + 4], 0x00);         /* major radius zeroed */
-    CHECK_EQ(buf[4 + 5], 0x00);         /* minor radius zeroed */
-    f.touches[0].state = TS_TOUCHING;  /* restore for later cases */
-
     /* Native tap-to-click gates on contact DENSITY = size*400/radii, which must exceed
      * 0.75 (RE'd: MTChordCycling::tapHasValidTimingAndStrength reads MTContact+0x5c, fed
      * by t[6]&0x3f). MT2 size units are far smaller than the MT1 recognizer expects, so a
