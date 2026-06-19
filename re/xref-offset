@@ -1,0 +1,64 @@
+#!/bin/sh
+# xref-offset - BINARY-WIDE search for instructions that touch a given struct field
+# offset, e.g. "+0x18 of some object". Disassembles the WHOLE __text (not one function),
+# tracks the enclosing function for every hit, and marks each access read vs write.
+#
+# Why this exists: re/disasm shows ONE function (and caps at 400 insns). When you know a
+# field offset (from a load/test site) but NOT which code writes it, you need to sweep the
+# entire binary for `<offset>(%reg)` and see every function that reads or writes it.
+#
+# AT&T syntax: the LAST operand is the destination. So a memory operand `0x18(%reg)` that
+# is the last thing on the line is a WRITE (store/accumulate); otherwise it's a READ.
+#
+# Output (pipe-parseable + legible):
+#   # offset 0x18 accesses in <path> (<arch>)
+#   # columns: rw  address  function  instruction
+#   W  0x1c912  MTGestureRecognizer::addGesture(...)  orl $0x3000, 0x18(%rbx)
+#   R  0xb2da   MTChordTable::findMatchingChord(...)  testl 0x18(%r15), %ecx
+# '#' lines are comments; body splits on whitespace (rw=$1, address=$2, function=$3, instr=$4..).
+#
+# Usage: xref-offset <target> <offset-hex> [rw]   # rw filter: R, W, or omit for both
+#   <target> is a path OR alias (MultitouchHID/MultitouchSupport/AppleBluetoothMultitouch/
+#   AppleMultitouchDriver). Arch defaults x86_64 (RE_ARCH=i386 overrides).
+#
+# Examples:
+#   xref-offset MultitouchHID 0x18        # every read+write of <obj>+0x18
+#   xref-offset MultitouchHID 0x18 W      # only writes (who BUILDS the field)
+arch=${RE_ARCH:-x86_64}
+resolve() {
+  case "$1" in
+    MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/MacOS/MultitouchHID" ;;
+    MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/A/MultitouchSupport" ;;
+    AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/MacOS/AppleBluetoothMultitouch" ;;
+    AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/MacOS/AppleMultitouchDriver" ;;
+    *)                        echo "$1" ;;
+  esac
+}
+bin=$(resolve "$1"); off=$2; rwf=$3
+[ -n "$bin" ] && [ -n "$off" ] || {
+  echo "usage: $(basename "$0") <target> <offset-hex> [R|W]" >&2; exit 2; }
+case "$off" in 0x*) ;; *) off="0x$off" ;; esac
+
+echo "# offset $off accesses in $bin ($arch)"
+echo "# columns: rw  address  function  instruction"
+
+otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v off="$off" -v rwf="$rwf" '
+  # function label lines: not an address-prefixed instruction, end in ":"
+  /:$/ && $1 !~ /^[0-9a-f]{5,16}\t?/ { fn=$0; sub(/:$/,"",fn); next }
+  $1 ~ /^[0-9a-f]{5,16}$/ {
+    addr=$1; instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
+    # the memory operand we care about, as it appears in AT&T: <off>(%reg)
+    pat = off "(%"
+    if (index(instr, pat)==0) next
+    # WRITE iff the <off>(%reg...) operand is the LAST operand (destination).
+    # Grab the final operand (everything after the last comma, or after the mnemonic
+    # if there is no comma) and see if it starts with our offset.
+    last=instr
+    if (index(instr, ",")>0) { n=split(instr, p, ","); last=p[n] }
+    else { sub(/^[^ ]+[ ]+/,"",last) }   # strip mnemonic for single-operand insns
+    gsub(/^ +| +$/,"",last)
+    rw = (index(last, pat)==1) ? "W" : "R"
+    if (rwf!="" && toupper(rwf)!=rw) next
+    sub(/^0+/,"",addr); if (addr=="") addr="0"
+    printf "%s  0x%s  %s  %s\n", rw, addr, (fn==""?"?":fn), instr
+  }'

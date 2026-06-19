@@ -38,7 +38,15 @@ static uint32_t elapsed_ms(void) {
 static void sink_feed(void *ctx, const touch_frame_t *f) {
     (void)ctx;
     uint8_t out[256];
-    int n = mt1_encode(f, out, sizeof(out), elapsed_ms());
+    /* DIAGNOSTIC: SYNTH_CONST_TS=<ms> makes every frame carry the SAME encoded device
+     * timestamp, decoupling the recognizer's clock from real injection time. If the
+     * recognizer's measured tap duration collapses to ~0, it derives time from OUR
+     * device timestamp (fix in mt1_encode); if it stays large, it uses wall-clock. */
+    const char *cts = getenv("SYNTH_CONST_TS");
+    const char *tdiv = getenv("SYNTH_TS_DIV");   /* calibrate the ts scale: ts = elapsed_ms / DIV */
+    uint32_t base = cts ? (uint32_t)atoi(cts) : elapsed_ms();
+    uint32_t ts = tdiv ? base / (uint32_t)atoi(tdiv) : base;
+    int n = mt1_encode(f, out, sizeof(out), ts);
     if (n > 0) {
         kern_return_t kr = IOConnectCallStructMethod(g_conn, 0, out, (size_t)n, NULL, NULL);
         int st = (f->ntouches > 0) ? f->touches[0].state : -1;
@@ -84,7 +92,8 @@ int main(int argc, char **argv) {
         mt2_session_frame(&s, (uintptr_t)SRC, &f, now, &sink);
         usleep((useconds_t)frame_ms * 1000);
     }
-    /* lift: empty frame -> session synthesizes the BreakTouch */
+    /* lift: empty frame -> session synthesizes the BreakTouch AND (since the liftoff fix in
+     * mt2_session) a trailing zero-contact frame so the recognizer finalizes the path lift. */
     touch_frame_t lift; memset(&lift, 0, sizeof lift); lift.ntouches = 0;
     now = elapsed_ms();
     mt2_session_frame(&s, (uintptr_t)SRC, &lift, now, &sink);

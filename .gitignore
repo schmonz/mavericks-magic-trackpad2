@@ -12,6 +12,7 @@ build/
 /test_encode
 /test_pipeline
 /test_session
+/test_lifecycle
 /test_gesture
 captures/raw_session.txt
 /mt2_reenumerate
@@ -24,4 +25,6 @@ tools/mt_contacts
 tools/mt_cursorpos
 tools/mt_transport
 tools/synth_feed
+tools/synth_tap
+tools/click_monitor
 kext-startmt/MT2StartMT.kext/
