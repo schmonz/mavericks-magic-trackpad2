@@ -62,19 +62,28 @@ static void run_tests(void) {
       CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.last_feed.ntouches, 1);
       CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS); }
 
-    /* EVENT_DRIVEN clean (full) lift: emit ONE absence frame (ntouches=0) -- NOT a separate
-       BreakTouch frame then an absence. Emitting both made the native recognizer fire
-       handleChordLiftoff TWICE per tap (~0ms apart), destabilising the tap-drag cycle (verified
-       hands-free via tools/iter_tap.sh). The absence alone finalizes the path liftoff and is
-       what tap recognition needs. Arms NO watchdog (cleanly lifted). */
+    /* EVENT_DRIVEN clean (full) lift: emit TWO absence frames (ntouches=0) -- NOT a separate
+       BreakTouch frame then an absence (emitting a BreakTouch frame made the native recognizer
+       fire handleChordLiftoff TWICE per tap, destabilising the tap-drag cycle). The FIRST absence
+       finalizes the path liftoff; the SECOND is a PUMP frame -- the recognizer only re-checks its
+       armed "waiting click" timeout when a frame arrives, and with no frame after the lift it never
+       flushes (the click batches onto the NEXT tap as a ~6ms phantom double, or the last tap drops).
+       The 2nd absence gives it that cycle, so the tap-click flushes cleanly via
+       MTTapDragManager::sendWaitingClickAtHalfTimeout instead of the erratic handleTapsForDrag
+       drag-cycle path -- one clean click per tap (verified hands-free: tools/trace_btnstack.d shows
+       16 posts ALL via sendWaitingClickAtHalfTimeout for 8 taps; tools/tap_clicks.sh shows phantom
+       0). Two ABSENCE frames do NOT double handleChordLiftoff (only the first absence is a lift
+       transition; the 2nd is "still no contact"). Arms NO watchdog (cleanly lifted). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, 0);
       touch_frame_t real=one(70); mt2_session_frame(&s, BT, &real, 5000, &k);
       rec_t r2={0}; k=mk(&r2);
       touch_frame_t lift; memset(&lift,0,sizeof lift); lift.ntouches=1; lift.touches[0].size=0;
       mt2_session_frame(&s, BT, &lift, 5010, &k);
-      CHECK_EQ(r2.n_feed, 1);                                   /* full lift: ONE absence frame, no BreakTouch frame */
-      CHECK_EQ(r2.feeds[0].ntouches, 0);                       /* absence finalizes the path liftoff (single handleChordLiftoff) */
+      CHECK_EQ(r2.n_feed, 2);                                   /* full lift: absence + pump absence */
+      CHECK_EQ(r2.feeds[0].ntouches, 0);                       /* 1st absence finalizes the path liftoff */
+      CHECK_EQ(r2.feeds[1].ntouches, 0);                       /* 2nd absence pumps the waiting-click flush */
+      CHECK_EQ(r2.n_click, 0);                                  /* two empty frames post no spurious click */
       CHECK_EQ(r2.n_arm, 0);                                    /* clean lift: no watchdog */
       rec_t t1={0}; k=mk(&t1); mt2_session_timer(&s,&k);
       CHECK_EQ(t1.n_feed, 0); }                                 /* nothing left to flush */
@@ -132,8 +141,9 @@ static void run_tests(void) {
       CHECK_EQ(r.last_feed.touches[0].state, TS_START);
       CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS);
       rec_t t={0}; k=mk(&t); mt2_session_timer(&s,&k);     /* stream went silent */
-      CHECK_EQ(t.n_feed, 1);                               /* full lift: ONE absence frame */
-      CHECK_EQ(t.feeds[0].ntouches, 0); }                  /* absence finalizes the lift */
+      CHECK_EQ(t.n_feed, 2);                               /* full lift: absence + pump absence */
+      CHECK_EQ(t.feeds[0].ntouches, 0);                    /* 1st absence finalizes the lift */
+      CHECK_EQ(t.feeds[1].ntouches, 0); }                  /* 2nd absence pumps the waiting-click flush */
 
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);

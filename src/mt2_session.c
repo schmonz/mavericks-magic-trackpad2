@@ -33,16 +33,28 @@ static int frame_all_breaktouch(const touch_frame_t *f) {
     return 1;
 }
 
-/* On a FULL lift, emit ONLY a zero-contact (absence) frame -- NOT the BreakTouch frame then an
-   absence frame.
+/* On a FULL lift, emit a zero-contact (absence) frame -- NOT the BreakTouch frame then an absence
+   frame -- and then a SECOND absence frame as a "pump".
 
-   The absence frame is what finalizes the path liftoff AND is required for tap recognition
+   The first absence frame is what finalizes the path liftoff AND is required for tap recognition
    (verified hands-free with tools/iter_tap.sh: dropping it collapses selectTapChord to ~0; the
-   recognizer needs to observe the contact ABSENT to finalize the tap). But emitting a BreakTouch
-   frame AND an absence frame made the native recognizer fire MTChordCycling::handleChordLiftoff
+   recognizer needs to observe the contact ABSENT to finalize the tap). Emitting a BreakTouch frame
+   AND an absence frame instead made the native recognizer fire MTChordCycling::handleChordLiftoff
    TWICE per tap (~0ms apart -- both frames are fed back-to-back), which destabilises the tap-drag
-   cycle and the click commits erratically. Emitting only the absence collapses it to ONE liftoff
-   per tap (iter_tap.sh: handleChordLiftoff 2N -> N, selectTapChord still N).
+   cycle and the click commits erratically. So the lift transition is signalled by the absence
+   alone (iter_tap.sh: handleChordLiftoff 2N -> N, selectTapChord still N).
+
+   The SECOND absence is a PUMP. After a tap the recognizer ARMS a "waiting click" and only
+   re-checks its flush timeout when a FRAME arrives; with no frame after the lift it never flushes,
+   so the click batches onto the NEXT tap's frames as a ~6ms phantom double-click (and a final tap
+   with nothing after it drops entirely). Our pipeline goes silent after the lift -- even idle
+   device reports are dropped (ntouches==0 emits nothing in mt2_session_frame) -- so without this
+   the recognizer falls into the erratic MTTapDragManager::handleTapsForDrag drag-cycle path. The
+   2nd absence gives it the cycle to flush cleanly via MTTapDragManager::sendWaitingClickAtHalfTimeout
+   -- one clean click per tap. Verified hands-free: tools/trace_btnstack.d shows every button post
+   routed through sendWaitingClickAtHalfTimeout (8 taps -> 16 posts, 2/tap) and tools/tap_clicks.sh
+   shows the phantom gone. Two ABSENCE frames do NOT re-double handleChordLiftoff: only the first is
+   a lift transition; the second is "still no contact".
 
    A partial lift still emits the frame as-is (present contacts + the lifting one's TS_END); there
    are still contacts down, so no absence and no full liftoff. Shared path => both transports. */
@@ -50,7 +62,8 @@ static void emit_with_liftoff(mt2_session_t *s, const touch_frame_t *tf,
                               const mt2_session_sink_t *sink) {
     if (frame_all_breaktouch(tf)) {
         touch_frame_t empty = {0};
-        emit(s, &empty, sink);
+        emit(s, &empty, sink);   /* finalize the path liftoff */
+        emit(s, &empty, sink);   /* pump: flush the armed tap-click this tap, not the next */
     } else {
         emit(s, tf, sink);
     }
