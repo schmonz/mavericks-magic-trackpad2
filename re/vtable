@@ -9,7 +9,9 @@
 # you never hand-compute vtable math again.
 #
 # Usage: vtable <target> "<ClassName>" <hexoff> [hexoff ...]   # offsets = the 0xNN from callq *0xNN(%reg)
+#        vtable <target> "<ClassName>" --find "<method regex>"   # REVERSE: print the slot offset(s) for a method
 #   <target> = path OR an alias (same set as re/disasm/re/syms). Many offsets allowed (wildcard a call row).
+#   The --find offset is the value you'd see in `callq *0xNN(%reg)` (already minus the 0x10 ABI header).
 #   Arch defaults x86_64; override with RE_ARCH=i386.
 #
 # Output (pipe-parseable):  # vtable for <Class> @ 0x<addr> in <bin>
@@ -18,6 +20,7 @@
 # Examples:
 #   vtable AppleBluetoothMultitouch BNBDevice 0xc38 0xe40 0xe28      # what processInterruptData calls
 #   vtable IOBluetoothFamily IOBluetoothL2CAPChannel 0x9a8           # a single slot
+#   vtable AppleBluetoothMultitouch BNBTrackpadDevice --find processInterruptData   # method -> callq offset
 arch=${RE_ARCH:-x86_64}
 resolve() {
   case "$1" in
@@ -72,12 +75,26 @@ def name_at(ptr):
 def demangle1(s):
     f=subprocess.Popen(["c++filt"],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
     return f.communicate(s)[0].strip()
-for off in sys.argv[1:]:
-    slot=vt+0x10+int(off,16)
+def fileoff(vmaddr):
     best=None
     for sg in segs:
-        if sg.get("addr",0)<=slot and slot<sg["addr"]+0x400000 and (best is None or sg["addr"]>best["addr"]): best=sg
-    foff=best["off"]+(slot-best["addr"]); ptr=struct.unpack("<Q",data[foff:foff+8])[0]
-    nm,delta=name_at(ptr)
-    print "%-8s ->  %s%s" % (off, demangle1(nm), ("  (+0x%x)"%delta) if delta else "")
+        if sg.get("addr",0)<=vmaddr and vmaddr<sg["addr"]+0x400000 and (best is None or sg["addr"]>best["addr"]): best=sg
+    return best["off"]+(vmaddr-best["addr"])
+if sys.argv[1:2]==["--find"]:
+    import re as _re
+    pat=_re.compile(sys.argv[2])
+    base=vt+0x10
+    for i in range(0,0x800):            # scan up to 512 slots
+        slot=base+i*8
+        ptr=struct.unpack("<Q",data[fileoff(slot):fileoff(slot)+8])[0]
+        if ptr==0: continue
+        nm,delta=name_at(ptr)
+        if delta==0:
+            d=demangle1(nm)
+            if pat.search(d): print "0x%-6x ->  %s" % (i*8, d)
+else:
+    for off in sys.argv[1:]:
+        slot=vt+0x10+int(off,16); ptr=struct.unpack("<Q",data[fileoff(slot):fileoff(slot)+8])[0]
+        nm,delta=name_at(ptr)
+        print "%-8s ->  %s%s" % (off, demangle1(nm), ("  (+0x%x)"%delta) if delta else "")
 PY
