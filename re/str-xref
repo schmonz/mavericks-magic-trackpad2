@@ -1,0 +1,30 @@
+#!/bin/sh
+# str-xref - find where a C string is USED in code, via the disassembler's resolved
+# "## literal pool for: \"...\"" annotations, with surrounding context. Answers "which
+# code path keys on this class-name / property string?" without hand-computing VM
+# addresses. Output is the disassembly window around each reference (a `leaq ... ## "q"`
+# line) so you can see what the string is passed to (IOServiceMatching, a compare, etc.).
+#
+# Usage: str-xref <target> "<exact string>" [context-lines]   # default 8 lines before, 3 after
+#   target: path or an alias (Trackpad/Mouse/MultitouchHID/MultitouchSupport/AppleBluetoothMultitouch).
+#   Arch defaults to x86_64; override with RE_ARCH=i386.
+#
+# Example:
+#   str-xref Trackpad "BNBTrackpadDevice"      # how the prefpane matches the BT trackpad class
+arch=${RE_ARCH:-x86_64}
+resolve() {
+  case "$1" in
+    Trackpad)                 echo "/System/Library/PreferencePanes/Trackpad.prefPane/Contents/MacOS/Trackpad" ;;
+    Mouse)                    echo "/System/Library/PreferencePanes/Mouse.prefPane/Contents/MacOS/Mouse" ;;
+    MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/MacOS/MultitouchHID" ;;
+    MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/A/MultitouchSupport" ;;
+    AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/MacOS/AppleBluetoothMultitouch" ;;
+    *)                        echo "$1" ;;
+  esac
+}
+bin=$(resolve "$1"); q=$2; ctx=${3:-8}
+[ -n "$2" ] || { echo "usage: $(basename "$0") <target> \"<exact string>\" [context-lines]" >&2; exit 2; }
+
+echo "# code referencing \"$q\" in $bin ($arch)  (context ${ctx}/3)"
+echo "# (each window ends near the instruction that consumes the loaded string pointer)"
+otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | grep -F -B"$ctx" -A3 "\"$q\""
