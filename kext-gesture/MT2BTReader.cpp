@@ -147,7 +147,8 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
     }
     gate->runAction(&com_schmonz_MT2BTReader::setupInGate, this);
 
-    /* PATH A (S2.2c): on the control channel, manually build a genuine BNBTrackpadDevice on this
+    /* PATH A (manual-start the genuine BNBTrackpadDevice + interpose translation): on the control
+     * channel, manually build a genuine BNBTrackpadDevice on this
      * real L2CAP channel — bypassing IOKit matching (which can't be tricked). Done from this normal
      * start() thread, NOT in the channel command gate: the BT-HID start chain can block waiting for
      * channel handshakes, and blocking while holding the gate would deadlock. start() runs the full
@@ -167,7 +168,7 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
                 if (bnb->start(fChannel)) {
                     fManualBnb = bnb;
                     gGenuineBnb = bnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
-                    IOLog("MT2BTReader: MANUAL genuine BNBTrackpadDevice start OK (FORM milestone)\n");
+                    IOLog("MT2BTReader: Path A manual BNBTrackpadDevice start OK\n");
                 } else {
                     IOLog("MT2BTReader: manual BNBTrackpadDevice start() FAILED\n");
                     bnb->detach(fChannel);
@@ -188,8 +189,11 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
             if (wl) {
                 fInterposeTimer = IOTimerEventSource::timerEventSource(
                     this, &com_schmonz_MT2BTReader::interposeTimerFired);
-                if (fInterposeTimer && wl->addEventSource(fInterposeTimer) == kIOReturnSuccess)
-                    fInterposeTimer->setTimeoutMS(100);
+                if (fInterposeTimer) {
+                    if (wl->addEventSource(fInterposeTimer) == kIOReturnSuccess)
+                        fInterposeTimer->setTimeoutMS(100);
+                    else { fInterposeTimer->release(); fInterposeTimer = 0; }   /* invariant: fInterposeTimer != 0 => attached */
+                }
             }
         }
     }
@@ -273,11 +277,19 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
      * so the channel never calls our (about-to-be-freed) shim. Restore goes through the channel's
      * own command gate, exactly like the install. */
     if (fInterposeTimer) {
+        /* cancelTimeout() does NOT wait for an already-running handler, so release() could
+         * otherwise free the timer mid-fire. interposeTimerFired runs under the reader's
+         * workloop gate (IOTimerEventSource fires its action under the gate of the workloop
+         * it's attached to — here getWorkLoop()), and IOWorkLoop::removeEventSource closes
+         * that same gate — so it BLOCKS until any in-flight handler returns before removing
+         * the source, making the subsequent release() safe. Order: cancel -> remove -> release. */
         fInterposeTimer->cancelTimeout();
         if (IOWorkLoop *wl = getWorkLoop()) wl->removeEventSource(fInterposeTimer);
         fInterposeTimer->release();
         fInterposeTimer = 0;
     }
+    /* Restore is keyed on the file-static global gInterposedChannel (not self) — correct for the
+     * single-genuine-device design (mirrors gGenuineBnb): only one device is ever interposed. */
     if (gInterposedChannel) {
         IOCommandGate *gate = ((IOBluetoothObject *)gInterposedChannel)->getCommandGate();
         if (gate) gate->runAction(&com_schmonz_MT2BTReader::restoreInGate, gInterposedChannel);
