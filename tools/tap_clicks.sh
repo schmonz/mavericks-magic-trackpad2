@@ -24,10 +24,12 @@ sleep 1
 SYNTH_TAPS="$N" SYNTH_GAP_MS="$GAP" "$HERE/synth_tap" "$DF" "$FMS" 0 0 >/dev/null 2>&1 || true
 wait "$CMPID" 2>/dev/null || true
 # classify: a LeftDown with dt < 25ms after the prior event is a phantom; else clean.
+# The FIRST LeftDown has dt=0 (nothing precedes it) -- it is the first clean click, never a
+# phantom, so exclude it from the <25ms test (else it inflates the phantom count by one).
 awk '
   /LeftDown/ {
     d=$0; sub(/.*dt=[ ]*\+?/,"",d); sub(/ms.*/,"",d); dt=d+0;
-    downs++; if (dt < 25) phantom++; else clean++;
+    downs++; if (downs > 1 && dt < 25) phantom++; else clean++;
   }
   END { printf "downs=%d  clean=%d  phantom=%d\n", downs, clean, phantom }
 ' "$CM" | sed "s/^/taps=$N gap=${GAP}ms  /"
