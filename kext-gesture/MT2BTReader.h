@@ -15,6 +15,10 @@ class IOBluetoothL2CAPChannel;
 class com_schmonz_MT2BTReader : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2BTReader)
     IOBluetoothL2CAPChannel *fChannel;
+    bool fIsControl;        /* set in-gate: PSM 17 (control) — the channel BNBTrackpadDriver wants */
+    IOService *fManualBnb;  /* FORM TEST (kGenuineBnbManualStart): a genuine BNBTrackpadDevice we
+                               instantiate + start directly on this real channel (bypass IOKit
+                               matching, which can't be tricked — see findings S2.2c). */
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
