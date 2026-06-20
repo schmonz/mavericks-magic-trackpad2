@@ -19,6 +19,7 @@
 #include "MT2BTReader.h"
 #include "MT2Gesture.h"
 #include "../src/mt2_to_mt1.h"
+#include "../src/mt1_encode.h"
 
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
  * with C++ linkage on both sides — no extern "C". */
@@ -47,6 +48,12 @@ static const bool kGenuinePathA = false;
  * gActiveMT2Gesture. NULL when no genuine device is up. */
 IOService *gGenuineBnb = 0;
 
+/* The PSM-19 (interrupt) reader instance — the session's active frame source (it calls
+ * connectionEstablished(self)). Under Path A the hybrid shim feeds decoded frames back through
+ * gActiveMT2Gesture->submitFrame(gInterruptReader, ...) so OUR cursor-wired AppleMultitouchDevice
+ * drives the cursor + gestures, while BNB (fed the MT1 tee) keeps the genuine prefpane lit. */
+static IOService *gInterruptReader = 0;
+
 /* Saved BNB delegate the shim forwards to (single genuine device, like gGenuineBnb). */
 static void *gOrigCb = 0;
 static IOService *gOrigTarget = 0;
@@ -64,11 +71,31 @@ static uint32_t bt_uptime_ms(void) {
 static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
                               unsigned short length, void *data) {
     (void)target;
-    uint8_t mt1[256];
-    int n = mt2_to_mt1((const uint8_t *)data, length, mt1, sizeof(mt1), bt_uptime_ms());
-    if (n <= 0 || !gOrigCb) return;
-    typedef void (*l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
-    ((l2cap_cb_t)gOrigCb)(gOrigTarget, channel, (unsigned short)n, mt1);
+    const uint8_t *b = (const uint8_t *)data;
+    const uint8_t *rep = b;
+    size_t rlen = length;
+    if (length > 0 && b[0] == 0xA1) { rep = b + 1; rlen = length - 1; }   /* strip transport byte */
+    touch_frame_t tf;
+    if (mt2_bt_decode(rep, rlen, &tf) != 0) return;                       /* not multitouch — drop */
+
+    /* HYBRID feed 1: drive OUR cursor-wired AppleMultitouchDevice through the shared session
+     * (cursor + gestures — the same path the normal driver uses). gInterruptReader matches the
+     * source connectionEstablished() armed, so the session accepts the frame. */
+    if (gActiveMT2Gesture && gInterruptReader)
+        gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
+
+    /* HYBRID feed 2: tee the MT1 0x28 to BNB so its restart-watchdog stays quiet and the genuine
+     * prefpane stays healthy. BNB can't drive the cursor (manual start = no multitouch handler,
+     * findings S2.12), so this is purely to keep BNB content. */
+    if (gOrigCb) {
+        uint8_t mt1[256];
+        mt1[0] = 0xA1;
+        int n = mt1_encode(&tf, mt1 + 1, sizeof(mt1) - 1, bt_uptime_ms());
+        if (n > 0) {
+            typedef void (*l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
+            ((l2cap_cb_t)gOrigCb)(gOrigTarget, channel, (unsigned short)(n + 1), mt1);
+        }
+    }
 }
 
 void com_schmonz_MT2BTReader::incomingData(IOService *target,
@@ -101,8 +128,11 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
      * interrupt 0x13) as two separate reader instances; if the control reader claimed
      * the source instead, the session's single-active guard would reject the interrupt
      * reader's frames (== dead cursor). The control channel only sends the enable below. */
-    if (psm == 0x13 && gActiveMT2Gesture)
-        gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
+    if (psm == 0x13) {
+        gInterruptReader = self;   /* the session source; the Path A hybrid shim feeds frames as this */
+        if (gActiveMT2Gesture)
+            gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
+    }
 
     /* Listen on the INTERRUPT channel (PSM 19) — EXCEPT under Path A, where Apple's genuine
      * BNBTrackpadDevice must own this delegate (its handleStart listenAt's it; if we hold it,
@@ -132,6 +162,7 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
     fManualBnb = 0;
     fInterposeTimer = 0;
     fInterposeTries = 0;
+    fReEnableCount = 0;
 
     /* Our provider is the matched IOBluetoothL2CAPChannel. */
     fChannel = (IOBluetoothL2CAPChannel *)provider;
@@ -247,8 +278,37 @@ IOReturn com_schmonz_MT2BTReader::restoreInGate(OSObject * /*owner*/, void *arg0
 
 /* Poll for BNB's interrupt channel (gGenuineBnb+0xf0); install the interpose in that channel's
  * gate once present. Re-arm up to ~5 s, then give up. */
+/* In the CONTROL channel's command gate: re-send the MT2's 0xF1 multitouch enable (same
+ * HIDP SET_REPORT(feature) payload setupInGate sends). BNB's handleStart leaves the device in
+ * mouse mode (report 0x02) after our initial enable, so this forces it back to multitouch
+ * (report 0x31). arg0 = the control reader; its fChannel is the PSM-17 control channel. */
+IOReturn com_schmonz_MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg0,
+                                                 void * /*a1*/, void * /*a2*/, void * /*a3*/) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    if (!self || !self->fChannel) return kIOReturnNoDevice;
+    static const uint8_t kEnable[] = { 0x53, 0xF1, 0x02, 0x01 };
+    self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
+    return kIOReturnSuccess;
+}
+
 void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventSource *ts) {
     com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)owner;
+
+    /* Phase 2 (interpose already installed): re-send the 0xF1 enable on the control channel a
+     * few times to force the device back into multitouch mode after BNB's handleStart knocked
+     * it to mouse mode (findings S2.11). self->fChannel is the control channel (this is the
+     * control reader — the manual-start + this timer are armed only when fIsControl). */
+    if (gInterposedChannel) {
+        if (self->fChannel) {
+            IOCommandGate *cg = ((IOBluetoothObject *)self->fChannel)->getCommandGate();
+            if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
+        }
+        if (++self->fReEnableCount < 8) ts->setTimeoutMS(250);  /* ~2 s of re-enables, then stop */
+        else IOLog("MT2BTReader: Path A re-enable phase done (%d sends)\n", self->fReEnableCount);
+        return;
+    }
+
+    /* Phase 1: poll for BNB's interrupt channel; install the interpose once present. */
     IOService *bnb = gGenuineBnb;
     if (bnb) {
         IOBluetoothL2CAPChannel *ch =
@@ -257,7 +317,9 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
             IOCommandGate *gate = ((IOBluetoothObject *)ch)->getCommandGate();
             if (gate && gate->runAction(&com_schmonz_MT2BTReader::interposeInGate, ch)
                           == kIOReturnSuccess) {
-                return;  /* installed; stop polling */
+                self->fReEnableCount = 0;
+                ts->setTimeoutMS(250);  /* installed → enter phase 2 (re-enable multitouch) */
+                return;
             }
         }
     }
@@ -266,6 +328,9 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
 }
 
 void com_schmonz_MT2BTReader::stop(IOService *provider) {
+    /* If we're the interrupt reader that armed the session source, clear it so the Path A
+     * hybrid shim stops feeding through a freed instance. */
+    if (gInterruptReader == this) gInterruptReader = 0;
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */

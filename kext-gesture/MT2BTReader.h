@@ -22,6 +22,7 @@ class com_schmonz_MT2BTReader : public IOService {
                                can't be tricked — see findings S2.2c). */
     IOTimerEventSource *fInterposeTimer;  /* polls for BNB's interrupt channel, then installs the shim */
     int fInterposeTries;            /* retry budget for the installer poll */
+    int fReEnableCount;             /* Path A: # of post-install 0xF1 re-enables sent (force multitouch mode) */
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
@@ -44,6 +45,10 @@ public:
     static IOReturn interposeInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
     /* In-gate: restore BNB's original callback before we tear down. arg0 = channel. */
     static IOReturn restoreInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
+    /* In the CONTROL channel's gate: re-send the 0xF1 multitouch enable. BNB's handleStart
+     * resets the device to mouse mode (report 0x02) after our initial enable; re-sending forces
+     * it back to multitouch (report 0x31). arg0 = the control reader (self). */
+    static IOReturn reEnableInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
 
     /* IOBluetoothL2CAPChannel::listenAt callback: (target, channel, length, data). */
     static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
