@@ -1,0 +1,83 @@
+#!/bin/sh
+# vtable - resolve a C++ vtable slot to the method it points at, BY CLASS + OFFSET.
+#
+# In the disassembly, virtual calls look like `callq *0xNN(%rax)` where %rax holds an
+# object's vtable pointer. Under the Itanium C++ ABI the pointer stored in an object is
+# `&__ZTV<Class> + 0x10` (it skips the 2 header slots: offset-to-top + RTTI). So the slot
+# called at runtime-offset 0xNN lives at `vtable_symbol + 0x10 + 0xNN`. This script does
+# that arithmetic and maps the stored function pointer back to its demangled symbol — so
+# you never hand-compute vtable math again.
+#
+# Usage: vtable <target> "<ClassName>" <hexoff> [hexoff ...]   # offsets = the 0xNN from callq *0xNN(%reg)
+#   <target> = path OR an alias (same set as re/disasm/re/syms). Many offsets allowed (wildcard a call row).
+#   Arch defaults x86_64; override with RE_ARCH=i386.
+#
+# Output (pipe-parseable):  # vtable for <Class> @ 0x<addr> in <bin>
+#                           0xNN  ->  <demangled method>  (+0xK)
+#
+# Examples:
+#   vtable AppleBluetoothMultitouch BNBDevice 0xc38 0xe40 0xe28      # what processInterruptData calls
+#   vtable IOBluetoothFamily IOBluetoothL2CAPChannel 0x9a8           # a single slot
+arch=${RE_ARCH:-x86_64}
+resolve() {
+  case "$1" in
+    MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/MacOS/MultitouchHID" ;;
+    MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/A/MultitouchSupport" ;;
+    AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/MacOS/AppleBluetoothMultitouch" ;;
+    AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/MacOS/AppleMultitouchDriver" ;;
+    IOBluetoothHIDDriver)     echo "/System/Library/Extensions/IOBluetoothHIDDriver.kext/Contents/MacOS/IOBluetoothHIDDriver" ;;
+    IOBluetoothFamily)        echo "/System/Library/Extensions/IOBluetoothFamily.kext/Contents/MacOS/IOBluetoothFamily" ;;
+    IOHIDFamily)              echo "/System/Library/Extensions/IOHIDFamily.kext/Contents/MacOS/IOHIDFamily" ;;
+    Trackpad)                 echo "/System/Library/PreferencePanes/Trackpad.prefPane/Contents/MacOS/Trackpad" ;;
+    *)                        echo "$1" ;;
+  esac
+}
+bin=$(resolve "$1"); cls=$2
+[ -n "$cls" ] && [ -n "$3" ] || { echo "usage: $(basename "$0") <target> \"<ClassName>\" <hexoff> [hexoff ...]" >&2; exit 2; }
+shift 2
+[ -f "$bin" ] || { echo "no such binary: $bin" >&2; exit 2; }
+echo "# vtable for $cls in $bin ($arch)"
+VT_BIN="$bin" VT_ARCH="$arch" VT_CLS="$cls" python2.7 - "$@" <<'PY'
+import os,sys,struct,subprocess
+bin=os.environ["VT_BIN"]; arch=os.environ["VT_ARCH"]; cls=os.environ["VT_CLS"]
+ns=subprocess.check_output(["nm","-arch",arch,bin]).splitlines()
+# vtable symbol: demangle and match "vtable for <cls>"
+filt=subprocess.Popen(["c++filt"],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+demangled=filt.communicate("\n".join(l.split()[2] for l in ns if len(l.split())>=3))[0].splitlines()
+rows=[l.split() for l in ns if len(l.split())>=3]
+vt=None
+for (p,d) in zip(rows,demangled):
+    if d.strip()=="vtable for "+cls:
+        vt=int(p[0],16); break
+if vt is None:
+    sys.stderr.write("vtable for %s not found\n"%cls); sys.exit(1)
+print "# (vtable symbol @ 0x%x; object vptr = symbol+0x10)" % vt
+# segment/section map for vmaddr->fileoff
+o=subprocess.check_output(["otool","-arch",arch,"-l",bin]).splitlines()
+segs=[];cur=None
+for ln in o:
+    s=ln.strip()
+    if s.startswith("sectname"): cur={}
+    elif s.startswith("addr ") and cur is not None: cur["addr"]=int(s.split()[1],16)
+    elif s.startswith("offset ") and cur is not None: cur["off"]=int(s.split()[1]);segs.append(cur);cur=None
+data=open(bin,"rb").read()
+# text symbols sorted for nearest-below mapping
+tsyms=sorted(((int(p[0],16),p[2]) for p in rows if p[1] in ("t","T")), key=lambda x:x[0])
+import bisect
+addrs=[a for a,_ in tsyms]
+def name_at(ptr):
+    i=bisect.bisect_right(addrs,ptr)-1
+    if i<0: return ("?",0)
+    a,nm=tsyms[i]; return (nm, ptr-a)
+def demangle1(s):
+    f=subprocess.Popen(["c++filt"],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+    return f.communicate(s)[0].strip()
+for off in sys.argv[1:]:
+    slot=vt+0x10+int(off,16)
+    best=None
+    for sg in segs:
+        if sg.get("addr",0)<=slot and slot<sg["addr"]+0x400000 and (best is None or sg["addr"]>best["addr"]): best=sg
+    foff=best["off"]+(slot-best["addr"]); ptr=struct.unpack("<Q",data[foff:foff+8])[0]
+    nm,delta=name_at(ptr)
+    print "%-8s ->  %s%s" % (off, demangle1(nm), ("  (+0x%x)"%delta) if delta else "")
+PY

@@ -24,6 +24,9 @@ resolve() {
     MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/A/MultitouchSupport" ;;
     AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/MacOS/AppleBluetoothMultitouch" ;;
     AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/MacOS/AppleMultitouchDriver" ;;
+    IOBluetoothHIDDriver)     echo "/System/Library/Extensions/IOBluetoothHIDDriver.kext/Contents/MacOS/IOBluetoothHIDDriver" ;;
+    IOBluetoothFamily)        echo "/System/Library/Extensions/IOBluetoothFamily.kext/Contents/MacOS/IOBluetoothFamily" ;;
+    IOHIDFamily)              echo "/System/Library/Extensions/IOHIDFamily.kext/Contents/MacOS/IOHIDFamily" ;;
     *)                        echo "$1" ;;
   esac
 }
