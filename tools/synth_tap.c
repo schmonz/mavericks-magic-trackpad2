@@ -20,6 +20,7 @@
 #include <mach/mach_time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #define SRC 0x7A9
@@ -58,6 +59,19 @@ static void sink_feed(void *ctx, const touch_frame_t *f) {
 static void sink_click(void *ctx, unsigned mask) { (void)ctx; printf("  post_click mask=0x%x\n", mask); fflush(stdout); }
 static void sink_arm(void *ctx, uint32_t ms) { (void)ctx; (void)ms; }
 
+/* Inject ONE raw zero-contact frame (a "pump" frame). The recognizer flushes a tap's
+ * queued button-click only when a LATER chord frame arrives; during the inter-tap gap
+ * synth_tap feeds NO frames, so each tap's click waits for the NEXT tap to flush it (and
+ * the last tap drops entirely -> the ~7/16 clean-count cap, ORACLES.md flush artifact).
+ * Feeding K absence pump-frames after each lift gives the recognizer those flush cycles
+ * within the tap's OWN window, so every tap (including the last) surfaces its click. */
+static void inject_pump(uint32_t ts) {
+    touch_frame_t e; memset(&e, 0, sizeof e); e.ntouches = 0;
+    uint8_t out[256];
+    int n = mt1_encode(&e, out, sizeof(out), ts);
+    if (n > 0) IOConnectCallStructMethod(g_conn, 0, out, (size_t)n, NULL, NULL);
+}
+
 int main(int argc, char **argv) {
     int downframes = (argc > 1) ? atoi(argv[1]) : 5;
     int frame_ms   = (argc > 2) ? atoi(argv[2]) : 12;
@@ -87,6 +101,10 @@ int main(int argc, char **argv) {
     int ntaps = nt ? atoi(nt) : 1;
     const char *g = getenv("SYNTH_GAP_MS");
     int gap_ms = g ? atoi(g) : 200;   /* between taps in one connection */
+    const char *pp = getenv("SYNTH_PUMP");
+    int pump = pp ? atoi(pp) : 0;     /* trailing absence pump-frames per tap (flush each tap's click) */
+    const char *pms = getenv("SYNTH_PUMP_MS");
+    int pump_ms = pms ? atoi(pms) : frame_ms;  /* spacing before/between pump frames (0 = back-to-back) */
     for (int tap = 0; tap < ntaps; tap++) {
         for (int i = 0; i < downframes; i++) {
             touch_frame_t f; memset(&f, 0, sizeof f);
@@ -106,6 +124,11 @@ int main(int argc, char **argv) {
         touch_frame_t lift; memset(&lift, 0, sizeof lift); lift.ntouches = 0;
         now = elapsed_ms();
         mt2_session_frame(&s, (uintptr_t)SRC, &lift, now, &sink);
+        /* pump frames: flush THIS tap's queued click now, instead of waiting for the next tap. */
+        for (int p = 0; p < pump; p++) {
+            if (pump_ms > 0) usleep((useconds_t)pump_ms * 1000);
+            inject_pump(elapsed_ms());
+        }
         usleep((useconds_t)gap_ms * 1000);
     }
     /* hold the connection open so any deferred queue-flush / event delivery can land. */
