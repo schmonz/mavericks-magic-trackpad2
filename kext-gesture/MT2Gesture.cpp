@@ -57,13 +57,31 @@ void com_schmonz_MT2Gesture::sink_post_click(void *ctx, unsigned mask) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
     if (self->fDevice) self->fDevice->handlePointerEventFromDevice(0, 0, mask, 0);
 }
+/* Phase 2: the genuine BNBTrackpadDevice (created in MT2BTReader), if one is up. */
+extern IOService *gGenuineBnb;
+
 /* Sink: MT1-encode the touch frame and feed it to the device verbatim. */
 void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const touch_frame_t *frame) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
-    if (!self->fDevice) return;
     uint8_t mt1[256];
     int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
-    if (n > 0) self->fDevice->handleTouchFrame(mt1, (unsigned int)n);
+    if (n <= 0) return;
+    if (gGenuineBnb) {
+        /* Forward the MT1 0x28 report into the genuine device's processInterruptData
+         * (BNBTrackpadDevice vtable +0xa80, RE'd via re/vtable; we can't link the kext —
+         * no OSBundleCompatibleVersion). It expects a leading 0xA1 HID input-transport byte.
+         * This hands Apple's genuine parse path our translated MT1 instead of the raw MT2 it
+         * can't decode. Runs in the interrupt channel's workloop gate (incomingData path),
+         * the same context Apple calls processInterruptData in. */
+        uint8_t rpt[257];
+        rpt[0] = 0xA1;
+        for (int i = 0; i < n; i++) rpt[i + 1] = mt1[i];
+        void **vt = *(void ***)gGenuineBnb;
+        typedef void (*pid_fn)(void *, unsigned char *, unsigned short);
+        ((pid_fn)vt[0xa80 / 8])(gGenuineBnb, rpt, (unsigned short)(n + 1));
+        return;
+    }
+    if (self->fDevice) self->fDevice->handleTouchFrame(mt1, (unsigned int)n);
 }
 /* Sink: (re)arm the silence-watchdog timer. */
 void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {

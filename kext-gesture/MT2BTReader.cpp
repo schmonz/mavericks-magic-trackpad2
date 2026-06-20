@@ -32,7 +32,7 @@ OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
  * real panic vector of the ID-injection FORM test). Side effect: OUR data path is inert while set, so
  * the trackpad does NOT move the cursor during this test — expected; reverts on reload. Set false (or
  * delete) to restore normal operation. */
-static const bool kGenuineBnbFormTest = true;
+static const bool kGenuineBnbFormTest = false;
 
 /* PHASE-A EXPERIMENT FLAG (branch genuine-bnbtrackpad-citizen, findings S2.2c). IOKit matching can't
  * be tricked into binding Apple's BNBTrackpadDevice to our channel (matchesDevicePropertyInController
@@ -42,7 +42,13 @@ static const bool kGenuineBnbFormTest = true;
  * chain on a REAL provider, so the IOHIDDevice internal state initializes (no publish-handler panic).
  * FORM-only: input not wired (BNB can't parse MT2's 0x31 yet); a non-panicking "device registered + pane
  * lit" is success. Requires kGenuineBnbFormTest too (our delegate must be off so BNB owns the data slot). */
-static const bool kGenuineBnbManualStart = true;
+static const bool kGenuineBnbManualStart = false;
+
+/* PHASE-2: the genuine BNBTrackpadDevice we started, shared from the control-channel reader (which
+ * creates it) to the interrupt-channel reader's data path AND to MT2Gesture's sink, which forwards
+ * each MT1-encoded 0x28 report into it. Single device, single instance — a global mirrors the
+ * pattern of gActiveMT2Gesture. NULL when no genuine device is up. */
+IOService *gGenuineBnb = 0;
 
 void com_schmonz_MT2BTReader::incomingData(IOService *target,
                                            IOBluetoothL2CAPChannel *channel,
@@ -77,10 +83,10 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     if (psm == 0x13 && gActiveMT2Gesture)
         gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
 
-    /* The multitouch frames arrive on the interrupt channel (PSM 19); listen on all the
-     * channels we win — harmless, and the decoder rejects non-0x31 reports.
-     * FORM TEST: skip our delegate so a forming BNBTrackpadDevice owns the slot uncontended. */
-    if (!kGenuineBnbFormTest)
+    /* Phase 2 channel split: listen on the INTERRUPT channel (PSM 19) only — its MT2 frames get
+     * translated and forwarded into the genuine BNBTrackpadDevice. Leave the CONTROL channel
+     * (PSM 17) delegate to the genuine device itself (it owns config/button reports there). */
+    if (psm == 0x13)
         self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
 
     /* Enable multitouch streaming on the CONTROL channel only (PSM 17 = 0x11). The
@@ -137,6 +143,7 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
             if (ok && bnb->attach(fChannel)) {
                 if (bnb->start(fChannel)) {
                     fManualBnb = bnb;
+                    gGenuineBnb = bnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
                     IOLog("MT2BTReader: MANUAL genuine BNBTrackpadDevice start OK (FORM milestone)\n");
                 } else {
                     IOLog("MT2BTReader: manual BNBTrackpadDevice start() FAILED\n");
@@ -161,9 +168,10 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
 IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg0,
                                                  void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
-    /* FORM TEST: we never set our delegate, so don't clear the slot — it may belong to a
-     * forming BNBTrackpadDevice; clearing it would clobber Apple's delegate on our unload. */
-    if (!kGenuineBnbFormTest && self && self->fChannel) self->fChannel->listenAt(self, 0);
+    /* Clear our delegate only on the channel we actually set it on (the interrupt reader, PSM 19).
+     * The control reader never set a delegate (the genuine BNBTrackpadDevice owns PSM 17's), so
+     * clearing it there would clobber Apple's delegate on our unload. */
+    if (self && !self->fIsControl && self->fChannel) self->fChannel->listenAt(self, 0);
     return kIOReturnSuccess;
 }
 
@@ -179,6 +187,7 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
      * outlives the channel it was started on. terminate() drives the normal async IOService teardown
      * (detach from provider + stop); release() drops our retained reference. */
     if (fManualBnb) {
+        gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
         fManualBnb->terminate();
         fManualBnb->release();
         fManualBnb = 0;
