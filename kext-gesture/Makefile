@@ -9,7 +9,7 @@ CXXFLAGS = -mmacosx-version-min=10.9 -fno-rtti -fno-exceptions -fapple-kext \
 LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 
 OBJS = $(KEXT_NAME).o MT2HIDShell.o MT2GestureUserClient.o \
-       MT2BTReader.o mt2_bt_decode.o mt1_encode.o \
+       MT2BTReader.o mt2_bt_decode.o mt1_encode.o mt2_to_mt1.o \
        MT2USBReader.o mt2_usb_decode.o mt2_decode.o \
        mt2_pipeline.o mt2_lifecycle.o mt2_session.o
 
@@ -27,6 +27,8 @@ MT2BTReader.o: MT2BTReader.cpp MT2BTReader.h bt_l2cap_shim.h MT2Gesture.h
 mt2_bt_decode.o: ../src/mt2_bt_decode.c ../src/mt2_bt_decode.h ../src/mt2_decode.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 mt1_encode.o: ../src/mt1_encode.c ../src/mt1_encode.h ../src/touch_model.h
+	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
+mt2_to_mt1.o: ../src/mt2_to_mt1.c ../src/mt2_to_mt1.h ../src/mt2_bt_decode.h ../src/mt1_encode.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 # The in-kernel USB reader + the pure-C USB decoder shared with the (now removed)
 # userspace path (compiled as C++ under the kext toolchain).
