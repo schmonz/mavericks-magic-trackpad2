@@ -1,0 +1,6 @@
+#!/bin/sh
+# klog - filter the live kernel log (kernel[] lines in /var/log/system.log) by regex.
+# Read-only. Answers "what did our kext / an Apple driver just log?".
+# Usage: klog "<regex>" [tail-N]      # default tail 25
+pat=${1:-.}; n=${2:-25}
+grep -E "kernel\[[0-9]*\]" /var/log/system.log 2>/dev/null | grep -iE "$pat" | tail -"$n"
