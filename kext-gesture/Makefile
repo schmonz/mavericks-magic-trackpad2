@@ -22,7 +22,7 @@ all: $(KEXT_NAME).kext
 
 # The BT reader + the pure-C decoder/encoder shared with the USB path (compiled as C++
 # under the kext toolchain; plain C99, no libc dependency).
-MT2BTReader.o: MT2BTReader.cpp MT2BTReader.h bt_l2cap_shim.h MT2Gesture.h
+MT2BTReader.o: MT2BTReader.cpp MT2BTReader.h bt_l2cap_shim.h MT2Gesture.h ../src/mt2_to_mt1.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 mt2_bt_decode.o: ../src/mt2_bt_decode.c ../src/mt2_bt_decode.h ../src/mt2_decode.h ../src/touch_model.h
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<

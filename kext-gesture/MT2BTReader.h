@@ -4,6 +4,7 @@
 #include "touch_model.h"
 
 class IOBluetoothL2CAPChannel;
+class IOTimerEventSource;
 
 /* Matches the Magic Trackpad 2's Bluetooth L2CAP channel (its BT-SIG identity:
  * VendorID 76 / ProductID 613 / VendorIDSource 1) with a high IOProbeScore, the way
@@ -16,9 +17,11 @@ class com_schmonz_MT2BTReader : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2BTReader)
     IOBluetoothL2CAPChannel *fChannel;
     bool fIsControl;        /* set in-gate: PSM 17 (control) — the channel BNBTrackpadDriver wants */
-    IOService *fManualBnb;  /* FORM TEST (kGenuineBnbManualStart): a genuine BNBTrackpadDevice we
-                               instantiate + start directly on this real channel (bypass IOKit
-                               matching, which can't be tricked — see findings S2.2c). */
+    IOService *fManualBnb;  /* Path A (kGenuinePathA): a genuine BNBTrackpadDevice we instantiate +
+                               start directly on this real channel (bypass IOKit matching, which
+                               can't be tricked — see findings S2.2c). */
+    IOTimerEventSource *fInterposeTimer;  /* polls for BNB's interrupt channel, then installs the shim */
+    int fInterposeTries;            /* retry budget for the installer poll */
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
@@ -32,6 +35,15 @@ public:
      * dereferencing this (soon-to-be-freed) object — without it, unloading while
      * connected leaves a dangling listener and panics IOBluetoothFamily. arg0 = reader. */
     static IOReturn teardownInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
+
+    /* IOTimerEventSource handler: poll gGenuineBnb+0xf0 for BNB's interrupt channel;
+     * once present, install the delegate-interpose in that channel's command gate. */
+    static void interposeTimerFired(OSObject *owner, IOTimerEventSource *ts);
+    /* In the channel's command gate: swap channel+0x110 (delegate callback) to our shim,
+     * saving BNB's original. arg0 = the IOBluetoothL2CAPChannel. */
+    static IOReturn interposeInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
+    /* In-gate: restore BNB's original callback before we tear down. arg0 = channel. */
+    static IOReturn restoreInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
 
     /* IOBluetoothL2CAPChannel::listenAt callback: (target, channel, length, data). */
     static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
