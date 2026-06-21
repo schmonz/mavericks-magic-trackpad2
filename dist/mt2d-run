@@ -22,8 +22,41 @@ STATE_FILE="${MT2D_STATE_FILE:-/var/db/mt2d-boot.state}"
 KEXT_DIR="${MT2D_KEXT_DIR:-/usr/local/lib/mt2d}"
 SBIN="${MT2D_SBIN:-/usr/local/sbin}"
 HEALTHY_DELAY="${MT2D_HEALTHY_DELAY:-20}"
+# Overridable so the recovery loop is unit-testable with mocks (see tests/test_mt2d_run.sh).
+IOCLASSCOUNT="${MT2D_IOCLASSCOUNT:-ioclasscount}"
+KEXTLOAD="${MT2D_KEXTLOAD:-kextload}"
+KEXTUNLOAD="${MT2D_KEXTUNLOAD:-kextunload}"
+RECONNECT_WAIT="${MT2D_RECONNECT_WAIT:-8}"
+RECOVER_TRIES="${MT2D_RECOVER_TRIES:-3}"
 
 log() { echo "[mt2d-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+# recover_full: on a half-open attach (BT<2), exploit the load-after-connect lever -- unload our
+# kext so IOBluetoothHIDDriver re-attaches and opens BOTH L2CAP channels generically, then reload
+# (binding already-open channels is the harmless ordering -> BT=2). Bounded retries; logs every
+# step; backstop leaves generic HID (a cursor, never no-cursor).
+recover_full() {
+    i=1
+    while [ "$i" -le "$RECOVER_TRIES" ]; do
+        log "recovery attempt $i/$RECOVER_TRIES: unload -> let generic HID reconnect -> reload"
+        "$KEXTUNLOAD" -b com.schmonz.MT2Gesture 2>/dev/null || true
+        sleep "$RECONNECT_WAIT"
+        "$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
+        sleep "$HEALTHY_DELAY"
+        btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
+        usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
+        cnt="$("$IOCLASSCOUNT" com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
+        if [ "$("$0" --health-verdict "$btn" "$usbn" "$cnt")" = "healthy" ]; then
+            echo ok > "$STATE_FILE" 2>/dev/null || true
+            log "recovery succeeded on attempt $i: BT=$btn USB=$usbn nub=$cnt — full-gesture healthy"
+            return 0
+        fi
+        i=$((i+1))
+    done
+    "$KEXTUNLOAD" -b com.schmonz.MT2Gesture 2>/dev/null || true
+    log "RECOVERY EXHAUSTED after $RECOVER_TRIES tries: leaving generic HID (cursor only, no gestures)"
+    return 1
+}
 
 # --reset re-enables full mode after the guard tripped.
 if [ "${1:-}" = "--reset" ]; then
@@ -46,6 +79,12 @@ if [ "${1:-}" = "--health-verdict" ]; then
         echo incomplete
     fi
     exit 0
+fi
+
+# --recover: run the half-open recovery loop in isolation (testable with mocked kext/count commands).
+if [ "${1:-}" = "--recover" ]; then
+    recover_full
+    exit $?
 fi
 
 STATE="$(cat "$STATE_FILE" 2>/dev/null || echo ok)"
@@ -71,7 +110,7 @@ log "attempting full-gesture mode"
 
 # Load the one gesture kext (the IOResources-matching one the guard covers). Its
 # BT + USB reader personalities bind the device on their own.
-kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
+"$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 
 # Conditional re-enumerate. Let IOKit matching settle, then check whether our USB
 # reader won interface 1. At cold boot the cabled MT2 is claimed by IOUSBHIDDriver
@@ -83,7 +122,7 @@ kextload "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 #   USB reader not bound, no USB MT2       -> mt2_reenumerate exits nonzero (no device,
 #                                             e.g. Bluetooth-only boot) -> nothing to do
 sleep 5
-if [ "$(ioclasscount com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')" = "0" ]; then
+if [ "$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')" = "0" ]; then
     if "$SBIN/mt2_reenumerate" >/dev/null 2>&1; then
         log "USB reader lost interface 1 on load; re-enumerated to reclaim it"
     else
@@ -99,18 +138,19 @@ fi
 # again. With no long-lived child, the wrapper then exits and launchd lets it
 # stay exited (KeepAlive=false); the kext keeps running in-kernel.
 sleep "$HEALTHY_DELAY"
-cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
+cnt="$("$IOCLASSCOUNT" com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
 # Record which transport reader actually bound. The nub (cnt) is IOResources-matched
 # so it loads whenever the kext loads — it can NOT tell us whether BT or USB won its
 # device match. Logging the reader counts leaves evidence in /var/log/mt2d.log of the
 # boot-time match race (esp. BT, which has no mt2_reenumerate fallback): BT>0 means
 # MT2BTReader bound the L2CAP channels; USB>0 means MT2USBReader bound interface 1.
-btn="$(ioclasscount com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
-usbn="$(ioclasscount com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
+btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
+usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
 log "transport readers bound: BT=$btn USB=$usbn (gesture nub=$cnt)"
 if [ "$("$0" --health-verdict "$btn" "$usbn" "$cnt")" = "healthy" ]; then
     echo ok > "$STATE_FILE" 2>/dev/null || true
     log "full-gesture mode confirmed healthy"
 else
     log "INCOMPLETE: transport not fully bound (BT=$btn USB=$usbn nub=$cnt) — interrupt channel likely missing"
+    recover_full || true
 fi

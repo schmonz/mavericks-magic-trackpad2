@@ -43,5 +43,31 @@ hv "BT=0 nub=1 -> incomplete"  incomplete 0 0 1
 hv "USB=1 nub=1 -> healthy"    healthy    0 1 1
 hv "nub=0 BT=2 -> incomplete"  incomplete 2 0 0
 
+# Recovery loop: fake ioclasscount returns INCOMPLETE (BT=1) on the first query then HEALTHY (BT=2),
+# proving recover_full retries (unload/reload) and converges. kext ops + sleep are stubbed/zeroed.
+rec="$TMP/rec"; mkdir -p "$rec"
+cat > "$rec/ioclasscount" <<EOF
+#!/bin/sh
+case "\$1" in
+  com_schmonz_MT2BTReader)
+    n="\$(cat "$rec/btcalls" 2>/dev/null || echo 0)"; n=\$((n+1)); echo "\$n" > "$rec/btcalls"
+    if [ "\$n" -le 1 ]; then echo "x 1"; else echo "x 2"; fi ;;
+  com_schmonz_MT2USBReader) echo "x 0" ;;
+  com_schmonz_MT2Gesture)   echo "x 1" ;;
+esac
+EOF
+chmod +x "$rec/ioclasscount"
+printf '#!/bin/sh\nexit 0\n' > "$rec/kextload";   chmod +x "$rec/kextload"
+printf '#!/bin/sh\nexit 0\n' > "$rec/kextunload"; chmod +x "$rec/kextunload"
+rec_out="$(MT2D_STATE_FILE="$rec/state" MT2D_IOCLASSCOUNT="$rec/ioclasscount" \
+    MT2D_KEXTLOAD="$rec/kextload" MT2D_KEXTUNLOAD="$rec/kextunload" \
+    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 MT2D_RECOVER_TRIES=3 \
+    "$WRAPPER" --recover 2>&1)"
+if echo "$rec_out" | grep -q "recovery succeeded on attempt 2"; then
+    echo "PASS: recover_full retries (BT=1->2) then converges to healthy"
+else
+    echo "FAIL: recover_full (out: $rec_out)"; fail=1
+fi
+
 if [ $fail -eq 0 ]; then echo "ALL mt2d-run TESTS PASS"; else echo "mt2d-run TESTS FAILED"; exit 1; fi
 exit 0
