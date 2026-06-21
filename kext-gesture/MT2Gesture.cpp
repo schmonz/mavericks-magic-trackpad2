@@ -371,14 +371,24 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
 
     /* GESTURE/CURSOR ACTIVATION (RE'd from MTTrackpadHIDManager::determineHIDManagerSettings
      * in MultitouchHID.plugin): the userspace gesture recognizer (hidd) builds its
-     * trackpad settings + chord-gesture-set by reading a "TrackpadUserPreferences"
-     * dictionary from THIS device's IORegistry entry via
-     * IORegistryEntryCreateCFProperty(MTDeviceGetService(d), "TrackpadUserPreferences").
-     * With neither "TrackpadUserPreferences" nor "MultitouchPreferences" present it runs a
-     * bare-defaults path that leaves the chord set empty -> no chord ever commits ->
-     * no cursor/tap/scroll/gesture output (confirmed via dtrace: handleEvent + hand stats
-     * run, but commit2Chord/dispatchEvents/AppendRelativeMouse never fire). Provide the
-     * dict with sensible enabled values so the recognizer populates a real gesture set. */
+     * trackpad settings + chord-gesture-set by reading a preferences dictionary from THIS
+     * device's IORegistry entry. determineHIDManagerSettings reads "TrackpadUserPreferences"
+     * FIRST and, only if that key is ABSENT, falls back to "MultitouchPreferences"
+     * (0x1c3ae/0x1c3c4: the testq/jne skips the fallback whenever the first key is present).
+     * With NEITHER key present it runs a bare-defaults path that leaves the chord set empty
+     * -> no chord ever commits -> no cursor/tap/scroll/gesture output. Either key activates
+     * gestures; the parse at 0x1c415 reads the same Clicking/Dragging/secondary keys from
+     * whichever dict it got.
+     *
+     * We seed "MultitouchPreferences" (NOT "TrackpadUserPreferences") on purpose: the genuine
+     * settings-push pipeline (login daemon / prefpane -> BNB setProperties -> _setMultitouch
+     * Preferences -> our poked +0x1b0 -> AppleMultitouchDevice::setPreferences) writes/merges
+     * the user's live prefs into exactly the "MultitouchPreferences" key. If we instead
+     * installed "TrackpadUserPreferences", it would PERMANENTLY SHADOW that live push (the
+     * recognizer would read our stale defaults and never see the user's real Clicking=No,
+     * etc.) -> "tapping always clicks regardless of the checkbox". Seeding the same key the
+     * push targets means our defaults activate gestures pre-push, then get overwritten/merged
+     * by the user's real settings -> the prefpane controls actually take effect. */
     {
         OSDictionary *tp = OSDictionary::withCapacity(24);
         if (tp) {
@@ -405,9 +415,9 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
             MT_SET_INT("TrackpadTwoFingerFromRightEdgeSwipeGesture", 3);
             #undef MT_SET_BOOL
             #undef MT_SET_INT
-            dev->setProperty("TrackpadUserPreferences", tp);
+            dev->setProperty("MultitouchPreferences", tp);
             tp->release();
-            IOLog("MT2Gesture: TrackpadUserPreferences installed (gesture activation)\n");
+            IOLog("MT2Gesture: MultitouchPreferences seeded (gesture activation; live push merges here)\n");
         }
     }
 

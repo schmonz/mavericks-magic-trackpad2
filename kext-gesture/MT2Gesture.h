@@ -34,6 +34,11 @@ public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
 
+    /* Our cursor-wired AppleMultitouchDevice, as a raw pointer. Path A B1-b redirects BNB's
+     * handler slot (BNB+0x1b0) to this so BNB's prefpane settings (_setMultitouchPreferences →
+     * setPreferences on +0x1b0) land on the device that actually emits frames. */
+    void *rawDevice() const { return (void *)fDevice; }
+
     /* Session-backed transport path: a reader arms a connection, then submits decoded
      * touch_frame_t frames; the session decides what reaches the device via the sink. */
     void connectionEstablished(IOService *source, mt2_transport_mode_t mode);

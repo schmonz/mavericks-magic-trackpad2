@@ -15,6 +15,10 @@
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOWorkLoop.h>
 #include <kern/clock.h>
+#include <libkern/c++/OSDictionary.h>
+#include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSString.h>
+#include <libkern/c++/OSBoolean.h>
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
 #include "MT2Gesture.h"
@@ -37,6 +41,15 @@ OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
  * vector), then interpose our MT2->MT1 shim on the channel's delegate-callback slot. Default
  * false = today's behaviour (we own the delegate + feed our AppleMultitouchDevice). */
 static const bool kGenuinePathA = false;
+
+/* B1-b (findings S2.17): keep the proven hybrid input (shim → submitFrame → our fDevice drives
+ * cursor + gestures), and redirect BNB's handler slot (BNB+0x1b0) to our fDevice. BNB's prefs path
+ * _setMultitouchPreferences reads +0x1b0 and calls setPreferences on it (RE-confirmed) — so prefpane
+ * settings land on the device actually emitting frames → controls apply. No trigger / no BNB tee
+ * (would double-feed via the redirect). */
+static const bool kB1Spike = false;
+
+#define BNB_HANDLER_OFF             0x1b0   /* BNBDevice multitouch handler (AppleMultitouchDevice*) */
 
 /* RE'd field offsets (findings §S2.6, 10.9 binaries; verify via re/ if a point release differs). */
 #define L2CAP_DELEGATE_CB_OFF       0x110   /* IOBluetoothL2CAPChannel: delegate callback fn-ptr */
@@ -84,10 +97,10 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     if (gActiveMT2Gesture && gInterruptReader)
         gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
 
-    /* HYBRID feed 2: tee the MT1 0x28 to BNB so its restart-watchdog stays quiet and the genuine
-     * prefpane stays healthy. BNB can't drive the cursor (manual start = no multitouch handler,
-     * findings S2.12), so this is purely to keep BNB content. */
-    if (gOrigCb) {
+    /* HYBRID feed 2: tee the MT1 0x28 to BNB to keep its restart-watchdog quiet. SKIPPED under B1-b:
+     * there BNB+0x1b0 points at our fDevice, so teeing would route postMultitouchFrame back into
+     * fDevice and double-feed it. (B1-b accepts the benign watchdog instead.) */
+    if (!kB1Spike && gOrigCb) {
         uint8_t mt1[256];
         mt1[0] = 0xA1;
         int n = mt1_encode(&tf, mt1 + 1, sizeof(mt1) - 1, bt_uptime_ms());
@@ -155,6 +168,39 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     return kIOReturnSuccess;
 }
 
+/* B1: build the OSDictionary passed to BNBTrackpadDevice::init. multitouchProperties() does
+ * getProperty("DefaultMultitouchProperties"), so init's property table must carry that key with the
+ * genuine config — parser-type 1000 + the MultitouchHID plugin IOCFPlugInTypes — so the AppleMultitouchDevice
+ * BNB spawns is recognized by MultitouchSupport (gets a user client, drives the cursor). Mirrors the
+ * BNBTrackpadDriver personality (re/plist AppleBluetoothMultitouch). Caller inits with it, then releases.
+ * Returns NULL on alloc failure. */
+static OSDictionary *bt_build_bnb_props(void) {
+    OSDictionary *top    = OSDictionary::withCapacity(1);
+    OSDictionary *mt     = OSDictionary::withCapacity(9);
+    OSDictionary *plugin = OSDictionary::withCapacity(1);
+    OSNumber *ptype = OSNumber::withNumber((unsigned long long)1000, 32);
+    OSNumber *popts = OSNumber::withNumber((unsigned long long)47, 32);
+    OSString *plpath = OSString::withCString("AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin");
+    if (!top || !mt || !plugin || !ptype || !popts || !plpath) {
+        if (top) top->release(); if (mt) mt->release(); if (plugin) plugin->release();
+        if (ptype) ptype->release(); if (popts) popts->release(); if (plpath) plpath->release();
+        return 0;
+    }
+    plugin->setObject("0516B563-B15B-11DA-96EB-0014519758EF", plpath);
+    mt->setObject("IOCFPlugInTypes", plugin);
+    mt->setObject("parser-type", ptype);
+    mt->setObject("parser-options", popts);
+    mt->setObject("MTHIDDevice", kOSBooleanTrue);
+    mt->setObject("HIDServiceSupport", kOSBooleanTrue);
+    mt->setObject("TrackpadMomentumScroll", kOSBooleanTrue);
+    mt->setObject("TrackpadSecondaryClickCorners", kOSBooleanTrue);
+    mt->setObject("TrackpadFourFingerGestures", kOSBooleanTrue);
+    top->setObject("DefaultMultitouchProperties", mt);
+    plpath->release(); ptype->release(); popts->release();
+    plugin->release(); mt->release();
+    return top;
+}
+
 bool com_schmonz_MT2BTReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
 
@@ -192,13 +238,23 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
             IOLog("MT2BTReader: allocClassWithName(BNBTrackpadDevice) NULL (AppleBluetoothMultitouch loaded?)\n");
             if (bo) bo->release();
         } else {
-            OSDictionary *props = OSDictionary::withCapacity(2);   /* non-null: init bails on NULL props */
+            /* B1: pass genuine DefaultMultitouchProperties so BNB's spawned AppleMultitouchDevice is
+             * recognized + drives the cursor (findings S2.17). Hybrid (no B1) only needs a non-null dict. */
+            OSDictionary *props = kB1Spike ? bt_build_bnb_props() : OSDictionary::withCapacity(2);
             bool ok = props && bnb->init(props);
             if (props) props->release();
             if (ok && bnb->attach(fChannel)) {
                 if (bnb->start(fChannel)) {
                     fManualBnb = bnb;
                     gGenuineBnb = bnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
+                    /* B1-b: point BNB's handler slot at our fDevice, so BNB's prefs path
+                     * (_setMultitouchPreferences → +0x1b0 → setPreferences) lands prefpane settings on
+                     * the device that actually emits frames. No trigger → BNB makes no AMD of its own. */
+                    if (kB1Spike && gActiveMT2Gesture && gActiveMT2Gesture->rawDevice()) {
+                        *(void **)((uint8_t *)bnb + BNB_HANDLER_OFF) = gActiveMT2Gesture->rawDevice();
+                        IOLog("MT2BTReader: B1-b — redirected BNB+0x1b0 to our fDevice (%p)\n",
+                              gActiveMT2Gesture->rawDevice());
+                    }
                     IOLog("MT2BTReader: Path A manual BNBTrackpadDevice start OK\n");
                 } else {
                     IOLog("MT2BTReader: manual BNBTrackpadDevice start() FAILED\n");
