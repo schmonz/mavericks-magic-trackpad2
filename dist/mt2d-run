@@ -33,6 +33,21 @@ if [ "${1:-}" = "--reset" ]; then
     exit 0
 fi
 
+# --health-verdict <bt> <usb> <nub>: print "healthy" or "incomplete" for the given reader counts.
+# Healthy = the gesture nub loaded AND a transport is FULLY bound: Bluetooth needs BOTH L2CAP
+# channels (BT>=2 = control+interrupt); USB needs its one interface (USB>=1). BT=1 is a half-open
+# attach (interrupt channel missing) and is NOT healthy. Pure function of its args -> unit-testable,
+# and (being a subcommand that exits here) it never reaches the kextload main flow below.
+if [ "${1:-}" = "--health-verdict" ]; then
+    bt="${2:-0}"; usb="${3:-0}"; nub="${4:-0}"
+    if [ "$nub" != "0" ] && { [ "$bt" -ge 2 ] || [ "$usb" -ge 1 ]; }; then
+        echo healthy
+    else
+        echo incomplete
+    fi
+    exit 0
+fi
+
 STATE="$(cat "$STATE_FILE" 2>/dev/null || echo ok)"
 
 if [ "$STATE" = "trying" ]; then
@@ -93,7 +108,9 @@ cnt="$(ioclasscount com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
 btn="$(ioclasscount com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
 usbn="$(ioclasscount com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
 log "transport readers bound: BT=$btn USB=$usbn (gesture nub=$cnt)"
-if [ -n "$cnt" ] && [ "$cnt" != "0" ]; then
+if [ "$("$0" --health-verdict "$btn" "$usbn" "$cnt")" = "healthy" ]; then
     echo ok > "$STATE_FILE" 2>/dev/null || true
     log "full-gesture mode confirmed healthy"
+else
+    log "INCOMPLETE: transport not fully bound (BT=$btn USB=$usbn nub=$cnt) — interrupt channel likely missing"
 fi

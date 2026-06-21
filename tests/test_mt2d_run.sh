@@ -32,5 +32,16 @@ sf="$TMP/state"; echo trying > "$sf"
 MT2D_STATE_FILE="$sf" "$WRAPPER" --reset >/dev/null 2>&1
 if [ "$(cat "$sf")" = "ok" ]; then echo "PASS: --reset -> ok"; else echo "FAIL: --reset (got $(cat "$sf"))"; fail=1; fi
 
+hv() {
+    desc="$1"; want="$2"; shift 2
+    got="$("$WRAPPER" --health-verdict "$@" 2>/dev/null)"
+    if [ "$got" = "$want" ]; then echo "PASS: $desc"; else echo "FAIL: $desc (got $got want $want)"; fail=1; fi
+}
+hv "BT=2 nub=1 -> healthy"     healthy    2 0 1
+hv "BT=1 nub=1 -> incomplete"  incomplete 1 0 1
+hv "BT=0 nub=1 -> incomplete"  incomplete 0 0 1
+hv "USB=1 nub=1 -> healthy"    healthy    0 1 1
+hv "nub=0 BT=2 -> incomplete"  incomplete 2 0 0
+
 if [ $fail -eq 0 ]; then echo "ALL mt2d-run TESTS PASS"; else echo "mt2d-run TESTS FAILED"; exit 1; fi
 exit 0
