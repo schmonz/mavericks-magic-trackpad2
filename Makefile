@@ -41,7 +41,7 @@ pkg: mt2_reenumerate kext-gesture
 	@echo "Built build/mt2d-$(VERSION).pkg"
 
 # Unit tests are pure C, no frameworks needed.
-TESTS = test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_mt2_to_mt1
+TESTS = test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_mt2_to_mt1 test_connect_sm test_conn_trace
 test: $(TESTS)
 	@fail=0; for t in $(TESTS); do echo "== $$t =="; ./$$t || fail=1; done; \
 	 echo "== test_mt2d_run.sh =="; sh tests/test_mt2d_run.sh || fail=1; \
@@ -62,6 +62,10 @@ test_lifecycle: tests/test_lifecycle.c $(SRC)/mt2_lifecycle.c
 test_session: tests/test_session.c $(SRC)/mt2_session.c $(SRC)/mt2_pipeline.c $(SRC)/mt2_lifecycle.c
 	$(CC) $(CFLAGS) -o $@ $^
 test_mt2_to_mt1: tests/test_mt2_to_mt1.c $(SRC)/mt2_to_mt1.c $(SRC)/mt2_bt_decode.c $(SRC)/mt2_decode.c $(SRC)/mt1_encode.c
+	$(CC) $(CFLAGS) -o $@ $^
+test_connect_sm: tests/test_connect_sm.c $(SRC)/mt2_connect_sm.c
+	$(CC) $(CFLAGS) -o $@ $^
+test_conn_trace: tests/test_conn_trace.c $(SRC)/conn_trace.c $(SRC)/mt2_connect_sm.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
