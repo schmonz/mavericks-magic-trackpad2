@@ -27,4 +27,13 @@ typedef struct { csm_state_t next; csm_action_t action; } csm_result_t;
  * state returns (CSM_IDLE, CSM_ACT_TEARDOWN). No IOKit, no I/O. */
 csm_result_t csm_step(csm_state_t state, csm_event_t event);
 
+typedef enum {
+    CSM_TD_RESTORE_DELEGATE,   /* undo interpose: channel+0x110/+0x118 back to BNB's original */
+    CSM_TD_TERMINATE_BNB,      /* terminate() + detach the manual BNB so none lingers */
+    CSM_TD_RELEASE_REFS        /* release + null our refs (bnb ptr, saved delegate, channel) */
+} csm_teardown_step_t;
+
+/* The fixed teardown order the kernel must follow on CSM_ACT_TEARDOWN. */
+void csm_teardown_steps(const csm_teardown_step_t **steps, unsigned *count);
+
 #endif

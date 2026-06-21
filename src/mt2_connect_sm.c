@@ -35,3 +35,11 @@ csm_result_t csm_step(csm_state_t state, csm_event_t event) {
     }
     return r;
 }
+
+static const csm_teardown_step_t kTeardown[] = {
+    CSM_TD_RESTORE_DELEGATE, CSM_TD_TERMINATE_BNB, CSM_TD_RELEASE_REFS
+};
+void csm_teardown_steps(const csm_teardown_step_t **steps, unsigned *count) {
+    *steps = kTeardown;
+    *count = (unsigned)(sizeof(kTeardown)/sizeof(kTeardown[0]));
+}

@@ -32,5 +32,14 @@ static void run_tests(void) {
     csm_result_t reattach = csm_step(CSM_STEADY, CSM_EV_CONTROL_ATTACH);
     CHECK_EQ(reattach.next, CSM_STEADY);
     CHECK_EQ(reattach.action, CSM_ACT_NONE);
+
+    /* Teardown is a fixed, ordered sequence (spike-1 §5): restore delegate -> terminate BNB ->
+     * release/null. The kernel runs these in order; the order itself is the invariant. */
+    const csm_teardown_step_t *steps; unsigned count;
+    csm_teardown_steps(&steps, &count);
+    CHECK_EQ(count, 3);
+    CHECK_EQ(steps[0], CSM_TD_RESTORE_DELEGATE);
+    CHECK_EQ(steps[1], CSM_TD_TERMINATE_BNB);
+    CHECK_EQ(steps[2], CSM_TD_RELEASE_REFS);
 }
 TEST_MAIN()
