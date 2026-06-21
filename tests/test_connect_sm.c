@@ -22,5 +22,15 @@ static void run_tests(void) {
         CHECK_EQ(rr.next, seq[i].n);
         CHECK_EQ(rr.action, seq[i].a);
     }
+
+    /* R2 idempotency: re-delivering the consumed event (or an out-of-order one) is a no-op. */
+    csm_result_t dup = csm_step(CSM_BNB_FORMED, CSM_EV_CONTROL_OPEN); /* already past OPEN */
+    CHECK_EQ(dup.next, CSM_BNB_FORMED);
+    CHECK_EQ(dup.action, CSM_ACT_NONE);
+
+    /* R3 single-owner: a second CONTROL_ATTACH while not IDLE does not re-form. */
+    csm_result_t reattach = csm_step(CSM_STEADY, CSM_EV_CONTROL_ATTACH);
+    CHECK_EQ(reattach.next, CSM_STEADY);
+    CHECK_EQ(reattach.action, CSM_ACT_NONE);
 }
 TEST_MAIN()
