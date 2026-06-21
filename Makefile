@@ -45,6 +45,7 @@ TESTS = test_model test_decode test_bt_decode test_encode test_pipeline test_lif
 test: $(TESTS)
 	@fail=0; for t in $(TESTS); do echo "== $$t =="; ./$$t || fail=1; done; \
 	 echo "== test_mt2d_run.sh =="; sh tests/test_mt2d_run.sh || fail=1; \
+	 echo "== test_conn_trace_parser.sh =="; sh tests/test_conn_trace_parser.sh || fail=1; \
 	 [ $$fail -eq 0 ] && echo "ALL TESTS PASS"
 
 test_model: tests/test_model.c

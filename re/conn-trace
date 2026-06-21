@@ -1,0 +1,32 @@
+#!/bin/sh
+# conn-trace - reconstruct per-connection connect timelines from CONNTRACE lines and render a
+# STEADY/FAIL verdict. Reads a klog/log file (arg) or stdin.
+#
+#   # columns: ts  state  event  (per connection)
+#   VERDICT: STEADY conn=<id>            # reached STEADY
+#   VERDICT: FAIL conn=<id> stalled at <state>   # last state before giving up / DISCONNECT
+#
+# Usage: conn-trace [logfile]      (no arg = stdin)
+set -e
+src=${1:-/dev/stdin}
+
+grep 'CONNTRACE ' "$src" | awk '
+{
+    for (i = 1; i <= NF; i++) {
+        n = index($i, "="); if (!n) continue;
+        k = substr($i, 1, n-1); v = substr($i, n+1);
+        if (k == "conn")  conn = v;
+        if (k == "state") state = v;
+        if (k == "event") event = v;
+        if (k == "ts")    ts = v;
+    }
+    print "  conn=" conn " ts=" ts " " state " <- " event;
+    if (event == "DISCONNECT") next;
+    last[conn] = state; seen[conn] = 1;
+}
+END {
+    for (c in seen) {
+        if (last[c] == "STEADY") print "VERDICT: STEADY conn=" c;
+        else print "VERDICT: FAIL conn=" c " stalled at " last[c];
+    }
+}'

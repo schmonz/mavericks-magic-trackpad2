@@ -31,6 +31,7 @@ wrapper, not to hand-run `otool`. Use one of these, adjust one, or add one — n
 | `re/plist` | read a kext/bundle Info.plist (or any .plist) by alias/path — whole, one key path, or filtered | `re/plist AppleBluetoothMultitouch IOKitPersonalities` |
 | `re/mt-devices` | MultitouchSupport-enumerated devices + parser/transport/family | `re/mt-devices` |
 | `re/mt-contacts` | live per-frame contacts the recognizer receives (state/size/density) | `re/mt-contacts` |
+| `re/conn-trace` | per-connection connect timeline + STEADY/FAIL verdict from CONNTRACE log lines | `re/conn-trace klog.txt` |
 
 `re/disasm` also takes a raw `<start-hex> [end-hex]` range for code with no symbol. Arch defaults to
 x86_64 (`RE_ARCH=i386` to override).

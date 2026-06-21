@@ -1,0 +1,5 @@
+CONNTRACE ts=10 conn=1 state=CONTROL_UP event=CONTROL_ATTACH chan=0x1 bnb=0x0 deleg=0x0 ret=0
+CONNTRACE ts=20 conn=1 state=BNB_FORMED event=CONTROL_OPEN chan=0x1 bnb=0x2 deleg=0x0 ret=0
+CONNTRACE ts=30 conn=1 state=INTERRUPT_BOUND event=INTERRUPT_PUBLISHED chan=0x3 bnb=0x2 deleg=0x0 ret=0
+CONNTRACE ts=40 conn=1 state=INTERPOSED event=BNB_LISTENING chan=0x3 bnb=0x2 deleg=0x9 ret=0
+CONNTRACE ts=2040 conn=1 state=IDLE event=DISCONNECT chan=0x0 bnb=0x0 deleg=0x0 ret=-536870084
