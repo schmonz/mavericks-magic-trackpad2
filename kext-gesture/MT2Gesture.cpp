@@ -41,6 +41,7 @@
 #include "MT2Gesture.h"
 #include "MT2HIDShell.h"
 #include "mt1_encode.h"
+#include "mt2_build_flags.h"   /* kFullBnb */
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
 
@@ -201,6 +202,12 @@ static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
     return 0;
 }
 
+void com_schmonz_MT2Gesture::installGeometryHandler(AppleMultitouchDevice *amd) {
+    if (!amd) return;
+    amd->setGetReportHandler(&getReportStub, this);
+    amd->setSetReportHandler(&setReportStub, this);
+}
+
 bool com_schmonz_MT2Gesture::start(IOService *provider) {
     if (!IOService::start(provider)) {
         return false;
@@ -241,6 +248,16 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     /* Publish ourselves so the in-kernel readers' providers resolve and IOKit
      * finishes matching our subtree. */
     registerService();
+
+    /* Full-BNB: genuine BNB spawns + drives its OWN AppleMultitouchDevice, which is the input source
+     * and the prefpane target. Creating our own fDevice here would publish a SECOND AppleMultitouchDevice
+     * (with its own user client) that competes for MultitouchSupport's binding. So under kFullBnb we
+     * publish only this nub (above, so the BT readers' providers resolve) and create no fDevice/HID shell.
+     * gActiveMT2Gesture is already set; stop() null-checks fDevice/fHidShell. */
+    if (kFullBnb) {
+        IOLog("MT2Gesture: kFullBnb — no fDevice/HID shell; BNB's own AMD drives input + owns the pane\n");
+        return true;
+    }
 
     /* M5: stand up an in-kernel MT1 HID device UNDER US so Apple's
      * AppleMultitouchHIDEventDriver matches+starts a real IOHIDEventService
@@ -313,8 +330,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     dev->setProperty("ExtractAndPostDeviceButtonState", kOSBooleanTrue);
 
     amd->setEnableMultitouchHandler(&enableStub, this);
-    amd->setGetReportHandler(&getReportStub, this);
-    amd->setSetReportHandler(&setReportStub, this);
+    installGeometryHandler(amd);
 
     if (!dev->attach(this)) {
         IOLog("MT2Gesture: device attach failed\n");

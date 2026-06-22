@@ -48,5 +48,11 @@ public:
     /* DEBUG/TEST seam: the user client routes injected encoded 0x28 bytes here, straight
      * to the device (bypasses the session) for hands-free on-device testing. */
     IOReturn feedFrame(const unsigned char *bytes, unsigned int len);
+
+    /* Wire an AppleMultitouchDevice's get/set-report handlers to our geometry stubs, so the
+     * recognizer learns sensor geometry (13000x11300, Rows 13, Cols 16, Family 128) instead of
+     * querying a device that does not answer the MT1 D-reports. Used for our fDevice AND for
+     * BNB's spawned AMD under full-BNB (findings 2026-06-22-fullbnb-cursor-geometry). */
+    void installGeometryHandler(AppleMultitouchDevice *amd);
 };
 #endif
