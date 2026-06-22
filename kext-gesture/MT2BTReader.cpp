@@ -74,6 +74,11 @@ static void *gOrigCb = 0;
 static IOService *gOrigTarget = 0;
 static IOBluetoothL2CAPChannel *gInterposedChannel = 0;
 
+/* Full-BNB: install our geometry get/set-report stubs on BNB's spawned AMD exactly once, before the
+ * deferred 0xF1 enable prompts its geometry query. Without this BNB's AMD has no sensor surface
+ * dimensions and the cursor is janky (findings 2026-06-22-fullbnb-cursor-geometry). Reset in stop(). */
+static bool gGeomInstalled = false;
+
 static uint32_t bt_uptime_ms(void) {
     clock_sec_t s; clock_usec_t u;
     clock_get_system_microtime(&s, &u);
@@ -413,6 +418,18 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
      * it to mouse mode (findings S2.11). self->fChannel is the control channel (this is the
      * control reader — the manual-start + this timer are armed only when fIsControl). */
     if (gInterposedChannel) {
+        /* Full-BNB: before the first 0xF1, install our geometry stubs on BNB's spawned AMD so it
+         * learns sensor dimensions (else janky cursor). Wait (re-arm) until the AMD exists; do not
+         * send 0xF1 yet, so the geometry query that 0xF1 prompts is answered by our stubs. */
+        if (kFullBnb && !gGeomInstalled) {
+            void *amd = gGenuineBnb ? *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF) : 0;
+            if (!amd) { ts->setTimeoutMS(50); return; }   /* AMD not spawned yet — wait, no 0xF1 */
+            if (gActiveMT2Gesture) {
+                gActiveMT2Gesture->installGeometryHandler((AppleMultitouchDevice *)amd);
+                gGeomInstalled = true;
+                IOLog("MT2BTReader: installed geometry stubs on BNB AMD %p before 0xF1\n", amd);
+            }
+        }
         if (self->fChannel) {
             IOCommandGate *cg = ((IOBluetoothObject *)self->fChannel)->getCommandGate();
             if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
@@ -450,6 +467,7 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
     /* If we're the interrupt reader that armed the session source, clear it so the Path A
      * hybrid shim stops feeding through a freed instance. */
     if (gInterruptReader == this) gInterruptReader = 0;
+    gGeomInstalled = false;   /* re-install geometry stubs on the next connect's fresh BNB AMD */
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */
