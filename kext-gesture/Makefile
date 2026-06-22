@@ -2,8 +2,13 @@ KEXT_NAME  = MT2Gesture
 BUNDLE_ID  = com.schmonz.MT2Gesture
 
 CXX = clang++
+# -MMD -MP: the compiler emits a .d file per object listing every header that
+# source actually #includes, and we -include them below. Header edits then trigger
+# the right rebuilds AUTOMATICALLY -- no hand-maintained prerequisite lists to drift
+# out of sync (the old lists silently missed headers, producing stale binaries).
+# -MP adds phantom targets so deleting a header doesn't wedge the build.
 CXXFLAGS = -mmacosx-version-min=10.9 -fno-rtti -fno-exceptions -fapple-kext \
-           -std=c++11 -Wno-deprecated-register -I../src \
+           -std=c++11 -Wno-deprecated-register -MMD -MP -I../src \
            -I/System/Library/Frameworks/Kernel.framework/Headers \
            -I/System/Library/Frameworks/IOKit.framework/Headers
 LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
@@ -17,35 +22,19 @@ OBJS = $(KEXT_NAME).o MT2HIDShell.o MT2GestureUserClient.o \
 
 all: $(KEXT_NAME).kext
 
-%.o: %.cpp MT2Gesture.h amd_shim.h MT2HIDShell.h mt2_build_flags.h
+# Local C++ sources. Header prerequisites come from the generated .d files.
+%.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-# The BT reader + the pure-C decoder/encoder shared with the USB path (compiled as C++
-# under the kext toolchain; plain C99, no libc dependency).
-MT2BTReader.o: MT2BTReader.cpp MT2BTReader.h bt_l2cap_shim.h MT2Gesture.h mt2_build_flags.h ../src/mt2_to_mt1.h
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-mt2_bt_decode.o: ../src/mt2_bt_decode.c ../src/mt2_bt_decode.h ../src/mt2_decode.h ../src/touch_model.h
-	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-mt1_encode.o: ../src/mt1_encode.c ../src/mt1_encode.h ../src/touch_model.h
-	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-mt2_to_mt1.o: ../src/mt2_to_mt1.c ../src/mt2_to_mt1.h ../src/mt2_bt_decode.h ../src/mt1_encode.h ../src/touch_model.h
-	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-# The in-kernel USB reader + the pure-C USB decoder shared with the (now removed)
-# userspace path (compiled as C++ under the kext toolchain).
-# -DKERNEL=1: the Kernel.framework USB headers gate the kernel-only
-# IOUSBDevRequestDesc (memory-descriptor control request) behind #if KERNEL.
-# Scoped to this object so the working BT/gesture path compiles unchanged.
-MT2USBReader.o: MT2USBReader.cpp MT2USBReader.h MT2Gesture.h
+# MT2USBReader needs KERNEL=1: the Kernel.framework USB headers gate the kernel-only
+# IOUSBDevRequestDesc control-request API behind #if KERNEL. Scoped to this object so
+# the BT/gesture path compiles unchanged. (Explicit recipe overrides the pattern above.)
+MT2USBReader.o: MT2USBReader.cpp
 	$(CXX) $(CXXFLAGS) -DKERNEL=1 -c -o $@ $<
-mt2_usb_decode.o: ../src/mt2_usb_decode.c ../src/mt2_usb_decode.h ../src/mt2_decode.h ../src/touch_model.h
-	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-mt2_decode.o: ../src/mt2_decode.c ../src/mt2_decode.h ../src/touch_model.h
-	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-mt2_pipeline.o: ../src/mt2_pipeline.c ../src/mt2_pipeline.h ../src/touch_model.h
-	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-mt2_lifecycle.o: ../src/mt2_lifecycle.c ../src/mt2_lifecycle.h ../src/touch_model.h
-	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
-mt2_session.o: ../src/mt2_session.c ../src/mt2_session.h ../src/mt2_pipeline.h ../src/mt2_lifecycle.h ../src/touch_model.h
+
+# Shared pure-C sources from ../src (the decode/encode/session core the USB path also
+# uses), compiled as C++ under the kext toolchain; plain C99, no libc dependency.
+%.o: ../src/%.c
 	$(CXX) $(CXXFLAGS) -x c++ -c -o $@ $<
 
 $(KEXT_NAME).kext: $(OBJS) Info.plist
@@ -54,11 +43,11 @@ $(KEXT_NAME).kext: $(OBJS) Info.plist
 	cp Info.plist $(KEXT_NAME).kext/Contents/
 	chmod -R 755 $(KEXT_NAME).kext
 
-# kextload refuses any kext not owned by root:wheel, so we stage a copy in /tmp
-# and chown it. Every step that touches that staged copy needs root: the prior
-# load left it root-owned, so even the cleanup rm must be sudo. Keeping all the
-# privileged steps under sudo makes this work as a plain `make load` AND as
-# `sudo make load` (nested sudo is harmless) — pick either, both are idempotent.
+# kextload refuses any kext not owned by root:wheel, so we stage a copy in /tmp and
+# chown it. Every step that touches that staged copy needs root: the prior load left
+# it root-owned, so even the cleanup rm must be sudo. Keeping all the privileged steps
+# under sudo makes this work as a plain `make load` AND as `sudo make load` (nested
+# sudo is harmless) — pick either, both are idempotent.
 load: $(KEXT_NAME).kext
 	sudo rm -rf /tmp/$(KEXT_NAME).kext
 	sudo cp -R $(KEXT_NAME).kext /tmp/
@@ -69,4 +58,7 @@ unload:
 	-sudo kextunload -b $(BUNDLE_ID)
 
 clean:
-	rm -rf $(KEXT_NAME).kext $(OBJS)
+	rm -rf $(KEXT_NAME).kext $(OBJS) $(OBJS:.o=.d)
+
+# Pull in the auto-generated header dependencies (silent on first build / after clean).
+-include $(OBJS:.o=.d)
