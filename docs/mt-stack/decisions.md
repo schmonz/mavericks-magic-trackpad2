@@ -49,6 +49,19 @@ Trying to coexist (instead of exclude) so PSM 19 would open reliably: it opened,
 then grabbed the interrupt-channel `listenAt` delegate (single-owner) → our listener rejected → no
 frames, and the HID driver still didn't drive a cursor. Worst of both; reverted.
 
+### `waitQuiet` on manual-BNB teardown — *not a functioning choice* (removed 2026-06-23)
+Added 2026-06-21 as a "synchronous teardown" to drain BNB before `release()` (hoping to fix the §S2.9
+unload wedge / §S2.14 reconnect flap). On-device probe (`getBusyState` before/after, 8s bound):
+the manual `BNBTrackpadDevice` is `busyState=1` *before* `terminate()` and **still `busy=1` after a
+full 8001 ms** wait; its AMD child is `busy=0`. So the busy is BNB's own — its genuine connect
+lifecycle never completes in our hybrid flow (`deviceReady` never reached; the 5s "Forcing MT restart"
+watchdog cycles), so the start-time busy is never balanced and `waitQuiet` can **never** succeed; it
+only stalled every disconnect for the full bound. Removed → plain `terminate()` + `release()`. Unload
+safety rests on the in-gate delegate/vtable restores, not on quiescence (no panic; reconnects work).
+**Reopening criterion:** if the full `waitForChannelState(OPEN)` handshake fix lands and BNB reaches
+`deviceReady` genuinely, it should settle to `busy=0` — a real synchronous teardown becomes possible
+then; re-check.
+
 ### Hybrid `+0x1b0` poke — *not desirable (stability)*
 The hybrid architecture routed prefpane settings by poking BNB's handler slot (`+0x1b0`) to our
 fDevice. It worked (controls applied) but its teardown drove genuine HID teardown against a

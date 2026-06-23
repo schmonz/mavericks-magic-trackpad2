@@ -8,30 +8,6 @@ settled a choice).
 
 ---
 
-## `waitQuiet` times out on every manual-BNB teardown
-
-**Observed (2026-06-22, ~10 warm reconnect cycles):** in `MT2BTReader::stop()`,
-`fManualBnb->waitQuiet(2s)` returns `0xe00002d6` (`kIOReturnTimeout`) **every** time — the
-manually-started `BNBTrackpadDevice` never reaches quiescence within the 2s bound.
-
-**Why it's currently benign:** no panic across many teardowns. Before `terminate()`/`release()`,
-`stop()` already (a) nulls our `listenAt` callback in-gate (`teardownInGate`), (b) restores BNB's
-original delegate callback on the interposed channel in-gate (`restoreInGate`), and (c) quiesces +
-removes the interpose timer. So in-flight L2CAP data goes to Apple's own code, not our freed shim —
-clean unload rests on those in-gate restores, **not** on `waitQuiet` succeeding.
-
-**What we don't understand:** *why* the manual BNB stays non-quiescent. Candidates: a retained
-reference we don't release; an outstanding async operation (e.g. BNB's own interrupt-channel
-`listenAt(NULL)`/closeChannel teardown still in flight); or `waitQuiet` simply being the wrong
-readiness primitive for this object. Until we know, the 2s bound is a guess.
-
-**How to investigate (no on-device guess-and-check):** at `terminate()` time, log the BNB retain
-count and any outstanding I/O; compare against a *genuine* (IOKit-matched) BNB teardown to see what
-quiesces there that doesn't for ours; confirm the interpose restore + `listenAt(NULL)` fully detach
-us before `terminate()`. Relates to [[mt2-unload-while-streaming-uaf]] and the connect-hardening work.
-
----
-
 ## Cold-boot and sleep/wake flap rate — unmeasured
 
 **Measured clean (2026-06-22):** warm BT reconnect = 0 flaps across all observed cycles (CONNTRACE

@@ -635,24 +635,23 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
     /* Path A: tear down the manually-started genuine BNBTrackpadDevice before we go away, or it
      * outlives the channel it was started on.
      *
-     * SYNCHRONOUS teardown (wedge/flap root-cause probe, 2026-06-21): plain terminate() is ASYNC and
-     * unwaited, so BNB's own teardown (its interrupt-channel listenAt(NULL)+closeChannel+release, per
-     * genuine closeDownServicesWL) races kext unload -> the L2CAP channel is left half-torn -> kextunload
-     * reports "busy" (Error 3) and the NEXT load can't bind (findings §S2.9 "reboot between iterations").
-     * The SAME incomplete teardown is the likely cause of attach failing on BT reconnect (§S2.14). So:
-     * terminate() then waitQuiet() drive BNB's teardown to quiescence BEFORE we release + return, leaving
-     * the channel clean for the next bind. Bounded to 2 s so a stuck teardown can't hang the unload; the
-     * logged waitQuiet return (0 == quiesced, 0xe00002d6 == kIOReturnTimeout) is the probe's key signal. */
+     * NO waitQuiet (RE'd 2026-06-23, see docs/mt-stack/open-questions.md): the manually-started BNB
+     * sits at busyState=1 for its ENTIRE life — its genuine connect lifecycle never completes
+     * (deviceReady is never reached in our hybrid flow; the 5s "Forcing MT restart" watchdog cycles),
+     * so the start-time busy is never balanced. terminate() can't drop it: probe showed busy=1 before
+     * terminate and still busy=1 after a full 8s waitQuiet (AMD child busy=0, so it's BNB's own). A
+     * waitQuiet here can therefore NEVER succeed — it only stalls every disconnect for the full bound.
+     * Unload safety rests on the in-gate delegate + vtable restores ABOVE (not on quiescence); the
+     * async termination completes after release(). So: plain terminate() + release(), no wait. */
     if (fManualBnb) {
         /* Restore the transport's original vtable pointer (and free the clone) BEFORE terminate,
          * so BNB tears down through Apple's own code, not our override. */
         removeBnbGeometry(fManualBnb);
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
         fManualBnb->terminate();
-        IOReturn wq = fManualBnb->waitQuiet(2ULL * 1000 * 1000 * 1000);
         fManualBnb->release();
         fManualBnb = 0;
-        IOLog("MT2BTReader: manual BNBTrackpadDevice terminate+waitQuiet(=0x%x)+release\n", wq);
+        IOLog("MT2BTReader: manual BNBTrackpadDevice terminate+release\n");
     }
     fChannel = 0;
     IOService::stop(provider);
