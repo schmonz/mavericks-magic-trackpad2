@@ -23,10 +23,13 @@ grep 'CONNTRACE ' "$src" | awk '
     print "  conn=" conn " ts=" ts " " state " <- " event;
     if (event == "DISCONNECT") next;
     last[conn] = state; seen[conn] = 1;
+    if (state == "STEADY") steady[conn] = 1;   # STEADY is sticky: frames flowed = success, even if a
+                                               # later milestone (e.g. MT_MODE from the re-enable phase
+                                               # completing after the first frame) is logged afterward.
 }
 END {
     for (c in seen) {
-        if (last[c] == "STEADY") print "VERDICT: STEADY conn=" c;
+        if (steady[c]) print "VERDICT: STEADY conn=" c;
         else print "VERDICT: FAIL conn=" c " stalled at " last[c];
     }
 }'
