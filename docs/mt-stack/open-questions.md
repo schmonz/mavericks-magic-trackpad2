@@ -8,35 +8,38 @@ settled a choice).
 
 ---
 
-## Edge-clamp: frozen-X band near the L/R pad edges — DOWNSTREAM (recognizer normalization)
+## Edge-clamp: frozen edge bands — CAUSE CONFIRMED = `MTSlideGesture::isBlocked`, gated on BT transport
 
-**Symptom:** cursor X freezes in a band near each L/R edge; up/down still works there. Unpleasant.
+**Symptom:** cursor freezes in a band near the pad edges (you must clutch/lift more); the cursor still
+reaches all screen edges (it's relative). Up/down works in the band.
 
-**Decisive measurement (2026-06-23, full-BNB):** an in-band finger wiggle made decoded `x` **vary**
-(e.g. `3440→3573`, spread 133) while the cursor X stayed frozen (user: accepts up/down, not left/right).
-So decoded `x` is faithful and *changing* in the band — the clamp is **downstream of decode/encode**,
-in MultitouchSupport's report-X → position normalization, which pins `norm.x` for decoded `x` beyond
-~3440 even though the device reports up to `3934`. (This **overturns** the 2026-06-19 "device-side, x
-hard-stuck at 3934" reading — that doesn't reproduce under full-BNB; likely the hybrid/fDevice path or
-a measurement right at the true physical edge.) **H1 (mt1_encode clamp) stays dead** — `scale()` maps
-the full in-range decoded span linearly; the clamp is after encode.
+**Not coordinates (H1 + the encode-range fix are dead).** In-band wiggle: decoded `x` *varies*
+(`3440→3573`) while the cursor is frozen → the device reports position fine; nothing in decode/encode
+clamps. On-device, narrowing the emitted X range (`MT1_MAX_X` ±2500) did **nothing** — confirming it's
+not a coordinate-range problem. (Also overturns the 2026-06-19 "device-side saturation" reading.)
 
-**Live hypothesis — H3 (recognizer's X range too narrow):** the recognizer normalizes X against a range
-narrower than our encoded span, so the outer ~13% pins to `norm.x` 0/1. Prime suspect: the **zeroed
-Sensor Region** — `src/mt2_geometry.c` answers the Region Descriptor (`0xd0`) and Region Param (`0xa1`)
-with all zeros, and MultitouchSupport derives coordinate/pixel constraints from them
-(`_MTParseSensorRegionParam` @0x706b reads `0xa1` as 3×`u16`; `_alg_DerivePixelConstraintsPerRegion`
-@0xb980, `_mt_DefineSurfaceGrid` @0xc1fa). A degenerate region → a degenerate/narrow coordinate range.
-(NOTE: edge-clamp is therefore SEPARATE from the waitQuiet/flap deviceReady root — it's our published
-geometry, which we control directly, not a device-config gap.)
+**CONFIRMED CAUSE (RE, off-device):** the 10.9 `MTSlideGesture::isBlocked` edge-swipe reserve
+(MultitouchHID.plugin) — a known bug where the ~2cm edge strip stays reserved (blocking 1-finger
+pointer) even with the NC gesture off. Instruction-verified at the `0xf8a4` conditional:
+```
+0xf89a  cmpl $0x4, %r8d         ; transport == 4 (Bluetooth)?
+0xf89e  jne  0xf902             ;   not BT -> skip the buggy block
+0xf8a4  testb $0x20, 0xd9(%r15) ; contact in the reserve zone?
+0xf8ac  jne  0xf952             ;   -> BLOCKED  (pointer frozen)
+```
+So the block is **gated on transport == 4**. `_MTDeviceGetTransportMethod` returns the transport cached
+at `MTDevice+0x90`, set by `_mt_CachePropertiesForDevice` from the AMD's **`Transport` property string**;
+only `"Bluetooth"` maps to 4 (it's the only transport string in MultitouchSupport). We publish
+`Transport="Bluetooth"` always (full-BNB via `createMultitouchHandler`; fDevice/USB via `makeHidProps`),
+so we hit the block on every transport.
 
-**Discriminators (cheap):** (1) vary published `SurfaceWidth` (13000→26000) + reload — if the band
-shifts, contact-norm uses the surface; if not, the region. (2) publish a non-zero region (full-range
-bounds guess) — if the band shrinks, H3 confirmed; then find the correct region bytes (genuine-MT2
-capture or driver sources). Also RE `_alg_DerivePixelConstraintsPerRegion` to confirm region→X-range.
-**Oracle:** in-band wiggle — decoded `x` varies (kext `debug.mt2_log=2` "edge x=") while `re/mt-contacts`
-`norm.x` holds constant = downstream confirmed; fixed when `norm.x` tracks decoded `x` to the edges.
-Relates to [[mt2-cursor-edge-clamp]].
+**FIX (identified, pending on-device verify):** make the recognizer see a **non-BT transport** (anything
+≠ `"Bluetooth"` → numeric ≠ 4 → `jne 0xf902` skips the buggy block). fDevice/USB path: one-line change
+in `makeHidProps`. Full-BNB path: harder — the AMD's `Transport` is set by `createMultitouchHandler`
+(override after creation or via the props dict; same timing concern as geometry). **Risk to verify:**
+no gesture/tap/pane regression from a non-BT transport (the only transport==4-gated thing found is this
+block, but confirm). **Verify:** dead zone gone + gestures OK; `ioreg` shows `Transport` ≠ Bluetooth.
+Relates to [[mt2-cursor-edge-clamp]]. (Test bed: the fDevice/USB path under `kFullBnb=false`.)
 
 ---
 
