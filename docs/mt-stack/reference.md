@@ -72,6 +72,43 @@ Calibrated MT2 values (`src/mt2_geometry.c`): Family `0x80`(128), Rows 13, Cols 
 | `ExtractAndPostDeviceButtonState` | `MT2_PROP_EXTRACT_BUTTON` | in `DefaultMultitouchProperties` → copied to the AMD by `createMultitouchHandler` → `AMD::start` sets the S+9 device-button gate → physical + two-finger-right click dispatch |
 | `DefaultMultitouchProperties` | — | dict on the transport (we pass it via `bnb->init`); `createMultitouchHandler` copies its keys (`parser-type`=1000, `parser-options`=47, `MTHIDDevice`, `IOCFPlugInTypes`→MultitouchHID, …) onto the spawned AMD |
 
+## BT connect handshake — the genuine sequence (input to the flap fix)
+
+RE'd from the genuine `IOBluetoothHIDDriver` (10.9). **PSM 19 is device-initiated** — the host opens
+it for nothing; the device opens its interrupt channel as a consequence of the control channel being
+correctly accepted (`listenAt`-bound) and reaching OPEN. The genuine order (`handleStart` @0x32f2):
+
+1. Win/own the control channel (PSM 17). *(We already do.)*
+2. `listenAt(control, cb)` then `waitForChannelState(OPEN)` — **before anything else**
+   (`staticPrepControlChannelAction` @0x3ab2). Writes no HID bytes.
+3. `addMatchingNotification(IOBluetoothL2CAPChannel, PSM=0x13, interruptChannelOpeningCallback)` and
+   **wait** — do *not* open PSM 19 ourselves.
+4. On the PSM-19 nub: `listenAt(interrupt, cb)` then `waitForChannelState(OPEN)`
+   (`prepInterruptChannelWL` @0x6338).
+5. `deviceReady`: SET_PROTOCOL (`0x70 | bit`, with the subclass bit-inversion for 05AC:0309) **and
+   enable reports/0xF1 — only now**, after both channels are OPEN (`setProtocol` base @0x5cd2 /
+   subclass `IOAppleBluetoothHIDDriver` @0x1bfa). Gated by the `"SuppressSetProtocol"` provider prop.
+6. Two 5000ms (`0x1388`) `waitForChannelState` timeouts (control + interrupt) bound the waits; no
+   explicit PSM-19 retry loop — robustness is the state-waits + the device re-driving the connection.
+
+Constants in `src/mt2_stack.h` (`[REF]`): `MT2_PSM_INTERRUPT`, `MT2_L2CAP_VT_listenAt` (0xa50),
+`MT2_L2CAP_VT_waitForChannelState` (0xa20), `MT2_L2CAP_STATE_OPEN` (4), `MT2_HIDP_SET_PROTOCOL` (0x70).
+
+**Why we flap:** our `start` enables `0xF1` early and does **not** `waitForChannelState(OPEN)` in
+this order, so the device sometimes never opens PSM 19. Defer-0xF1 fixed the warm case; the full fix
+is steps 2/4 (`waitForChannelState(OPEN)`) + the PSM-19 accept ordering. See
+`how-to.md` → "fix the connect flap". The one unproven point is in `open-questions.md`.
+
+### Genuine ordered teardown (panic-safe discipline)
+
+`closeDownServicesWL` @0x60e8 unwinds every owned object **unregister/close → release → null the
+slot**, never dereferencing after release: PM assertion; timer (`cancel → disable → removeEventSource
+→ release → null`); PSM-19 notifier (`remove → null`); each channel
+(`listenAt(NULL) → closeChannel-if-open → release → null`). Genuine driver channel fields:
+interrupt `+0xe0`, control `+0xe8`, notifier `+0x110`, timer `+0x118` (these are the *genuine
+driver's* layout, for understanding the discipline — not offsets we use). Our `stop()` already
+applies this shape to our own owned objects.
+
 ## Runtime diagnostics
 
 `debug.mt2_log` sysctl (`kext-gesture/mt2_log.{h,cpp}`): `0` off (default), `1` milestones +

@@ -49,6 +49,24 @@ sudo dmesg | ./re/conn-trace      # per-connection timeline + STEADY/FAIL
 A `FAIL` that never reaches `INTERRUPT_BOUND` ⇒ PSM 19 didn't open ⇒ the targeted fix is
 `waitForChannelState(OPEN)` on PSM 17 (then a real repro exists to verify against).
 
+## Fix the connect flap (when cold-boot/sleep-wake measurement shows one)
+
+The defer-0xF1 fix already in the tree handles warm reconnect. If the CONNTRACE oracle shows a
+`FAIL` that stalls before `INTERRUPT_BOUND` (PSM 19 never opened), reproduce the genuine
+control-channel acceptance (see `reference.md` → BT connect handshake; constants in `src/mt2_stack.h`):
+
+1. In `MT2BTReader::start`, after winning the control channel: `listenAt(control, cb)` then
+   `waitForChannelState(OPEN)` (`MT2_L2CAP_VT_waitForChannelState`, arg `MT2_L2CAP_STATE_OPEN`)
+   **before** anything else.
+2. Keep deferring `0xF1`; move SET_PROTOCOL (`MT2_HIDP_SET_PROTOCOL | bit`, inverted for 05AC:0309)
+   + enable to a deviceReady-equivalent — only after **both** channels are OPEN.
+3. Treat the PSM-19 channel with the wait/accept ordering, not identically to control.
+4. Do **not** open PSM 19 ourselves — it's device-initiated.
+
+Verify with the same oracle: re-run the failing scenario, expect the timeline to reach `STEADY`.
+If reproducing the order does **not** fix it, take the one justified live capture (see
+`open-questions.md`).
+
 ## Safety before any kext load
 
 - **Assess panic risk and get go/no-go first** — passwordless sudo is not authorization to proceed.

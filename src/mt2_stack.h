@@ -44,6 +44,19 @@
 /*       reads getProperty(MT2_PROP_EXTRACT_BUTTON)==true; without it handlePointerEventFromDevice */
 /*       posts are dropped. re/disasm AppleMultitouchDriver <AMD::start>.                          */
 
+/* ---- BT connect handshake (genuine IOBluetoothHIDDriver, 10.9) — [REF] until the flap fix ----- *
+ * The genuine driver accepts the control channel in a specific order; PSM 19 is DEVICE-INITIATED    *
+ * (host sends nothing to provoke it). Reproducing this order on OUR PSM-17 reader is the eventual    *
+ * flap fix (see docs/mt-stack/how-to.md "fix the connect flap"). Values from 2026-06-21 RE;          *
+ * re-verify before building the fix. re/vtable IOBluetoothFamily IOBluetoothL2CAPChannel <slot>.     */
+#define MT2_PSM_INTERRUPT                0x13   /* PSM 19 interrupt channel (control = PSM 17 = 0x11) */
+#define MT2_L2CAP_VT_listenAt            0xa50  /* IOBluetoothL2CAPChannel::listenAt(IOService*, cb)  */
+#define MT2_L2CAP_VT_waitForChannelState 0xa20  /* ::waitForChannelState(state); arg 4 = OPEN         */
+#define MT2_L2CAP_STATE_OPEN             4
+#define MT2_HIDP_SET_PROTOCOL            0x70   /* SET_PROTOCOL transaction; |bit (0x70 boot/0x71     */
+                                               /*   report); subclass INVERTS the bit for 05AC:0309. */
+                                               /*   Sent in deviceReady AFTER both channels OPEN.    */
+
 /* ---- report ids ------------------------------------------------------------------------------ */
 #define MT2_REPORT_ID_MT2                0x31   /* MT2 multitouch report (see src/mt2_decode.c)    */
 #define MT2_REPORT_ID_MT1                0x28   /* MT1 multitouch report (see src/mt1_encode.c)    */
