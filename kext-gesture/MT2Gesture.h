@@ -14,6 +14,11 @@ class IOWorkLoop;
 class com_schmonz_MT2Gesture : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2Gesture)
     AppleMultitouchDevice *fDevice;
+    void *fBnbTarget;                     /* full-BNB: BNB's own spawned AppleMultitouchDevice
+                                             (from BNB+0x1b0). When set, the session sink feeds
+                                             THIS instead of fDevice, so full-BNB gets the same
+                                             conditioned (lifecycle/liftoff) stream the fDevice
+                                             path uses. NULL in the hybrid path. */
     com_schmonz_MT2HIDShell *fHidShell;   /* in-kernel MT1 HID device under us;
                                              instantiates the started event driver
                                              the actuation wrapper wires to (M5) */
@@ -38,6 +43,9 @@ public:
      * handler slot (BNB+0x1b0) to this so BNB's prefpane settings (_setMultitouchPreferences →
      * setPreferences on +0x1b0) land on the device that actually emits frames. */
     void *rawDevice() const { return (void *)fDevice; }
+
+    /* Full-BNB: point the session sink at BNB's own AMD (or NULL to revert to fDevice). */
+    void setBnbTarget(void *amd) { fBnbTarget = amd; }
 
     /* Session-backed transport path: a reader arms a connection, then submits decoded
      * touch_frame_t frames; the session decides what reaches the device via the sink. */

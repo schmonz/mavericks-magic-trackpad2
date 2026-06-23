@@ -16,7 +16,7 @@ LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 OBJS = $(KEXT_NAME).o MT2HIDShell.o MT2GestureUserClient.o \
        MT2BTReader.o mt2_bt_decode.o mt1_encode.o mt2_to_mt1.o \
        MT2USBReader.o mt2_usb_decode.o mt2_decode.o \
-       mt2_pipeline.o mt2_lifecycle.o mt2_session.o
+       mt2_pipeline.o mt2_lifecycle.o mt2_session.o mt2_geometry.o
 
 .PHONY: all clean load unload
 

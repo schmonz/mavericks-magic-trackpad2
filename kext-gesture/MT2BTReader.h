@@ -49,6 +49,17 @@ public:
      * resets the device to mouse mode (report 0x02) after our initial enable; re-sending forces
      * it back to multitouch (report 0x31). arg0 = the control reader (self). */
     static IOReturn reEnableInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
+    /* B1-drive probe — in the INTERRUPT channel's gate: inject a synthetic 0x60/0x02 report into
+     * BNB's own data callback (gOrigCb) so BNB runs createMultitouchHandler and spawns its own
+     * AppleMultitouchDevice (S2.16/S2.17). arg0 = the interposed interrupt channel. */
+    static IOReturn triggerInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
+
+    /* Full-BNB geometry (kBnbGeometry): clone the transport's vtable + override
+     * getMultitouchReport so BNB's spawned AMD publishes real sensor geometry on its first
+     * cacheDeviceProperties (before the MTDevice is born). installBnbGeometry() runs BEFORE the
+     * create trigger; removeBnbGeometry() restores the original vtable on stop. */
+    void installBnbGeometry(void *transport);
+    void removeBnbGeometry(void *transport);
 
     /* IOBluetoothL2CAPChannel::listenAt callback: (target, channel, length, data). */
     static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,

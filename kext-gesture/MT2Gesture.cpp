@@ -42,6 +42,9 @@
 #include "MT2HIDShell.h"
 #include "mt1_encode.h"
 #include "mt2_build_flags.h"   /* kFullBnb */
+extern "C" {
+#include "mt2_geometry.h"      /* single source of the sensor-geometry D-report payloads */
+}
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
 
@@ -53,20 +56,30 @@ static uint32_t uptime_ms(void) {
     return (uint32_t)(ns / 1000000ULL);
 }
 
-/* Sink: post a device-button edge (mask 0/0x1/0x2) through the native path. */
+/* Sink: post a device-button edge (mask 0/0x1/0x2) through the native path. Full-BNB drives
+ * BNB's own AMD (fBnbTarget; fDevice is null there), so target it just like sink_feed_frame —
+ * otherwise the physical click + two-finger right-click edges are dropped and only the
+ * recognizer-derived tap-to-click survives. */
 void com_schmonz_MT2Gesture::sink_post_click(void *ctx, unsigned mask) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
-    if (self->fDevice) self->fDevice->handlePointerEventFromDevice(0, 0, mask, 0);
+    AppleMultitouchDevice *target =
+        self->fBnbTarget ? (AppleMultitouchDevice *)self->fBnbTarget : self->fDevice;
+    if (target) target->handlePointerEventFromDevice(0, 0, mask, 0);
 }
 /* Sink: MT1-encode the touch frame and feed it to OUR AppleMultitouchDevice (USB path,
  * and BT when Path A is off). Under Path A the genuine BNBTrackpadDevice is fed instead
  * by the interpose shim on its own interrupt channel (see MT2BTReader.cpp) — NOT here. */
 void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const touch_frame_t *frame) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
+    /* full-BNB feeds BNB's own AMD (fBnbTarget); the hybrid path feeds our fDevice. Both
+     * receive the SAME session-conditioned frame (lifecycle states + liftoff). */
+    AppleMultitouchDevice *target =
+        self->fBnbTarget ? (AppleMultitouchDevice *)self->fBnbTarget : self->fDevice;
+    if (!target) return;
     uint8_t mt1[256];
     int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
     if (n <= 0) return;
-    if (self->fDevice) self->fDevice->handleTouchFrame(mt1, (unsigned int)n);
+    target->handleTouchFrame(mt1, (unsigned int)n);
 }
 /* Sink: (re)arm the silence-watchdog timer. */
 void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
@@ -165,33 +178,20 @@ static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
     unsigned char rid = b[0];
     unsigned char *o = b + 1;                      /* response data buffer */
     unsigned int *lenp = (unsigned int *)(b + 0x204);
-    unsigned int n = 0, i;
-    switch (rid) {
-    case 0x7f:                                     /* rCRITICAL_ERRORS: none */
-        o[0]=o[1]=o[2]=o[3]=0; n=4; break;
-    case 0xd1:                                     /* Family ID */
-        o[0]=0x80; n=1; break;
-    case 0xd3:                                     /* Endianness,Rows,Cols,bcdVersion */
-        o[0]=0x01; o[1]=0x0d; o[2]=0x10; o[3]=0x01; o[4]=0x00; n=5; break;
-    case 0xd9: {                                   /* Surface Width/Height (u32 LE) */
-        unsigned int w=13000, h=11300;
-        o[0]=w&0xff; o[1]=(w>>8)&0xff; o[2]=(w>>16)&0xff; o[3]=(w>>24)&0xff;
-        o[4]=h&0xff; o[5]=(h>>8)&0xff; o[6]=(h>>16)&0xff; o[7]=(h>>24)&0xff;
-        n=8; break; }
-    case 0xd0:                                     /* Sensor Region Descriptor */
-    case 0xa1:                                     /* Sensor Region Param */
-        for (i=0;i<16;i++) o[i]=0; n=16; break;
-    case 0xdb:                                     /* Multitouch ID: let driver skip */
-        IOLog("MT2Gesture: GET-REPORT id=0xdb UNHANDLED -> skip\n");
-        return (int)0xe00002c7;                    /* kIOReturnUnsupported */
-    default:                                       /* echo back the last SET value */
-        o[0] = g_reg[rid]; n = 1;
+    unsigned int n = 0;
+    switch (mt2_fill_geometry_report(rid, o, &n)) {
+    case MT2_GEO_OK:
+        *lenp = n;
+        IOLog("MT2Gesture: GET-REPORT id=0x%02x -> %u bytes\n", (unsigned)rid, n);
+        return 0;
+    case MT2_GEO_UNSUPPORTED:                       /* 0xDB Multitouch ID: let driver skip */
+        IOLog("MT2Gesture: GET-REPORT id=0x%02x UNHANDLED -> skip\n", (unsigned)rid);
+        return (int)0xe00002c7;                     /* kIOReturnUnsupported */
+    default:                                        /* not geometry: echo last SET value */
+        o[0] = g_reg[rid]; *lenp = 1;
         IOLog("MT2Gesture: GET-REPORT id=0x%02x -> echo 0x%02x\n", (unsigned)rid, (unsigned)o[0]);
-        break;
+        return 0;
     }
-    *lenp = n;
-    IOLog("MT2Gesture: GET-REPORT id=0x%02x -> %u bytes\n", (unsigned)rid, n);
-    return 0;
 }
 static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
     (void)t;
@@ -213,6 +213,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
         return false;
     }
     fDevice = 0;
+    fBnbTarget = 0;
     fHidShell = 0;
     gActiveMT2Gesture = this;   /* let the in-kernel readers feed us */
 

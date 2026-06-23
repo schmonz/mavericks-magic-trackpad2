@@ -13,6 +13,10 @@ extern int MTDeviceIsBuiltIn(MTDeviceRef);
 extern int MTDeviceGetFamilyID(MTDeviceRef, int *);
 extern int MTDeviceGetParserType(MTDeviceRef);     /* returns the value */
 extern int MTDeviceGetParserOptions(MTDeviceRef);
+/* The geometry the recognizer actually scales the cursor with (cached at MTDevice
+ * birth; see RE findings). Surface dims in device units, sensor dims in rows/cols. */
+extern int MTDeviceGetSensorSurfaceDimensions(MTDeviceRef, int *width, int *height);
+extern int MTDeviceGetSensorDimensions(MTDeviceRef, int *rows, int *cols);
 
 int main(void) {
     CFArrayRef list = MTDeviceCreateList();
@@ -28,8 +32,13 @@ int main(void) {
         int builtin = MTDeviceIsBuiltIn(d);
         int pt = MTDeviceGetParserType(d);
         int po = MTDeviceGetParserOptions(d);
+        int sw = -1, sh = -1, rows = -1, cols = -1;
+        MTDeviceGetSensorSurfaceDimensions(d, &sw, &sh);
+        MTDeviceGetSensorDimensions(d, &rows, &cols);
         printf("  dev 0x%llx: driverType=%d transportMethod=%d familyID=%d builtIn=%d parserType=%d parserOptions=%d\n",
                id, dt, tm, fam, builtin, pt, po);
+        printf("           surfaceW=%d surfaceH=%d sensorRows=%d sensorCols=%d  (recognizer's cached geometry)\n",
+               sw, sh, rows, cols);
     }
     return 0;
 }

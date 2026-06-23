@@ -39,9 +39,10 @@ static int onFrame(MTDeviceRef d, MTTouch *touches, int n, double ts, int frame)
     for (int i = 0; i < n; i++) {
         MTTouch *t = &touches[i];
         /* state, size, pressure, and zDensity are the tap-strength inputs; ts gives duration. */
-        printf("frame %d ts=%.4f id=%d st=%d fingerID=%d  norm(%.3f,%.3f) sz=%.2f press=%d maj=%.1f min=%.1f den=%.2f\n",
+        printf("frame %d ts=%.4f id=%d st=%d fingerID=%d  norm(%.3f,%.3f) abs(%.1f,%.1f) sz=%.2f press=%d maj=%.1f min=%.1f den=%.2f\n",
                frame, ts, t->identifier, t->state, t->fingerID,
-               t->normalized.pos.x, t->normalized.pos.y, t->size, t->pressure,
+               t->normalized.pos.x, t->normalized.pos.y,
+               t->absolute.pos.x, t->absolute.pos.y, t->size, t->pressure,
                t->majorAxis, t->minorAxis, t->zDensity);
     }
     fflush(stdout);

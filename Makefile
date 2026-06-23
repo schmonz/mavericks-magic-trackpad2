@@ -41,7 +41,7 @@ pkg: mt2_reenumerate kext-gesture
 	@echo "Built build/mt2d-$(VERSION).pkg"
 
 # Unit tests are pure C, no frameworks needed.
-TESTS = test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_mt2_to_mt1 test_connect_sm test_conn_trace test_geometry
+TESTS = test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_mt2_to_mt1 test_connect_sm test_conn_trace test_geometry test_vtable_clone
 test: $(TESTS)
 	@fail=0; for t in $(TESTS); do echo "== $$t =="; ./$$t || fail=1; done; \
 	 echo "== test_mt2d_run.sh =="; sh tests/test_mt2d_run.sh || fail=1; \
@@ -70,6 +70,8 @@ test_conn_trace: tests/test_conn_trace.c $(SRC)/conn_trace.c $(SRC)/mt2_connect_
 	$(CC) $(CFLAGS) -o $@ $^
 test_geometry: tests/test_geometry.c $(SRC)/mt2_geometry.c
 	$(CC) $(CFLAGS) -I$(SRC) -o $@ $^
+test_vtable_clone: tests/test_vtable_clone.c
+	$(CC) $(CFLAGS) -Ikext-gesture -o $@ $^
 
 clean:
 	rm -f vhid_probe mt2_reenumerate test_gesture $(TESTS) *.o
