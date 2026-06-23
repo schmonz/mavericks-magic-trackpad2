@@ -57,4 +57,4 @@ If you contributed and aren't listed (or want different wording/attribution), pl
 ---
 
 *Capture policy: when a source materially helps the project, add it here so credit travels with
-the code. (Full technical notes live in `docs/`.)*
+the code. (Full technical notes live in `docs/mt-stack/`.)*

@@ -68,6 +68,13 @@ Calibrated MT2 values (`src/mt2_geometry.c`): Family `0x80`(128), Rows 13, Cols 
 **Coordinate-range caveat (edge-clamp root):** MT1 native X `-2909..3167`, Y `-2456..2565`; MT2 X
 `-3678..3934`, Y `-2478..2587` — an ~18–20% X-scale variance. `mt1_encode`'s X range can clamp near
 the L/R pad edges (the frozen-X band). Tracked as the edge-clamp bug ([[mt2-cursor-edge-clamp]]).
+Physical MT2 surface ≈ **160.0 × 114.9 mm**, res ≈ 47.6 / 44.1 units/mm (Linux+Windows drivers agree).
+
+**Richer per-finger fields we decode coarsely:** the 9-byte record carries the device's own
+classification — a 3-bit **Finger type** (6 = palm) and a 3-bit **State** (0x4 valid / 0x2 floating /
+0x1 transition) — in the same bytes. `mt2_decode` reads only the coarse `t[3] & 0xC0 == 0x80`
+down-bit (inherited from Linux `hid-magicmouse`, which delegates palm rejection to userspace). Carrying
+the full Finger/State is a lead for future palm/tap work (the device provides it; Windows driver uses it).
 
 ## Properties
 
