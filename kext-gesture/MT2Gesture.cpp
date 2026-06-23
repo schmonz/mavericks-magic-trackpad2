@@ -42,6 +42,7 @@
 #include "MT2HIDShell.h"
 #include "mt1_encode.h"
 #include "mt2_build_flags.h"   /* kFullBnb */
+#include "mt2_log.h"           /* gMT2LogLevel, MT2_DLOG, sysctl register/unregister */
 extern "C" {
 #include "mt2_geometry.h"      /* single source of the sensor-geometry D-report payloads */
 }
@@ -64,6 +65,8 @@ void com_schmonz_MT2Gesture::sink_post_click(void *ctx, unsigned mask) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
     AppleMultitouchDevice *target =
         self->fBnbTarget ? (AppleMultitouchDevice *)self->fBnbTarget : self->fDevice;
+    MT2_DLOG(2, "post_click mask=0x%x -> %s", mask,
+             self->fBnbTarget ? "bnbAMD" : (self->fDevice ? "fDevice" : "none"));
     if (target) target->handlePointerEventFromDevice(0, 0, mask, 0);
 }
 /* Sink: MT1-encode the touch frame and feed it to OUR AppleMultitouchDevice (USB path,
@@ -216,6 +219,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fBnbTarget = 0;
     fHidShell = 0;
     gActiveMT2Gesture = this;   /* let the in-kernel readers feed us */
+    mt2_log_register();         /* debug.mt2_log sysctl (single-instance nub owns its lifetime) */
 
     /* DEBUG/TEST seam: advertise a user client so userspace tools can inject encoded
      * 0x28 frames (selector 0 -> feedFrame -> handleTouchFrame) for hands-free on-device
@@ -475,6 +479,7 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
         IOLog("MT2Gesture: device stopped + released\n");
     }
     if (gActiveMT2Gesture == this) gActiveMT2Gesture = 0;
+    mt2_log_unregister();   /* remove debug.mt2_log before the kext can unload */
     IOService::stop(provider);
 }
 

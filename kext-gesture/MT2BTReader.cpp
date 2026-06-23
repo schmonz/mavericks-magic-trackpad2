@@ -30,6 +30,7 @@
 #include "mt2_bt_decode.h"
 #include "mt2_pipeline.h"   /* MT2_EVENT_DRIVEN */
 #include "mt2_build_flags.h"   /* kFullBnb, kBnbGeometry */
+#include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "amd_shim.h"          /* AppleMultitouchDevice::handleTouchFrame (full-BNB direct feed) */
 
 extern "C" {
@@ -108,6 +109,7 @@ extern "C" int mt2_bnb_get_multitouch_report(void *transport, unsigned char repo
     unsigned int n = 0;
     if (mt2_fill_geometry_report(reportId, buf, &n) == MT2_GEO_OK) {
         if (len) *len = n;
+        MT2_DLOG(2, "BNB geometry GET id=0x%02x -> %u bytes", (unsigned)reportId, n);
         return 0;
     }
     return (int)0xe00002c7;   /* kIOReturnUnsupported (matches the original stub for non-geometry) */
@@ -125,6 +127,7 @@ extern "C" int mt2_bnb_get_multitouch_report_info(void *transport, unsigned char
     unsigned int n = 0;
     if (mt2_fill_geometry_report(reportId, tmp, &n) == MT2_GEO_OK) {
         if (len) *len = n;
+        MT2_DLOG(2, "BNB geometry INFO id=0x%02x -> %u bytes", (unsigned)reportId, n);
         return 0;
     }
     return (int)0xe00002c7;
@@ -488,7 +491,7 @@ void com_schmonz_MT2BTReader::installBnbGeometry(void *transport) {
               transport, cls ? cls : "(null)");
         return;
     }
-    IOLog("MT2BTReader: BNB geometry target class = %s\n", cls);
+    MT2_DLOG(1, "BNB geometry target class = %s", cls);
     if (vtc_clone_override(transport, BNB_VTABLE_SPAN, GMR_SLOT_INDEX,
                            (void *)&mt2_bnb_get_multitouch_report, &gBnbVtableClone) == 0) {
         /* The geometry query probes report length via getMultitouchReportInfo (0xcd8) FIRST; if that
@@ -496,8 +499,8 @@ void com_schmonz_MT2BTReader::installBnbGeometry(void *transport) {
         vtc_override_slot(&gBnbVtableClone, GMRINFO_SLOT_INDEX,
                           (void *)&mt2_bnb_get_multitouch_report_info);
         gBnbVtableCloned = true;
-        IOLog("MT2BTReader: BNB geometry override installed on transport %p (data slot %lu, info slot %lu)\n",
-              transport, (unsigned long)GMR_SLOT_INDEX, (unsigned long)GMRINFO_SLOT_INDEX);
+        MT2_DLOG(1, "BNB geometry override installed on transport %p (data slot %lu, info slot %lu)",
+                 transport, (unsigned long)GMR_SLOT_INDEX, (unsigned long)GMRINFO_SLOT_INDEX);
     } else {
         IOLog("MT2BTReader: BNB geometry override FAILED to allocate\n");
     }
