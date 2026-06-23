@@ -43,6 +43,7 @@
 #include "mt1_encode.h"
 #include "mt2_build_flags.h"   /* kFullBnb */
 #include "mt2_log.h"           /* gMT2LogLevel, MT2_DLOG, sysctl register/unregister */
+#include "../src/mt2_stack.h"  /* MT2_PROP_EXTRACT_BUTTON (canonical fact) */
 extern "C" {
 #include "mt2_geometry.h"      /* single source of the sensor-geometry D-report payloads */
 }
@@ -332,7 +333,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
      * edge -- not only when a later motion frame happens to OR it into the output. Without it,
      * quick stationary taps (no motion between press and release) are dropped (RE'd live). Must
      * be present before start() runs its gate check, hence set here alongside IsFake. */
-    dev->setProperty("ExtractAndPostDeviceButtonState", kOSBooleanTrue);
+    dev->setProperty(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
 
     amd->setEnableMultitouchHandler(&enableStub, this);
     installGeometryHandler(amd);

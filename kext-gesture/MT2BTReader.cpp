@@ -32,6 +32,7 @@
 #include "mt2_build_flags.h"   /* kFullBnb, kBnbGeometry */
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
+#include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "amd_shim.h"          /* AppleMultitouchDevice::handleTouchFrame (full-BNB direct feed) */
 
 extern "C" {
@@ -41,14 +42,12 @@ extern "C" {
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"      /* instance-scoped vtable clone/override/restore */
 
-/* getMultitouchReport vtable slot. staticGetReportHandler (AppleBluetoothMultitouch @0x1305)
- * tail-calls transport->vtable[0xcc8](transport, reportId, buf, &len, count) — instruction-verified
- * on 10.9. BNBDevice does NOT override this slot, so overriding it on OUR transport instance
- * short-circuits the AMD's geometry query before it descends to BNBDevice::_getMultitouchReport
- * (slot 0xd58, dispatched via the gate-runner at 0xd78). Confirm on the target build in the plan's
- * Task 1; if it differs there, change this one constant. */
-#define GMR_SLOT_INDEX    (0xcc8 / sizeof(void *))   /* getMultitouchReport     — DATA fetch */
-#define GMRINFO_SLOT_INDEX (0xcd8 / sizeof(void *))  /* getMultitouchReportInfo — LENGTH probe, runs FIRST */
+/* Vtable-slot INDICES for the geometry override. The byte offsets are the canonical facts in
+ * ../src/mt2_stack.h (the single build-consumed source; see docs/mt-stack/); these are thin local
+ * aliases that convert byte-offset -> slot index. The query probes the LENGTH (0xcd8) FIRST and
+ * only then the DATA (0xcc8), so we override both (installBnbGeometry). */
+#define GMR_SLOT_INDEX     (MT2_VT_getMultitouchReport     / sizeof(void *))  /* DATA fetch         */
+#define GMRINFO_SLOT_INDEX (MT2_VT_getMultitouchReportInfo / sizeof(void *))  /* LENGTH probe (1st) */
 /* Clone span: must cover the highest dispatched slot (>= 0xd78) + margin. Generous fixed span. */
 #define BNB_VTABLE_SPAN  0x2000
 
@@ -71,11 +70,11 @@ static const bool kGenuinePathA = true;
  * (would double-feed via the redirect). */
 static const bool kB1Spike = false;
 
-#define BNB_HANDLER_OFF             0x1b0   /* BNBDevice multitouch handler (AppleMultitouchDevice*) */
-
-/* RE'd field offsets (findings §S2.6, 10.9 binaries; verify via re/ if a point release differs). */
-#define L2CAP_DELEGATE_CB_OFF       0x110   /* IOBluetoothL2CAPChannel: delegate callback fn-ptr */
-#define BNB_INTERRUPT_CHANNEL_OFF   0xf0    /* BNBDevice::_interruptChannel */
+/* Field offsets: canonical values + re/ commands live in ../src/mt2_stack.h. These are readable
+ * local aliases so the numbers exist in exactly one place (no doc/build drift). */
+#define BNB_HANDLER_OFF             MT2_OFF_BNB_AMD               /* AMD* (AppleMultitouchDevice*)  */
+#define L2CAP_DELEGATE_CB_OFF       MT2_OFF_L2CAP_DELEGATE_CB     /* L2CAP delegate cb (+8 = target)*/
+#define BNB_INTERRUPT_CHANNEL_OFF   MT2_OFF_BNB_INTERRUPT_CHANNEL /* BNBDevice::_interruptChannel    */
 
 /* The genuine BNBTrackpadDevice the control reader manual-starts (Path A). The interpose
  * installer reads it (via +0xf0) to find BNB's interrupt channel, where it pokes our shim onto
@@ -314,7 +313,7 @@ static OSDictionary *bt_build_bnb_props(void) {
      * to set the S+9 device-button gate. Without it, handlePointerEventFromDevice (our click sink) posts
      * are dropped on BNB's AMD -> only recognizer tap-to-click survives. Mirrors the fDevice path
      * (MT2Gesture.cpp setProperty before start). */
-    mt->setObject("ExtractAndPostDeviceButtonState", kOSBooleanTrue);
+    mt->setObject(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
     top->setObject("DefaultMultitouchProperties", mt);
     plpath->release(); ptype->release(); popts->release();
     plugin->release(); mt->release();
