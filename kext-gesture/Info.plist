@@ -166,6 +166,8 @@
         <string>13.4</string>
         <key>com.apple.kpi.mach</key>
         <string>13.4</string>
+        <key>com.apple.kpi.bsd</key>
+        <string>13.4</string>
         <key>com.apple.driver.AppleMultitouchDriver</key>
         <string>193.8</string>
         <key>com.apple.iokit.IOHIDFamily</key>
