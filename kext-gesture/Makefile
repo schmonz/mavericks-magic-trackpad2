@@ -16,7 +16,8 @@ LDFLAGS  = -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
 OBJS = $(KEXT_NAME).o MT2HIDShell.o MT2GestureUserClient.o \
        MT2BTReader.o mt2_bt_decode.o mt1_encode.o mt2_to_mt1.o \
        MT2USBReader.o mt2_usb_decode.o mt2_decode.o \
-       mt2_pipeline.o mt2_lifecycle.o mt2_session.o mt2_geometry.o mt2_log.o
+       mt2_pipeline.o mt2_lifecycle.o mt2_session.o mt2_geometry.o mt2_log.o \
+       mt2_connect_sm.o conn_trace.o
 
 .PHONY: all clean load unload
 
@@ -31,6 +32,11 @@ all: $(KEXT_NAME).kext
 # the BT/gesture path compiles unchanged. (Explicit recipe overrides the pattern above.)
 MT2USBReader.o: MT2USBReader.cpp
 	$(CXX) $(CXXFLAGS) -DKERNEL=1 -c -o $@ $<
+
+# conn_trace.o needs KERNEL=1 so it pulls snprintf from <libkern/libkern.h> (the kernel has no
+# <stdio.h>); the host test build compiles the same file without KERNEL and uses <stdio.h>.
+conn_trace.o: ../src/conn_trace.c
+	$(CXX) $(CXXFLAGS) -DKERNEL=1 -x c++ -c -o $@ $<
 
 # Shared pure-C sources from ../src (the decode/encode/session core the USB path also
 # uses), compiled as C++ under the kext toolchain; plain C99, no libc dependency.

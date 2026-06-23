@@ -31,6 +31,7 @@
 #include "mt2_pipeline.h"   /* MT2_EVENT_DRIVEN */
 #include "mt2_build_flags.h"   /* kFullBnb, kBnbGeometry */
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
+#include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "amd_shim.h"          /* AppleMultitouchDevice::handleTouchFrame (full-BNB direct feed) */
 
 extern "C" {
@@ -139,6 +140,23 @@ static uint32_t bt_uptime_ms(void) {
     return (uint32_t)(s * 1000 + u / 1000);
 }
 
+/* Connect-flap measurement: each connection attempt gets an id (bumped when a control channel
+ * comes up), and we emit one canonical CONNTRACE line per observed transition through the SHARED
+ * conn_trace_format() (so the kernel emit and re/conn-trace parsing can't drift). Gated at
+ * debug.mt2_log>=1; `re/conn-trace <klog>` renders the per-connection timeline + STEADY/FAIL
+ * verdict. Pure observation of the CURRENT flow — not yet the state-machine-driven connect. */
+static int gConnId = 0;
+static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
+                         const void *bnb, const void *deleg, int ret) {
+    if (gMT2LogLevel < 1) return;   /* skip formatting when diagnostics are off */
+    conn_trace_rec_t r;
+    r.ts_ms = bt_uptime_ms(); r.conn_id = gConnId;
+    r.state = st; r.event = ev;
+    r.chan = chan; r.bnb = bnb; r.deleg = deleg; r.ret = ret;
+    char buf[192];
+    if (conn_trace_format(buf, sizeof(buf), &r) > 0) MT2_DLOG(1, "%s", buf);
+}
+
 /* IOBluetoothL2CAPChannel delegate callback: translate the raw MT2 0x31 report to MT1 and
  * hand it to BNB's original callback, so Apple's genuine parse path consumes MT1 it
  * understands. Runs in the channel's BT workloop (newDataIn context), same as Apple's own. */
@@ -155,6 +173,10 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
         IOLog("MT2BTReader: [diag] first shim hit len=%u b0=0x%02x decode=%d\n",
               length, length ? b[0] : 0, drc); } }
     if (drc != 0) return;                                                 /* not multitouch — drop */
+
+    /* STEADY: first real multitouch frame of this connection = the pad is streaming end-to-end. */
+    { static int gSteadyConn = -1; if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
+        bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, gGenuineBnb, 0, 0); } }
 
     /* FULL-BNB feed: route through the SHARED mt2_session — the same conditioning the smooth
      * fDevice path uses (drop-lifted, MakeTouch/Touching/BreakTouch lifecycle, liftoff) — but
@@ -224,6 +246,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
      * reader's frames (== dead cursor). The control channel only sends the enable below. */
     if (psm == 0x13) {
         gInterruptReader = self;   /* the session source; the Path A hybrid shim feeds frames as this */
+        bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
         if (gActiveMT2Gesture)
             gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
     }
@@ -254,6 +277,8 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
      * So DEFER 0xF1: let BNB's handleStart accept PSM 17 first; the phase-2 reEnable timer sends 0xF1
      * after both channels are OPEN (RE §6). */
     IOLog("MT2BTReader: setup on PSM=%u (enable sent=%d)\n", psm, psm == 0x11);
+    /* A control channel coming up starts a new connection attempt — bump the id and mark CONTROL_UP. */
+    if (psm == 0x11) { gConnId++; bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0); }
     return kIOReturnSuccess;
 }
 
@@ -363,6 +388,7 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
                               gActiveMT2Gesture->rawDevice());
                     }
                     IOLog("MT2BTReader: Path A manual BNBTrackpadDevice start OK\n");
+                    bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, bnb, 0, 0);
                 } else {
                     IOLog("MT2BTReader: manual BNBTrackpadDevice start() FAILED\n");
                     if (kFullBnb) removeBnbGeometry(bnb);   /* restore vtable before freeing */
@@ -428,6 +454,7 @@ IOReturn com_schmonz_MT2BTReader::interposeInGate(OSObject * /*owner*/, void *ar
     *cbslot = (void *)&bt_interpose_shim;
     gInterposedChannel = ch;
     IOLog("MT2BTReader: Path A interpose installed (origCb=%p origTgt=%p)\n", gOrigCb, gOrigTarget);
+    bt_conntrace(CSM_INTERPOSED, CSM_EV_INTERPOSE_OK, ch, gGenuineBnb, gOrigCb, 0);
     return kIOReturnSuccess;
 }
 
@@ -525,8 +552,18 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
             IOCommandGate *cg = ((IOBluetoothObject *)self->fChannel)->getCommandGate();
             if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
         }
+        /* HANDLER_UP once the trigger has spawned BNB's AMD (visible at gGenuineBnb+0x1b0). */
+        if (gGenuineBnb) {
+            void *amd = *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF);
+            static int gHandlerConn = -1;
+            if (amd && gHandlerConn != gConnId) { gHandlerConn = gConnId;
+                bt_conntrace(CSM_HANDLER_UP, CSM_EV_HANDLER_SPAWNED, 0, gGenuineBnb, amd, 0); }
+        }
         if (++self->fReEnableCount < 8) ts->setTimeoutMS(250);  /* ~2 s of re-enables, then stop */
-        else IOLog("MT2BTReader: Path A re-enable phase done (%d sends)\n", self->fReEnableCount);
+        else {
+            IOLog("MT2BTReader: Path A re-enable phase done (%d sends)\n", self->fReEnableCount);
+            bt_conntrace(CSM_MT_MODE, CSM_EV_MT_MODE_CONFIRMED, self->fChannel, gGenuineBnb, 0, 0);
+        }
         return;
     }
 
@@ -560,6 +597,7 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
 }
 
 void com_schmonz_MT2BTReader::stop(IOService *provider) {
+    bt_conntrace(CSM_IDLE, CSM_EV_DISCONNECT, fChannel, fManualBnb, 0, 0);
     /* If we're the interrupt reader that armed the session source, clear it so the Path A
      * hybrid shim stops feeding through a freed instance. */
     if (gInterruptReader == this) gInterruptReader = 0;

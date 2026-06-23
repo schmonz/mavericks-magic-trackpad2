@@ -1,5 +1,9 @@
 #include "conn_trace.h"
+#ifdef KERNEL
+#include <libkern/libkern.h>   /* snprintf in the kernel (no <stdio.h>) */
+#else
 #include <stdio.h>
+#endif
 
 const char *csm_state_name(csm_state_t s) {
     switch (s) {
