@@ -65,6 +65,24 @@ still works — it's the recognizer's gesture path, gate-independent). We put
 `ExtractAndPostDeviceButtonState` in `DefaultMultitouchProperties`; `createMultitouchHandler` copies
 it onto the AMD before `start`, so the gate opens. We also route the click sink to BNB's AMD.
 
+## Cursor actuation — how the pointer actually gets driven
+
+Geometry makes the cursor *smooth*; a separate mechanism makes it *move at all*. Apple wires a
+cursor only if a matched **`AppleMultitouchHIDEventDriver`** lives in the AMD's provider subtree: the
+AMD's `hidEventDriverPublished` ancestor-walks the published event driver's provider chain against the
+AMD's own provider, and on a match builds an `AppleMultitouchEventDriverWrapper` → `IOHIDPointing` →
+cursor.
+
+The catch in full-BNB: BNB's `IOHIDInterface` carries the MT2's **real BT identity (VID 76 / PID 613
+/ source 1)**, but Apple's stock `BNBTrackpadEventDriver` personality matches **VID 1452 / source 2**
+— so no event driver binds BNB's AMD → no `IOHIDPointing` → no cursor. (Manual-start bypasses
+*device* matching but **not** event-driver matching.) We fix it with a static Info.plist personality
+**`MT2HIDEventDriverBNB`**: Apple's `AppleMultitouchHIDEventDriver` `IOClass`, keyed to VID 76 / PID
+613 / source 1 with a high probe score, so Apple's own event driver binds BNB's interface and drives
+the cursor. It's inert in fDevice mode (no VID-76 interface exists there). The fDevice path uses the
+twin `MT2HIDEventDriver` personality (VID 1452 / source 2) plus the MT1 HID shell. See `reference.md`
+→ cursor actuation; oracle: `re/amd-actuation`.
+
 ## Connect lifecycle (and the flap)
 
 Healthy sequence (observable via CONNTRACE): `CONTROL_UP → INTERRUPT_BOUND → BNB_FORMED → INTERPOSED

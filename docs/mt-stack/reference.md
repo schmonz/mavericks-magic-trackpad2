@@ -65,6 +65,10 @@ Geometry id → property (from `AppleMultitouchDevice::decodeDeviceProperty`):
 
 Calibrated MT2 values (`src/mt2_geometry.c`): Family `0x80`(128), Rows 13, Cols 16, Surface 13000×11300.
 
+**Coordinate-range caveat (edge-clamp root):** MT1 native X `-2909..3167`, Y `-2456..2565`; MT2 X
+`-3678..3934`, Y `-2478..2587` — an ~18–20% X-scale variance. `mt1_encode`'s X range can clamp near
+the L/R pad edges (the frozen-X band). Tracked as the edge-clamp bug ([[mt2-cursor-edge-clamp]]).
+
 ## Properties
 
 | Key | `mt2_stack.h` | Effect |
@@ -108,6 +112,54 @@ slot**, never dereferencing after release: PM assertion; timer (`cancel → disa
 interrupt `+0xe0`, control `+0xe8`, notifier `+0x110`, timer `+0x118` (these are the *genuine
 driver's* layout, for understanding the discipline — not offsets we use). Our `stop()` already
 applies this shape to our own owned objects.
+
+## Cursor actuation personalities (`kext-gesture/Info.plist`)
+
+The cursor moves only if an `AppleMultitouchHIDEventDriver` binds the AMD's `IOHIDInterface` (→
+`IOHIDPointing`). Two static personalities, both Apple's `IOClass`, differing only in match identity:
+
+| Personality | Matches | For |
+|-------------|---------|-----|
+| `MT2HIDEventDriver` | VID 1452 / PID 782 / source 2 | fDevice path (our MT1 HID shell) |
+| `MT2HIDEventDriverBNB` | VID 76 / PID 613 / source 1 | full-BNB (BNB's real BT identity) |
+
+Both carry `IOProbeScore` 100000 to beat the generic driver; each is inert when its interface is
+absent, so they coexist unconditionally (no `kFullBnb` gate). Oracle: `re/amd-actuation`. See
+`explanation.md` → cursor actuation.
+
+## BT device enable, modes & the 0xF1 re-enable
+
+- **Enable (multitouch):** MT2 BT feature report `0xF1 0x02 0x01`; over raw L2CAP the HIDP
+  SET_REPORT(feature) framing is `0x53 0xF1 0x02 0x01` (`(SET_REPORT<<4)|FEATURE = 0x53`).
+- **Modes:** the device streams report id `0x31` in multitouch mode, `0x02` in mouse mode.
+- **Re-enable, critical:** BNB's interrupt-channel bring-up knocks the device **back to mouse mode
+  (0x02) AFTER our initial enable**, so we **re-send `0xF1` ~8× on a 250ms timer from the control
+  channel's command gate** once both channels are up. Without the re-enable the shim only sees 9-byte
+  `0x02` reports and `mt2_decode` rejects them. (See `MT2BTReader` `reEnableInGate`.)
+- **Handler-create trigger:** injecting `0xA1 0x60 0x02` into BNB's data callback drives
+  `processDesyncedMultitouchData → createMultitouchHandler`, so BNB spawns its own AMD.
+- **5s restart watchdog:** `BNBDevice::handleStart` arms a 5000ms (`0x1388`) `IOTimerEventSource`
+  (logs "Forcing MT restart", calls `resetMultitouchTransport`); cancelled once real MT data
+  (0x31 / the trigger) reaches `processDesyncedMultitouchData`. Starving it destabilizes the link.
+
+## MTTouchState lifecycle (what `mt1_encode` targets)
+
+Apple's recognizer keys tap/click on an 8-state lifecycle; the state is the **high nibble of finger
+record byte `t[8]`** in the MT1 `0x28` report (fingerID = `t[8] & 0x0f`, verbatim):
+
+| State | value | high-nibble |
+|-------|-------|-------------|
+| NotTracking | 0 | `0x00` |
+| MakeTouch | 3 | `0x30` |
+| Touching | 4 | `0x40` |
+| BreakTouch | 5 | `0x50` |
+| OutOfRange | 7 | `0x70` |
+
+Healthy contact arc = `MakeTouch(3) → Touching(4) → BreakTouch(5)`; our session conditioning
+(`mt2_session.c`) is presence-based (born → TS_START first frame, TS_TOUCHING after, vanished →
+TS_END) and emits a trailing **zero-contact liftoff frame** after BreakTouch so the recognizer
+finalizes the tap. Timestamp = CompactV4 packing `ts = (b1>>2) | (b2<<6) | (b3<<14)` (22-bit, in
+`mt1_encode.c`).
 
 ## Runtime diagnostics
 

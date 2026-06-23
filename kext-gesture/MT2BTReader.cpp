@@ -264,7 +264,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     if (psm == 0x11 && !kFullBnb) {
         /* Keep sending the MT2's 0xF1 multitouch enable — a genuine BNBTrackpadDevice only knows
          * the MT1 0xD7 enable, which the MT2 ignores, so WITHOUT this the pad never streams. */
-        static const uint8_t kEnable[] = { 0x53, 0xF1, 0x02, 0x01 };
+        static const uint8_t kEnable[] = { MT2_HIDP_SET_REPORT_FEATURE, MT2_ENABLE_REPORT_ID, 0x02, 0x01 };
         IOLog("MT2BTReader: [diag] before 0xF1 sendTo isInactive=%d\n", self->fChannel->isInactive());
         self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
         IOLog("MT2BTReader: [diag] after 0xF1 send, PSM17 isInactive=%d\n",
@@ -476,7 +476,7 @@ IOReturn com_schmonz_MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg
                                                  void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
     if (!self || !self->fChannel) return kIOReturnNoDevice;
-    static const uint8_t kEnable[] = { 0x53, 0xF1, 0x02, 0x01 };
+    static const uint8_t kEnable[] = { MT2_HIDP_SET_REPORT_FEATURE, MT2_ENABLE_REPORT_ID, 0x02, 0x01 };
     self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
     return kIOReturnSuccess;
 }
@@ -490,7 +490,7 @@ IOReturn com_schmonz_MT2BTReader::triggerInGate(OSObject * /*owner*/, void *arg0
     /* 0xA1 transport byte + reportID 0x60 + 0x02, zero-padded. The minimal padded payload is enough to
      * drive BNB's processDesyncedMultitouchData -> startMultitouch -> createMultitouchHandler (S2.17,
      * no body-parse fault). */
-    static const uint8_t kTrigger[16] = { 0xA1, 0x60, 0x02 };
+    static const uint8_t kTrigger[16] = { 0xA1, MT2_TRIGGER_REPORT_ID, 0x02 };
     typedef void (*l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
     if (gOrigCb) {
         ((l2cap_cb_t)gOrigCb)(gOrigTarget, ch, (unsigned short)sizeof(kTrigger), (void *)kTrigger);

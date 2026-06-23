@@ -57,6 +57,16 @@
                                                /*   report); subclass INVERTS the bit for 05AC:0309. */
                                                /*   Sent in deviceReady AFTER both channels OPEN.    */
 
+/* ---- BT device enable / mode / handler-create trigger ---------------------------------------- */
+#define MT2_HIDP_SET_REPORT_FEATURE      0x53   /* [BUILD] (SET_REPORT<<4)|FEATURE — raw-L2CAP HIDP */
+#define MT2_ENABLE_REPORT_ID             0xf1   /* [BUILD] MT2 enable feature report: 0xF1 0x02 0x01;*/
+                                               /*   BNB bring-up resets to mouse mode after, so we  */
+                                               /*   re-send it ~8x once both channels are OPEN.     */
+#define MT2_REPORT_ID_MOUSE              0x02   /* [REF] device mode mouse (vs MT2 0x31 multitouch)  */
+#define MT2_TRIGGER_REPORT_ID            0x60   /* [BUILD] 0xA1 0x60 0x02 -> createMultitouchHandler */
+#define MT2_BNB_WATCHDOG_MS              5000   /* [REF] BNBDevice handleStart 5s (0x1388) "Forcing  */
+                                               /*   MT restart" kickstart; cancelled by real MT data*/
+
 /* ---- report ids ------------------------------------------------------------------------------ */
 #define MT2_REPORT_ID_MT2                0x31   /* MT2 multitouch report (see src/mt2_decode.c)    */
 #define MT2_REPORT_ID_MT1                0x28   /* MT1 multitouch report (see src/mt1_encode.c)    */
