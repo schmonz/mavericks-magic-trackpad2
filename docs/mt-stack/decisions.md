@@ -68,3 +68,30 @@ fDevice. It worked (controls applied) but its teardown drove genuine HID teardow
 half-restored object → the `ultimate-hat.panic`. Motivated the move to full-BNB, which deletes the
 poke (BNB's node *is* the input *is* the pane target). **Note:** the *hybrid architecture itself*
 remains a live alternative for a livability comparison; only this *mechanism* is graveyarded.
+
+### Run VoodooInput on 10.9 / become a VoodooInput plugin — *not functioning / wrong direction*
+(Researched 2026-06-24, web.) The obvious "why not just use the Hackintosh kext?" question, answered
+so we don't re-tread it. **First, the landscape:** there is **no public Apple API for the valuable
+half** (device → gesture engine) on *any* macOS version. The public device path is the HID **digitizer**
+(modern: HIDDriverKit `IOUserHIDEventService::dispatchDigitizerTouchEvent`; usage page `0x0D`,
+Contact Identifier `0x51`), but third parties report stock digitizer descriptors yield *no cursor / no
+gestures* and provider-binding is **built-in-only** gated — the same wall as our [[builtIn]] lens. The
+gesture engine (`MultitouchSupport`) stays private everywhere; the only public gesture API is
+app-level `NSGestureRecognizer`. So there's nothing of Apple's to be ABI-compatible *with*.
+
+**VoodooInput** (acidanthera) is the community analog and was this project's original *reference* — but
+it is the **inverse** of us: `VoodooInputSimulatorDevice` **fabricates a fake MT2** so IOKit *matching*
+binds Apple's native MT HID driver to a virtual nub; clients (VoodooPS2/I2C) translate *non-Apple*
+hardware into MT2 frames. It has **zero code to drive a real Magic Trackpad** — the "read a real MT2
+over USB/BT" front-half is uniquely ours. Three blockers kill "just run it on 10.9": (1) it's a
+modern-toolchain kext — loading on the 10.9 kernel is the exact unsolved build problem; (2) it assumes
+clean IOKit **matching** to a modern stack, the very path we had to replace with manual-start + interpose
++ built-in-gating dodges; (3) it's **redundant for a real MT2** (already an MT2 — we need 10.9 to *wire
+up* the real device, which VoodooInput doesn't do). **Reopening / convergence criterion:** the right
+collaboration is inverted — be the **10.9 back-port that speaks VoodooInput's contact interface**
+(`VoodooInputEvent{contact_count,timestamp,transducers[]}` + `VoodooInputTransducer{type,id,fingerType,
+isValid,isPhysicalButtonDown,supportsPressure,maxPressure, Touch{x,y,pressure,width} current/previous}`,
+IOKit msg `kIOMessageVoodooInputMessage`=12345), so one device targets both eras. Separately worth a look
+(open question, not decided): VoodooInput's normal **publish-a-nub-and-let-IOKit-match** is cleaner than
+our manual-start — does it work on 10.9? (Has teeth: catalogue residue, built-in gating, the un-started
+`IOHIDDevice` panic above.)
