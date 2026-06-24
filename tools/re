@@ -256,9 +256,9 @@ sub_consts() {  # <target> [seg] [sec]
   otool -v -arch "$arch" -s "$seg" "$sec" "$bin" 2>/dev/null
 }
 
-sub_hex() {  # <file> [offset] [length]
+sub_hex() {  # <file-or-alias> [offset] [length]  (offset is a FILE offset; for these Mach-O plugins vaddr==fileoff in __TEXT)
   n() { case "$1" in 0x*|0X*) printf '%d' "$1" ;; *) printf '%d' "${1:-0}" ;; esac; }
-  f=$1
+  f=$(re_resolve "$1")
   [ -n "$f" ] || { echo "usage: $me hex <file> [offset] [length]" >&2; return 2; }
   [ -f "$f" ] || { echo "# hex: $f (NOT FOUND)" >&2; return 1; }
   off=$(n "${2:-0}"); len=$(n "${3:-256}")

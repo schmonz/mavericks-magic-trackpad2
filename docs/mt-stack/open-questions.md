@@ -8,7 +8,47 @@ settled a choice).
 
 ---
 
-## Edge-clamp: frozen edge bands — STILL OPEN; TWO theories now falsified on-device
+## Edge-clamp: frozen edge bands — STILL OPEN; leading lead = X surface-dim seed too narrow
+
+> **UPDATE 2026-06-24 (off-device `tools/re`) — GEOMETRIC ROOT-CAUSE CANDIDATE found; redirects H3
+> from the (zeroed) Sensor *Region* to the (seeded) Sensor *Surface* dimensions.** Traced the recognizer's
+> actual edge-zone classifier end to end, all inside MultitouchHID.plugin:
+>
+> - `MTParser::updateSurfaceDimensions` (@0x7d4e) builds the mm model from `_MTDeviceGetSensorSurfaceDimensions`
+>   (= the `Sensor Surface Width/Height` **we seed**), `×0x51EB851F >>0x25` = **÷100 → mm**. (It also calls
+>   `MTSurfaceDimensions::updateScreenBounds_mm` with a **zeroed** MTRect — screen bounds unset; a secondary lead.)
+> - `MTParserPath::updateZonesAndEdges` (@0x903a) → `MTParserPath::computeZonesAndEdgesMask` (@0x9176) classify
+>   each contact into edge zones by comparing its position-in-mm against the surface extent-in-mm. The four edge
+>   distances fall straight out: **left=`contactX`, right=`extentX−contactX`, bottom=`contactY`, top=`extentY−contactY`**.
+> - The thresholds come from `MTParameterFactory::initTouchZoneParams` (@0x21182), decoded from its immediate
+>   moves (IEEE-754 verified): `[0x4]`=**31.5mm** (corner radius), `[0x8]`=**22.8mm** (Y/top-bottom edge),
+>   `[0xc]`=**31.5mm** (X/left-right edge), `[0x10]`=1.0mm, `[0x18]`=12.0mm; transport-dependent `[0x14]`=3.0(BT)/0.5(USB),
+>   `[0x1c]`=18.0(BT)/6.0(USB). **`parserType−1000 ≤ 999` gate ⇒ our `parserType=1000` gets the REAL thresholds**
+>   (not the zeroed fallback). Crucially, `initTouchZoneParams` takes `MTSurfaceDimensions const&` but **never reads
+>   it** — the thresholds are **fixed absolute mm**, surface-size-independent.
+>
+> Therefore **band-as-fraction-of-pad = `threshold_mm ÷ surface_extent_mm`**, and the surface extent is entirely our
+> seed. Our seed is **X-asymmetrically wrong**:
+> - Y: `11300 ÷100 = 113mm` vs physical **114.9mm** → 98.3% ≈ correct ⇒ Y-band = `22.8/113` = **20.2%/side** (≈right).
+> - X: `13000 ÷100 = 130mm` vs physical **160mm** → 81% (~19% too narrow) ⇒ X-band = `31.5/130` = **24.2%/side**
+>   (should be `31.5/160` = 19.7%). X reserve is inflated ~23% **by the too-narrow X seed AND the inherently larger
+>   X threshold (31.5 > 22.8mm)**.
+>
+> Every symptom falls out of this: **X frozen / Y fine** (X seed wrong, Y seed right); **transport-independent**
+> (the X/Y edge thresholds `[0x8]`/`[0xc]` don't depend on transport — which is exactly why the transport-flip test
+> below couldn't move the band; it was the wrong knob, not an exoneration of the edge mechanism).
+>
+> **LEADING FIX HYPOTHESIS (single constant):** `MT2_SURFACE_WIDTH` 13000 → **~16000** (160mm×100, matching how
+> `MT2_SURFACE_HEIGHT=11300` already matches 114.9mm). **Prepared on-device experiment** (cheap/reversible/one
+> variable): bump the constant, rebuild, load, device on, sweep L/R edges. *Predict:* X-band shrinks ~24%→~20%/side.
+> **Caveats to watch:** (a) blast radius — `convertPixelsToMillimeters` uses *separate* fields `[0x20]/[0x24]` (a
+> distinct pixel→mm resolution), so cursor *speed* is **likely** uncoupled from Surface Width, but confirm no
+> speed/accel change; (b) verify no prefpane/geometry/scroll/gesture regression (13000 is part of the currently-working
+> geometry); (c) verify on **both** transports. **Unresolved off-device:** whether a genuine MT2 reports 13000
+> (→ same zone on genuine ⇒ freeze is a separate bug) or ~16000 (→ our value IS the bug). The Y-matches-physical /
+> X-doesn't pattern strongly implies 13000 is **our** error, but only the widen-and-observe test settles it.
+> The exact zone-mask bit that holds X (mask stored at `MTParserPath +0x108/+0x10c/+0x110`) is offset-aliased in
+> static xref (collides with MTChordIntegrating/MTHandMotion) ⇒ needs on-device instrumentation, not more static RE.
 
 > **UPDATE 2026-06-24 — transport theory FALSIFIED.** The `kEdgeNoBtTransport` build (override
 > `newTransportString` → non-BT) was tested on-device. `tools/mt_transport` confirms it worked at the
