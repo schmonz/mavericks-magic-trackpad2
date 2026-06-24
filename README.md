@@ -56,10 +56,8 @@ under `/usr/local/sbin`, and a LaunchDaemon for when you reboot
   that builds the in-kernel MT1 HID interface (`MT2HIDShell`) which Apple's
   `AppleMultitouchDevice`/event driver binds onto, plus the `MT2USBReader` and
   `MT2BTReader` transport reader personalities.
-- `kext-bnbinject/`, `kext-startmt/` — research/experiment kexts (earlier,
-  abandoned approaches) kept for reference; not built or shipped.
 - `tools/` — dev/diagnostic helpers; only `mt2_reenumerate` ships, the rest are
-  reverse-engineering probes. `tools/spikes/` holds one-off probes.
+  reverse-engineering probes (`tools/re` is the RE toolkit). `tools/spikes/` holds one-off probes.
 - `tests/` — unit tests.
 - `dist/` — LaunchDaemon plist, the `mt2d-run` boot wrapper, and installer scripts.
 - `captures/` — recorded MT2 frames used as test fixtures.

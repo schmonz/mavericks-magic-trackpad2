@@ -1,0 +1,7 @@
+# captures/ holds transient RE working files (probe dumps, carved kernelcache under kc/,
+# cursor-seam/, panics, raw stream logs). Keep ONLY the curated decode fixtures the tests/docs use.
+*
+!.gitignore
+!raw_1finger.txt
+!raw_2finger.txt
+!raw_3finger.txt

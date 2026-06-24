@@ -43,41 +43,45 @@ pkg: mt2_reenumerate kext-gesture
 	  build/mt2d-$(VERSION).pkg
 	@echo "Built build/mt2d-$(VERSION).pkg"
 
-# Unit tests are pure C, no frameworks needed.
-TESTS = test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_mt2_to_mt1 test_connect_sm test_conn_trace test_geometry test_vtable_clone test_usb_reframe
+# Unit tests are pure C, no frameworks needed. Built into build/tests/ (gitignored) to keep root clean.
+TESTDIR = build/tests
+TESTS = $(addprefix $(TESTDIR)/,test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_mt2_to_mt1 test_connect_sm test_conn_trace test_geometry test_vtable_clone test_usb_reframe)
 test: $(TESTS)
-	@fail=0; for t in $(TESTS); do echo "== $$t =="; ./$$t || fail=1; done; \
+	@fail=0; for t in $(TESTS); do echo "== $$(basename $$t) =="; "$$t" || fail=1; done; \
 	 echo "== test_mt2d_run.sh =="; sh tests/test_mt2d_run.sh || fail=1; \
 	 echo "== test_conn_trace_parser.sh =="; sh tests/test_conn_trace_parser.sh || fail=1; \
 	 [ $$fail -eq 0 ] && echo "ALL TESTS PASS"
 
-test_model: tests/test_model.c
+$(TESTDIR):
+	@mkdir -p $@
+
+$(TESTDIR)/test_model: tests/test_model.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $<
-test_decode: tests/test_decode.c $(SRC)/mt2_usb_decode.c $(SRC)/mt2_decode.c
+$(TESTDIR)/test_decode: tests/test_decode.c $(SRC)/mt2_usb_decode.c $(SRC)/mt2_decode.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_bt_decode: tests/test_bt_decode.c $(SRC)/mt2_bt_decode.c $(SRC)/mt2_decode.c
+$(TESTDIR)/test_bt_decode: tests/test_bt_decode.c $(SRC)/mt2_bt_decode.c $(SRC)/mt2_decode.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_encode: tests/test_encode.c $(SRC)/mt1_encode.c
+$(TESTDIR)/test_encode: tests/test_encode.c $(SRC)/mt1_encode.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_pipeline: tests/test_pipeline.c $(SRC)/mt2_pipeline.c
+$(TESTDIR)/test_pipeline: tests/test_pipeline.c $(SRC)/mt2_pipeline.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_lifecycle: tests/test_lifecycle.c $(SRC)/mt2_lifecycle.c
+$(TESTDIR)/test_lifecycle: tests/test_lifecycle.c $(SRC)/mt2_lifecycle.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_session: tests/test_session.c $(SRC)/mt2_session.c $(SRC)/mt2_pipeline.c $(SRC)/mt2_lifecycle.c
+$(TESTDIR)/test_session: tests/test_session.c $(SRC)/mt2_session.c $(SRC)/mt2_pipeline.c $(SRC)/mt2_lifecycle.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_mt2_to_mt1: tests/test_mt2_to_mt1.c $(SRC)/mt2_to_mt1.c $(SRC)/mt2_bt_decode.c $(SRC)/mt2_decode.c $(SRC)/mt1_encode.c
+$(TESTDIR)/test_mt2_to_mt1: tests/test_mt2_to_mt1.c $(SRC)/mt2_to_mt1.c $(SRC)/mt2_bt_decode.c $(SRC)/mt2_decode.c $(SRC)/mt1_encode.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_connect_sm: tests/test_connect_sm.c $(SRC)/mt2_connect_sm.c
+$(TESTDIR)/test_connect_sm: tests/test_connect_sm.c $(SRC)/mt2_connect_sm.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_conn_trace: tests/test_conn_trace.c $(SRC)/conn_trace.c $(SRC)/mt2_connect_sm.c
+$(TESTDIR)/test_conn_trace: tests/test_conn_trace.c $(SRC)/conn_trace.c $(SRC)/mt2_connect_sm.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
-test_geometry: tests/test_geometry.c $(SRC)/mt2_geometry.c
+$(TESTDIR)/test_geometry: tests/test_geometry.c $(SRC)/mt2_geometry.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -I$(SRC) -o $@ $^
-test_vtable_clone: tests/test_vtable_clone.c
+$(TESTDIR)/test_vtable_clone: tests/test_vtable_clone.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -Ikext-gesture -o $@ $^
-test_usb_reframe: tests/test_usb_reframe.c $(SRC)/mt2_usb_reframe.c $(SRC)/mt2_usb_decode.c $(SRC)/mt2_decode.c $(SRC)/mt2_pipeline.c $(SRC)/mt2_lifecycle.c $(SRC)/mt1_encode.c
+$(TESTDIR)/test_usb_reframe: tests/test_usb_reframe.c $(SRC)/mt2_usb_reframe.c $(SRC)/mt2_usb_decode.c $(SRC)/mt2_decode.c $(SRC)/mt2_pipeline.c $(SRC)/mt2_lifecycle.c $(SRC)/mt1_encode.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f vhid_probe mt2_reenumerate test_gesture $(TESTS) *.o
+	rm -f vhid_probe mt2_reenumerate mt2_usb_enable test_gesture *.o
 	rm -rf build

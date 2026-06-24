@@ -7,8 +7,8 @@ class IOBluetoothL2CAPChannel;
 class IOTimerEventSource;
 
 /* Matches the Magic Trackpad 2's Bluetooth L2CAP channel (its BT-SIG identity:
- * VendorID 76 / ProductID 613 / VendorIDSource 1) with a high IOProbeScore, the way
- * bnbinject made Apple's BNBTrackpadDevice bind it. On start it enables multitouch
+ * VendorID 76 / ProductID 613 / VendorIDSource 1) with a high IOProbeScore — the same
+ * identity Apple's stock BNBTrackpadDevice matches. On start it enables multitouch
  * (0xF1) and registers an incoming-data listener; each interrupt frame is decoded
  * (mt2_bt_decode) and pushed to the active MT2Gesture nub via submitFrame
  * (MT2_EVENT_DRIVEN) — the shared session owns settle/lift-drop/decel/click. The BT

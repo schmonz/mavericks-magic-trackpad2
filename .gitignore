@@ -1,26 +1,22 @@
-spike_bind
+# editor / compiler cruft
 ._*
 *.o
 *.d
+spike_bind
+
+# build outputs: unit tests -> build/tests/, pkg staging -> build/, the kext bundle
 build/
-/docs/superpowers/
-/reference/
-/mt2d
-/vhid_probe
-/test_model
-/test_decode
-/test_bt_decode
-/test_encode
-/test_pipeline
-/test_session
-/test_lifecycle
-/test_gesture
-captures/raw_session.txt
-/mt2_reenumerate
-/mt_listen
 kext-gesture/MT2Gesture.kext/
 kext-gesture/*.o
-.claude/
+
+# root tool binaries (compiled from tools/*.c by `make`)
+/mt2d
+/mt_listen
+/vhid_probe
+/mt2_reenumerate
+/mt2_usb_enable
+
+# tools/ compiled helpers (the .c sources + the `re` toolkit are tracked; these built binaries aren't)
 tools/feed_probe
 tools/mt_contacts
 tools/mt_cursorpos
@@ -32,5 +28,8 @@ tools/kc_lzss
 tools/kc_carve
 tools/macho_rebase
 tools/mt_frames_probe
-captures/kc/
-kext-startmt/MT2StartMT.kext/
+
+# transient working dirs
+/docs/superpowers/
+/reference/
+.claude/

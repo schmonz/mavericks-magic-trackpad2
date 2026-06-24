@@ -2,7 +2,7 @@
  *
  * A thin decoder. The MT2's multitouch frames are unreachable over BT from userspace
  * (the BT HID descriptor is boot-mouse-only; see the BT findings doc). We bind the
- * L2CAP channel directly (proven feasible by the bnbinject experiment), enable
+ * L2CAP channel directly, enable
  * multitouch with the 0xF1 SET_REPORT (the MT2's command; Apple's stock
  * BNBTrackpadDevice sends the MT1 0xD7 and so never completes), decode each frame
  * (mt2_bt_decode), and push the touch_frame_t to the MT2Gesture nub via
