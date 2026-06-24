@@ -46,23 +46,22 @@ static void test_reframe_one_contact(void) {
     CHECK_EQ(rc, 0);
 
     int N = (int)((mn - 12) / 9);                 /* = 1 */
-    /* (a) total length = 6 (0x60 + len + 4-byte CV4 hdr) + 9N + 2 checksum */
-    CHECK_EQ(outlen, (size_t)(6 + 9 * N + 2));
+    /* (a) total length = 4 (CV4 hdr at out[0]) + 9N + 2 checksum. No 0x60/len prefix. */
+    CHECK_EQ(outlen, (size_t)(4 + 9 * N + 2));
 
-    /* (b) framing magic */
-    CHECK_EQ(out[0], 0x60);
+    /* (b) CompactV4 path frame type byte (dispatcher 0x24..0x29 jump table -> 0x28 -> V4 path parser) */
+    CHECK_EQ(out[0], 0x28);
 
-    /* (c) Apple's frame-count math (parser sees the frame after the 2-byte prefix; len excl checksum):
-       flen = outlen - 2(prefix) - 2(checksum); (flen-4)/9 == N */
-    int flen = (int)outlen - 2 - 2;
-    CHECK_EQ((flen - 4) / 9, N);
+    /* (c) Apple's frame-count math: _MTParse_CompactV4BinaryPath = (len-4)/9, len = full enqueued
+       length INCLUDING the 2 checksum bytes (integer div absorbs them). (outlen-4)/9 == N */
+    CHECK_EQ(((int)outlen - 4) / 9, N);
 
-    /* (d) timestamp round-trips out of the CV4 header */
-    uint32_t ts_back = ((uint32_t)out[3] >> 2) | ((uint32_t)out[4] << 6) | ((uint32_t)out[5] << 14);
+    /* (d) timestamp round-trips out of the CV4 header at out[1..3] (inverse of _MTCompactV4HeaderUnpack) */
+    uint32_t ts_back = ((uint32_t)out[1] >> 2) | ((uint32_t)out[2] << 6) | ((uint32_t)out[3] << 14);
     CHECK_EQ(ts_back, ts & 0x3FFFFF);            /* 22-bit */
 
-    /* (e) contact body is bit-identical pass-through (mt2[12..] -> out[6..]) */
-    for (int j = 0; j < 9 * N; j++) CHECK_EQ(out[6 + j], mt2[12 + j]);
+    /* (e) contact body is bit-identical pass-through (mt2[12..] -> out[4..]) */
+    for (int j = 0; j < 9 * N; j++) CHECK_EQ(out[4 + j], mt2[12 + j]);
 
     /* (f) checksum is valid: recompute over our own output reproduces the trailer */
     uint8_t verify[64];

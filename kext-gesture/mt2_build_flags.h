@@ -33,12 +33,14 @@ static const bool kBnbGeometry = true;
  * mt_transport: builtIn=0, familyID=128, driverType=4, parserOptions=47). */
 static const bool kEdgeNoBtTransport = false;
 
-/* Genuine-USB translate-and-feed (2026-06-24): instead of our synthetic-USB reader
- * (MT2USBReader feeding our nub), let Apple's genuine AppleUSBMultitouchDriver own the
- * cabled MT2 (genuine USB prefpane), and interpose its handleReport (vtable slot 0x117) via
- * an instance-scoped vtable clone to reframe each MT2 0x02 report into Apple's path-binary
- * frame (mt2_usb_to_compactv4) so Apple's driver accepts it. Mirrors the BT geometry interpose.
- * Requires the MT2USBGenuine personality (Info.plist) active and MT2USB disabled. Default false
- * until validated on-device; flip true + swap Info.plist to test. */
+/* Genuine-USB translate-and-feed (2026-06-24): instead of our synthetic-USB reader (MT2USBReader
+ * feeding our nub), let Apple's genuine AppleUSBMultitouchDriver own the cabled MT2 (genuine USB
+ * prefpane). manual-start it on our interface, seed IOUserClientClass + sensor geometry via its init
+ * dict (its setProperty override drops keys; manual-start skips personality merge), and interpose
+ * handleReport (vtable slot 0x117) to reframe each MT2 0x02 report into a CompactV4 PATH frame
+ * (mt2_usb_to_compactv4: type byte 0x28 + 4-byte hdr + 9-byte contacts + checksum). DATA PATH PROVEN
+ * end-to-end 2026-06-24 (frames reach MultitouchSupport, coords track the finger). NOT yet
+ * cursor/pane-complete: still needs WindowServer to open+drive the instance (auto-discovery TBD), so
+ * synthetic-USB remains the working default. Default false; flip true to continue genuine-USB work. */
 static const bool kGenuineUsb = false;
 #endif

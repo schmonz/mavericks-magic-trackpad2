@@ -23,8 +23,8 @@ resolve() {
   esac
 }
 bin=$(resolve "$1"); q=$2; ctx=${3:-8}
-[ -n "$2" ] || { echo "usage: $(basename "$0") <target> \"<exact string>\" [context-lines]" >&2; exit 2; }
+[ -n "$2" ] || { echo "usage: $(basename "$0") <target> \"<substring of the string>\" [context-lines]" >&2; exit 2; }
 
 echo "# code referencing \"$q\" in $bin ($arch)  (context ${ctx}/3)"
 echo "# (each window ends near the instruction that consumes the loaded string pointer)"
-otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | grep -F -B"$ctx" -A3 "\"$q\""
+otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | grep -F -B"$ctx" -A3 "$q"

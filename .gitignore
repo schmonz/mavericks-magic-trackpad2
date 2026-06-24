@@ -28,4 +28,9 @@ tools/mt_transport
 tools/synth_feed
 tools/synth_tap
 tools/click_monitor
+tools/kc_lzss
+tools/kc_carve
+tools/macho_rebase
+tools/mt_frames_probe
+captures/kc/
 kext-startmt/MT2StartMT.kext/

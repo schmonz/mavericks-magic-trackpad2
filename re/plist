@@ -21,6 +21,7 @@ resolve() {
     MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/Info.plist" ;;
     MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Resources/Info.plist" ;;
     AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/Info.plist" ;;
+    AppleUSBMultitouch)       echo "/System/Library/Extensions/AppleUSBMultitouch.kext/Contents/Info.plist" ;;
     AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/Info.plist" ;;
     IOBluetoothHIDDriver)     echo "/System/Library/Extensions/IOBluetoothHIDDriver.kext/Contents/Info.plist" ;;
     IOBluetoothFamily)        echo "/System/Library/Extensions/IOBluetoothFamily.kext/Contents/Info.plist" ;;

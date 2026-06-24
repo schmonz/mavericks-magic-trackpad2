@@ -1,0 +1,47 @@
+#!/bin/sh
+# bcmp - compare a byte WINDOW of two files; report IDENTICAL/DIFFER and the first differing offset.
+#
+# Replaces ad-hoc `cmp <(dd ...) <(dd ...)` shuffling when checking whether the same region of
+# two binaries (e.g. an on-disk kext vs the kernelcache build) is byte-identical or relocated.
+# One literal command, allowlist-friendly.
+#
+# Output: a '#'-prefixed header, then `IDENTICAL` or `DIFFER at +0xNN (file offset 0xMM)`.
+#
+# Usage: bcmp <fileA> <fileB> [offset] [length]
+#   offset, length accept 0x-hex or decimal. Default offset 0; default length = to EOF of the window.
+n() { case "$1" in 0x*|0X*) printf '%d' "$1" ;; *) printf '%d' "${1:-0}" ;; esac; }
+
+a=$1; b=$2
+[ -f "$a" ] && [ -f "$b" ] || { echo "usage: $(basename "$0") <fileA> <fileB> [offset] [length]" >&2; exit 2; }
+off=$(n "${3:-0}")
+lenarg=$4
+
+echo "# bcmp: A=$a"
+echo "#       B=$b"
+if [ -n "$lenarg" ]; then
+  len=$(n "$lenarg")
+  echo "# window: offset $off length $len"
+  da=$(dd if="$a" bs=1 skip="$off" count="$len" 2>/dev/null | od -An -tx1)
+  db=$(dd if="$b" bs=1 skip="$off" count="$len" 2>/dev/null | od -An -tx1)
+else
+  echo "# window: offset $off .. EOF"
+  da=$(dd if="$a" bs=1 skip="$off" 2>/dev/null | od -An -tx1)
+  db=$(dd if="$b" bs=1 skip="$off" 2>/dev/null | od -An -tx1)
+fi
+
+if [ "$da" = "$db" ]; then
+  echo "IDENTICAL"
+else
+  # find first differing byte index within the window
+  i=0
+  set -- $da; aa="$*"; set -- $db; bb="$*"
+  oldifs=$IFS; IFS=' '
+  set -- $aa
+  for byte in "$@"; do
+    j=$(echo "$bb" | cut -d' ' -f$((i+1)))
+    [ "$byte" != "$j" ] && break
+    i=$((i+1))
+  done
+  IFS=$oldifs
+  printf 'DIFFER at +0x%x (file offset 0x%x)\n' "$i" $((off+i))
+fi

@@ -140,6 +140,12 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
     }
 }
 
+/* Set a 32-bit integer property in an init dictionary (released after init copies it). */
+static void mt2_dict_num(OSDictionary *d, const char *key, uint32_t val) {
+    OSNumber *n = OSNumber::withNumber(val, 32);
+    if (n) { d->setObject(key, n); n->release(); }
+}
+
 /* Genuine-USB path: manual-start a genuine AppleUSBMultitouchDriver on our interface (bypassing
  * IOKit matching) and interpose its handleReport via an instance-scoped vtable clone, so each MT2
  * report is reframed into the CompactV4 packet Apple accepts. Mirrors MT2BTReader's Path-A manual
@@ -154,7 +160,32 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
         if (go) go->release();
         return false;
     }
-    if (!genuine->init(0) || !genuine->attach(fIntf)) {
+    /* Seed properties via the INIT dictionary, not setProperty: AppleUSBMultitouchDriver overrides
+       every setProperty variant and drops unknown keys (proven: setProperty+getProperty readback
+       returned NULL), but init() forwards the dict to super::init which populates the property table
+       directly. Manual-start does no personality merge AND the device NAKs Apple's feature reports,
+       so the instance otherwise lacks both (a) IOUserClientClass -> IOService::newUserClient has no
+       class -> MTDeviceStart's IOServiceOpen fails -> 0 frames clients; and (b) sensor geometry ->
+       MultitouchSupport's _mt_CachePropertiesForDevice reads 0x0 cols/rows -> algorithm yields no
+       contacts. Supply both here. Geometry values from src/mt2_geometry.c (BT-proven). (RE'd 2026-06-24.) */
+    OSDictionary *initp = OSDictionary::withCapacity(8);
+    OSString *ucc = OSString::withCString("AppleUSBMultitouchUserClient");
+    if (initp && ucc) initp->setObject("IOUserClientClass", ucc);
+    if (initp) {
+        mt2_dict_num(initp, "Family ID", 0x80);            /* 128 */
+        mt2_dict_num(initp, "Sensor Rows", 13);
+        mt2_dict_num(initp, "Sensor Columns", 16);
+        mt2_dict_num(initp, "Sensor Surface Width", 13000);
+        mt2_dict_num(initp, "Sensor Surface Height", 11300);
+        mt2_dict_num(initp, "parser-type", 1000);          /* selects the CompactV4 frame parser in */
+        mt2_dict_num(initp, "parser-options", 37);         /* MultitouchSupport (from genuine personality) */
+        initp->setObject("Driver is Ready", kOSBooleanTrue);
+        initp->setObject("MTHIDDevice", kOSBooleanTrue);
+    }
+    bool inited = genuine->init(initp);
+    if (ucc) ucc->release();
+    if (initp) initp->release();
+    if (!inited || !genuine->attach(fIntf)) {
         IOLog("MT2USBReader: genuine init/attach failed\n");
         genuine->release();
         return false;
@@ -191,7 +222,15 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     uint8_t payload[2] = {0x02, 0x01};
     en.bmRequestType = 0x21; en.bRequest = 0x09;
     en.wValue = 0x0302; en.wIndex = 1; en.wLength = sizeof(payload); en.pData = payload;
-    fIntf->DeviceRequest(&en);
+    IOReturn enrc = fIntf->DeviceRequest(&en);
+    IOLog("MT2USBReader: multitouch-enable SET_REPORT rc=0x%08x\n", enrc);
+
+    /* manual-start via allocClassWithName does NOT merge the driver's IOKit personality, so the
+     * instance lacks "IOUserClientClass" — IOService::newUserClient (the driver doesn't override it)
+     * then has no class to make and MultitouchSupport's MTDeviceStart->IOServiceOpen fails (0 frames
+     * clients => no frames => no cursor/pane). Supply it ourselves so the MT frames user client opens,
+     * which kicks registerUserClient->addFramesClient->configureDataMode->streaming. (RE'd 2026-06-24;
+     * seeded via the init dict above because the driver's setProperty override drops it.) */
 
     IOLog("MT2USBReader: genuine AppleUSBMultitouchDriver started + handleReport interposed (slot %lu)\n",
           (unsigned long)USB_HANDLEREPORT_SLOT_INDEX);

@@ -102,12 +102,123 @@ instance vtable clone, as with the BT geometry override). Leverage we already ho
 test vectors (`expected 0x499` vs `bytes 0x249` …) to crack `AppleUSBMultitouchDriver::validateChecksum`,
 and `handleReport`/`_deviceGetReport` give the packet layout.
 
+### ✅✅ SOLVED 2026-06-24 — genuine-USB translate-and-feed PROVEN END-TO-END
+`tools/mt_frames_probe` (drives Apple's MTDeviceCreateList/MTDeviceStart + a contact callback) received **616
+contact frames whose normalized coords track the finger** through the GENUINE `AppleUSBMultitouchDriver` +
+MultitouchSupport. Three init-dict seeds + one reframe-format fix did it:
+1. `IOUserClientClass`="AppleUSBMultitouchUserClient" via the genuine driver's **init dictionary** (its
+   `setProperty` override drops unknown keys; init→super::init populates the table) → frames client opens.
+2. Sensor geometry via the same init-dict (`Family ID`128, `Sensor Rows`13, `Sensor Columns`16,
+   `Sensor Surface Width`13000, `Sensor Surface Height`11300; + `Driver is Ready`/`MTHIDDevice`) → `(0x80)
+   family (16 cols X 13 rows)`.
+3. **Reframe to CompactV4 PATH frame type `0x28`, NOT `0x60`.** `0x60` is a NOTIFICATION type in
+   MultitouchSupport's dispatcher (func @0x4825, switches on packet[0]); its 0x24..0x29 jump table maps
+   **0x28 → `_MTParse_CompactV4BinaryPath`** (which uses `_MTCompactV4HeaderUnpack` + `_MTCompactV4BinaryContactUnpack`
+   = our exact 4-byte header + 9-byte contacts). New frame = `[0x28][4-byte CV4 hdr][N×9 contacts][2-byte
+   checksum]`, contacts at offset 4, count `(len-4)/9` (checksum absorbed by integer div). The genuine
+   driver's handleReport is NOT 0x60-exclusive (non-0x02 → validateChecksum → enqueue), so it forwards 0x28.
+   `src/mt2_usb_reframe.c` updated; `test_usb_reframe` updated + green.
+**REMAINING for cursor/pane:** the probe is a passive consumer (proves data flow, doesn't move the cursor).
+WindowServer (the system MT consumer) must open+drive our instance for cursor + the Trackpad pane. Next:
+auto-discovery (hotplug / required props) so the system opens the frames client itself. Everything below is
+the layer-by-layer investigation that led here (kept for the audit trail).
+
+### ▶ ON-DEVICE TEST #2 — 2026-06-24 — reframe+checksum PROVEN; blocker = no frames client
+
+The translate-and-feed build (branch `genuine-usb-translate-feed`) was loaded and tested on a clean
+post-reboot box (residue cleared). **Bottom line: our reframe is correct and passes Apple's checksum; the
+remaining blocker is that no `AppleUSBMultitouchUserClient` frames client is open to receive the validated
+packets.** (This block records one mid-investigation wrong turn and its correction — read to the end.)
+
+**Setup fact we didn't know (now part of the load sequence):** `allocClassWithName("AppleUSBMultitouchDriver")`
+returns NULL unless the `AppleUSBMultitouch` kext is loaded — and removing the injected `613` IOCatalogue
+personality (the reboot) ALSO removes the only thing that auto-loads that kext. So seam A needs an explicit
+`sudo kextload /System/Library/Extensions/AppleUSBMultitouch.kext` first. Its on-disk personalities match
+`idVendor 1452` + `bInterfaceNumber 1` + an `idProductArray` (`547,548,549,560…587…`, NOT `613`), so loading
+it registers the class symbol **without** binding our device. Our `MT2USBReader` then matches the interface,
+manual-starts a genuine `AppleUSBMultitouchDriver` (registered/matched/active, `Transport=USB`,
+`Product="Magic Trackpad"`, 3 `IOHIDLibUserClient`s), and interposes its `handleReport` (vtable byte `0x8b8`
+= slot `0x117` = 279; `re/vtable`-confirmed = `handleReport`).
+
+**Data path PROVEN (persistent `/var/log/system.log`, NOT `dmesg` — reject spam rolls the small dmesg ring):**
+- Device emits **21-byte `0x02` reports** → our SET_REPORT multitouch-enable (`{0x02,0x01}`, wValue `0x0302`)
+  WORKED (device is in multitouch mode; the boot-mouse interface goes silent, which is why the generic-HID
+  cursor stops the moment our path takes over).
+- Our interpose reframes every report: `MT2hr[..]: reframe OK outlen=17 b0=0x60` (1 contact) / length 26
+  (2 contacts). So the `0x60` framing + CompactV4 header + checksum reframe is being produced correctly.
+
+**⚠️ FIRST READING WAS WRONG — corrected by kernelcache disassembly (same day). The reframe WORKS;
+the blocker is downstream (no frames client).** The `dmesg` ring is tiny and the per-packet warning spam
+rolled the checksum lines out of it, so an initial pass saw only `not in path binary mode, received 0x60
+... length 26` and mis-concluded "path-binary mode is a hard gate." The PERSISTENT `/var/log/system.log`
+plus disassembly of the ACTUAL running driver tell the real story:
+
+- **`not in path binary mode` is a WARNING, not a gate.** RE'd `AppleUSBMultitouchDriver::validateChecksum`
+  (running build, `0x4506`): at `0x455b` it tests `this->[0x179]` (the path-binary/mouse-mode flag) and, if
+  zero, IOLogs `...not in path binary mode, received 0x%x ... length %d` — then **FALLS THROUGH** to the
+  checksum compute. It never returns early. (The text says "handleReport" but the code lives in
+  `validateChecksum`; `handleReport` just calls it.)
+- **Checksum is the hard gate, and OUR reframe PASSES it.** `validateChecksum` = `sum(buf[0..len-3]) mod
+  0x10000` compared to `(buf[len-1]<<8)|buf[len-2]` (low byte at `len-2`, high at `len-1`). Our
+  `mt2_usb_reframe.c` matches. Proof from `system.log`: of 5000+ `checksum is incorrect` lines, EVERY one is
+  a raw `0x2` packet (21/8/2-byte) from the PRIOR spike; there are ZERO failures for our `0x60` packets
+  (17-byte/26-byte). Our reframed packets validate.
+- **Real blocker = validated packets are never DELIVERED.** After a valid checksum, `handleReport`
+  (`0x4399`) only enqueues if `this->[0x170]` (a semaphore, created in `handleStart`, nulled in `init`/`free`)
+  is non-null AND the `this->[0x168]` user-clients array has count > 0 (`callq *0x130`; `je 0x4436` skips
+  enqueue when count==0). Live: **0 `AppleUSBMultitouchUserClient` instances** — no frames client is open, so
+  `enqueueData` is never called → no frames → no cursor AND no prefpane (the pane needs a live MT device).
+  The genuine instance has only 3 `IOHIDLibUserClient`s (HID), not the MT frames `AppleUSBMultitouchUserClient`.
+- **NEXT:** get MultitouchSupport to open `AppleUSBMultitouchUserClient` frames on our manual-started
+  instance (it isn't, today). The path-binary *warning* is cosmetic; don't chase it.
+
+**Userspace consumer side — RE'd off-device (MultitouchSupport.framework), session 2.** Mapped how frames
+clients are supposed to attach, to find why none did:
+- `___MTDeviceCreateListForDriverType(type)` builds `IOServiceMatching("<class for type>")` and iterates
+  `IOServiceGetMatchingServices` → `_MTDeviceCreateFromService` per match. For driverType 1 the class is
+  **`AppleUSBMultitouchDriver`** — so enumeration WOULD find our instance (it is exactly that class).
+- `_MTDeviceCreateFromService` (`0xe43`) ACCEPTS our device: `IOObjectConformsTo` maps
+  `AppleUSBMultitouchDriver`→type `1` (stored `+0x8c`), Transport `"USB"`→`1` (`+0x90`); it only returns
+  NULL for `Dummy` (type 3) lacking a `FramePumperPresent` prop. It reads the `"* Packet Size"` IORegistry
+  property for the buffer size, then `_MTDeviceCreate`. So our service is BOTH discoverable AND acceptable.
+- ⇒ **Discoverability/acceptance is NOT the theoretical blocker.** The actual frames-client open
+  (`IOServiceOpen` of `AppleUSBMultitouchUserClient`) is done by the CONSUMER (WindowServer's
+  MultitouchSupport client), which enumerates at its own startup + on a hotplug notification
+  (`_mt_HotPlugMatchingDeviceAdded`). Our device was manual-started mid-session (after consumers were
+  already up), so it depends on the hotplug path noticing our `registerService()`.
+- **These last unknowns are LIVE-ONLY (can't confirm offline):** (a) does the hotplug notification fire for
+  our manual-started/`registerService`'d instance? (b) does our service carry the props the consumer needs
+  (`* Packet Size`, a Multitouch GUID/DeviceID, `MTHIDDevice`)? (c) does WindowServer actually `IOServiceOpen`
+  it? **On-device probe for next session:** after manual-start, (1) `ioreg -w0 -l -c com_apple_driver_AppleUSBMultitouch`
+  → does our instance have `* Packet Size` / GUID / `MTHIDDevice` props vs what `_MTDeviceCreateFromService`
+  reads; (2) watch for an `AppleUSBMultitouchUserClient` appearing on touch; (3) if none, test forcing it —
+  open the user client from a small userspace tool (mirror `MTDeviceCreateList`+open) to kick
+  `registerUserClient`→`addFramesClient`→`configureDataMode`→streaming, and see if cursor/pane come alive.
+  If that works, the fix is making our service auto-discovered (publish the missing props / fire the hotplug).
+
+**RE GOTCHA — the running build ≠ the on-disk file (resolved).** `validateChecksum`'s path-binary branch is
+ABSENT from the on-disk `/S/L/E/AppleUSBMultitouch` (240.10, Jan-11) but PRESENT in the booted build. Proof:
+the reject string at file off `0x9376` is referenced by ZERO instructions in the on-disk binary, but the
+running instance (load addr `0xffffff7f81af0000`) comes from the boot **kernelcache** (`/System/Library/
+Caches/com.apple.kext.caches/Startup/kernelcache`, Jun-13) — a DIFFERENT build with the same `240.10` version
+label. Both `handleReport`s are byte-identical except relocations; the divergence is in `validateChecksum`.
+**Always disassemble the kernelcache build, not `/S/L/E`, for this driver.** Tooling added this session to do
+that (all in `tools/` + `re/`): `tools/kc_lzss` (decompress `complzss` kernelcache → Mach-O), `tools/kc_carve`
+(list segments / carve a prelinked kext out by vmaddr), `tools/macho_rebase` (rebase a carved kext's
+vmaddrs+symbols to 0 so `re/disasm`/`re/syms` work — note it does NOT rebase vtable pointer VALUES, so read
+vtable slots from the NON-rebased carve), `re/hex` (raw byte dump), and a `re/plist` `AppleUSBMultitouch`
+alias. Carved+rebased copy: `captures/kc/AppleUSBMultitouch.rebased`. (`re/str-xref` quirk: it wraps the query
+in literal quotes, so it only matches a WHOLE cstring — substring queries silently find nothing.)
+
 **SIZING RE done 2026-06-24 (off-device):**
 - **`validateChecksum` CRACKED — trivial.** 16-bit additive sum of bytes[0 .. n-3]; the last two bytes
   hold it little-endian (`low=byte[n-2], high=byte[n-1]`). Verified vs the live vector (`expected 0x499`
   = sum of bytes[0..18]; MT2's own trailing `0x0249` is a different scheme). A ~5-line encoder appends it.
-- **The checksum is the ONLY hard gate.** "not in path binary mode" / "Mouse mode was detected" are just
-  IOLog warnings; `handleReport` computes the checksum and proceeds regardless.
+- **The checksum is the hard gate (RE-CONFIRMED on-device 2026-06-24 test #2) — and our reframe PASSES it.**
+  Disassembly of the running `validateChecksum` (`0x4506`) confirms: `not in path binary mode` is a WARNING
+  that falls through; the checksum compare is the only thing that returns invalid. Live `system.log` shows
+  ZERO checksum failures for our `0x60` packets. (A mid-investigation pass briefly mis-called path-binary a
+  hard gate — that was a truncated-`dmesg` artifact; corrected in the "ON-DEVICE TEST #2" block below.)
 - **Mode-coax route is OUT.** On seeing MT2's `0x2` packets (read as "mouse mode") the driver calls
   `configureDataMode`, which switches mode via Apple-specific feature reports (read/modify/write report id
   3 @8B, then set report `0xac` @1B). MT2 won't honor these → it won't natively emit Apple's format. So we
