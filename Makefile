@@ -17,6 +17,9 @@ vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c
 mt2_reenumerate: tools/mt2_reenumerate.c
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
 
+mt2_usb_enable: tools/mt2_usb_enable.c
+	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
+
 # Build the gesture kext (delegates to its own makefile).
 kext-gesture:
 	$(MAKE) -C kext-gesture
