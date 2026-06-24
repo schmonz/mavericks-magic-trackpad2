@@ -38,6 +38,13 @@ settled a choice).
 > (the X/Y edge thresholds `[0x8]`/`[0xc]` don't depend on transport — which is exactly why the transport-flip test
 > below couldn't move the band; it was the wrong knob, not an exoneration of the edge mechanism).
 >
+> **DECISIVE CORROBORATION (the device really IS 160mm wide).** The decoded contact-coordinate spans confirm
+> both physical dims to <0.1%, independent of any seed: X `-3678..3934` = **7612 units** = `160mm × 47.6 u/mm`
+> (=7616 ✓); Y `-2478..2587` = **5065 units** = `114.9mm × 44.1 u/mm` (=5067 ✓). So the pad's X axis is *provably*
+> 160mm. The recognizer consumes `SurfaceWidth÷100` as physical mm for edge distances, and Y was seeded to
+> ~physical (113≈114.9mm) — so X should be 160mm (`16000`), and `13000→130mm` is an under-model, not a real
+> narrow active area. This removes the "maybe genuine reports 130mm too" worry for the *physical* width.
+>
 > **LEADING FIX HYPOTHESIS (single constant):** `MT2_SURFACE_WIDTH` 13000 → **~16000** (160mm×100, matching how
 > `MT2_SURFACE_HEIGHT=11300` already matches 114.9mm). **Prepared on-device experiment** (cheap/reversible/one
 > variable): bump the constant, rebuild, load, device on, sweep L/R edges. *Predict:* X-band shrinks ~24%→~20%/side.
