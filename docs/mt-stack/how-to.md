@@ -44,7 +44,7 @@ sudo sysctl -w debug.mt2_log=0   # silence (default)
 
 Connect-flap verdict (after a connect cycle / reboot):
 ```sh
-sudo dmesg | ./re/conn-trace      # per-connection timeline + STEADY/FAIL
+sudo dmesg | tools/re conn-trace      # per-connection timeline + STEADY/FAIL
 ```
 A `FAIL` that never reaches `INTERRUPT_BOUND` ⇒ PSM 19 didn't open ⇒ the targeted fix is
 `waitForChannelState(OPEN)` on PSM 17 (then a real repro exists to verify against).
@@ -79,7 +79,7 @@ If reproducing the order does **not** fix it, take the one justified live captur
 Each constant in `src/mt2_stack.h` carries its `re/` command. To check one after a point release,
 run it and compare; fix the header if it moved. Example:
 ```sh
-re/vtable AppleBluetoothMultitouch BNBTrackpadDevice 0xcd8   # expect getMultitouchReportInfo
+tools/re vtable AppleBluetoothMultitouch BNBTrackpadDevice 0xcd8   # expect getMultitouchReportInfo
 ```
 Do RE only through the in-tree `re/` wrappers (readable, allowlist-friendly), never raw otool/nm/ioreg
 ad hoc. A future `re/verify-facts` could read the header and check every constant at once.

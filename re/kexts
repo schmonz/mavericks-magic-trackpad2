@@ -1,5 +1,0 @@
-#!/bin/sh
-# kexts - filter loaded kernel extensions (kextstat) by name regex. Read-only.
-# Usage: kexts ["name regex"]      # default: all
-pat=${1:-.}
-kextstat 2>/dev/null | grep -iE "$pat|^Index" | grep -ivE "grep"

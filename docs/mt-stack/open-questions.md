@@ -174,7 +174,7 @@ personality (the reboot) ALSO removes the only thing that auto-loads that kext. 
 it registers the class symbol **without** binding our device. Our `MT2USBReader` then matches the interface,
 manual-starts a genuine `AppleUSBMultitouchDriver` (registered/matched/active, `Transport=USB`,
 `Product="Magic Trackpad"`, 3 `IOHIDLibUserClient`s), and interposes its `handleReport` (vtable byte `0x8b8`
-= slot `0x117` = 279; `re/vtable`-confirmed = `handleReport`).
+= slot `0x117` = 279; `tools/re vtable`-confirmed = `handleReport`).
 
 **Data path PROVEN (persistent `/var/log/system.log`, NOT `dmesg` — reject spam rolls the small dmesg ring):**
 - Device emits **21-byte `0x02` reports** → our SET_REPORT multitouch-enable (`{0x02,0x01}`, wValue `0x0302`)
@@ -241,9 +241,9 @@ label. Both `handleReport`s are byte-identical except relocations; the divergenc
 **Always disassemble the kernelcache build, not `/S/L/E`, for this driver.** Tooling added this session to do
 that (all in `tools/` + `re/`): `tools/kc_lzss` (decompress `complzss` kernelcache → Mach-O), `tools/kc_carve`
 (list segments / carve a prelinked kext out by vmaddr), `tools/macho_rebase` (rebase a carved kext's
-vmaddrs+symbols to 0 so `re/disasm`/`re/syms` work — note it does NOT rebase vtable pointer VALUES, so read
-vtable slots from the NON-rebased carve), `re/hex` (raw byte dump), and a `re/plist` `AppleUSBMultitouch`
-alias. Carved+rebased copy: `captures/kc/AppleUSBMultitouch.rebased`. (`re/str-xref` quirk: it wraps the query
+vmaddrs+symbols to 0 so `tools/re disasm`/`tools/re syms` work — note it does NOT rebase vtable pointer VALUES, so read
+vtable slots from the NON-rebased carve), `tools/re hex` (raw byte dump), and a `tools/re plist` `AppleUSBMultitouch`
+alias. Carved+rebased copy: `captures/kc/AppleUSBMultitouch.rebased`. (`tools/re str-xref` quirk: it wraps the query
 in literal quotes, so it only matches a WHOLE cstring — substring queries silently find nothing.)
 
 **SIZING RE done 2026-06-24 (off-device):**
@@ -317,7 +317,7 @@ byte[len-2..len-1] = 16-bit additive checksum   sum of bytes[0..len-3], little-e
   timestamp field in MT2's 12-byte header, or synthesize a monotonic full-res ts — the tap-to-click work showed a
   synthesized ts is acceptable to the recognizer). Resolve (1)/(2)/(4) with the Task 0.1 captured fixture.
 
-**INTERPOSE SEAM PINNED 2026-06-24 (Task 0.3 RE).** Via `re/vtable` on the Apple kext:
+**INTERPOSE SEAM PINNED 2026-06-24 (Task 0.3 RE).** Via `tools/re vtable` on the Apple kext:
 - **`handleReport` vtable slot byte offset = `0x8b8`** → slot index `0x8b8 / sizeof(void*)` = `0x117` (279). CONFIRMED.
 - **Signature CONFIRMED 3-arg:** `IOReturn handleReport(IOMemoryDescriptor *report, IOHIDReportType reportType,
   IOOptionBits options)` (not the 2-arg variant). Override C sig = `(OSObject *thisptr, IOMemoryDescriptor*,
@@ -341,7 +341,7 @@ build is complete on branch `genuine-usb-translate-feed` (checksum + reframe hos
 bound the interface directly (matched `idProduct 613`, bundle `com.apple.driver.AppleUSBMultitouch`,
 score 99000), our `com_schmonz_MT2USBReader` had **0 instances** and never ran `startGenuine` → no
 interpose, no multitouch-enable → device emitted only 8-byte mouse-mode packets, all rejected. But 613
-is **NOT in Apple's on-disk personalities** (`re/plist AppleUSBMultitouch` → zero "613"), and the box
+is **NOT in Apple's on-disk personalities** (`tools/re plist AppleUSBMultitouch` → zero "613"), and the box
 had **not rebooted since the 2026-06-24 spike** that injected a live IOCatalogue personality
 `idProduct 613 → AppleUSBMultitouchDriver`. **Injected catalogue personalities persist across
 kextload/kextunload — only a reboot clears them** — and this residue pre-empted seam A (which needs OUR
@@ -373,7 +373,7 @@ with the same oracle, we don't know whether the flap is genuinely put to bed or 
 warm-reconnect case.
 
 **How to measure:** after a reboot (or a sleep/wake), `sudo sysctl debug.mt2_log=1` then
-`dmesg | ./re/conn-trace` → STEADY/FAIL for that boot's first connect. A `FAIL` timeline that never
+`dmesg | tools/re conn-trace` → STEADY/FAIL for that boot's first connect. A `FAIL` timeline that never
 reaches `INTERRUPT_BOUND` ⇒ PSM 19 didn't open ⇒ the targeted fix is `waitForChannelState(OPEN)` on
 PSM 17 (with, finally, a real repro to verify against). See `reference.md` → BT connect handshake for
 the genuine sequence and `how-to.md` → fix the connect flap. Relates to [[mt2-bt-attach-flap-rootcause]].

@@ -1,0 +1,412 @@
+#!/bin/sh
+# re - one reverse-engineering toolkit with subcommands. Unix-filter style, readable,
+# allowlist-friendly (ONE entry covers every subcommand). Replaces the former re/* scripts.
+#
+#   re <subcommand> [args...]      re help     re <subcommand> --help
+#
+# STATIC BINARY (Mach-O):                      LIVE SYSTEM / DOMAIN ORACLES:
+#   disasm   function/range machine code         ioreg-class   class presence + count
+#   syms     symbols by name                      ioreg-props   class node(s) + properties
+#   calls    who calls a code address             kexts         loaded kexts (kextstat)
+#   str-xref string ref -> enclosing function     klog          kernel log (system.log)
+#   xref-offset struct-field accesses             amd-actuation cursor-wiring verdict
+#   vtable   slot offset <-> method               conn-trace    BT connect timeline verdict
+#   strings  printable strings                     mt-contacts   stream recognizer contacts
+#   consts   dump a Mach-O section                 mt-devices    MultitouchSupport device list
+#   hex      hex+ASCII dump of a file
+#   bcmp     compare a byte window of two files
+#   plist    read a kext/bundle Info.plist
+#
+# Targets accept a path OR a short alias. Arch defaults x86_64 (RE_ARCH=i386 overrides).
+
+arch=${RE_ARCH:-x86_64}
+me="re"
+
+# --- shared resolvers --------------------------------------------------------
+# Mach-O binary by alias-or-path (union of every tool's alias map).
+re_resolve() {
+  case "$1" in
+    MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/MacOS/MultitouchHID" ;;
+    MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/A/MultitouchSupport" ;;
+    AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/MacOS/AppleBluetoothMultitouch" ;;
+    AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/MacOS/AppleMultitouchDriver" ;;
+    AppleUSBMultitouch)       echo "/System/Library/Extensions/AppleUSBMultitouch.kext/Contents/MacOS/AppleUSBMultitouch" ;;
+    IOBluetoothHIDDriver)     echo "/System/Library/Extensions/IOBluetoothHIDDriver.kext/Contents/MacOS/IOBluetoothHIDDriver" ;;
+    IOBluetoothFamily)        echo "/System/Library/Extensions/IOBluetoothFamily.kext/Contents/MacOS/IOBluetoothFamily" ;;
+    IOHIDFamily)              echo "/System/Library/Extensions/IOHIDFamily.kext/Contents/MacOS/IOHIDFamily" ;;
+    Trackpad)                 echo "/System/Library/PreferencePanes/Trackpad.prefPane/Contents/MacOS/Trackpad" ;;
+    Mouse)                    echo "/System/Library/PreferencePanes/Mouse.prefPane/Contents/MacOS/Mouse" ;;
+    *)                        echo "$1" ;;
+  esac
+}
+# Info.plist by alias-or-bundle/plist-path.
+re_resolve_plist() {
+  case "$1" in
+    MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/Info.plist" ;;
+    MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Resources/Info.plist" ;;
+    AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/Info.plist" ;;
+    AppleUSBMultitouch)       echo "/System/Library/Extensions/AppleUSBMultitouch.kext/Contents/Info.plist" ;;
+    AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/Info.plist" ;;
+    IOBluetoothHIDDriver)     echo "/System/Library/Extensions/IOBluetoothHIDDriver.kext/Contents/Info.plist" ;;
+    IOBluetoothFamily)        echo "/System/Library/Extensions/IOBluetoothFamily.kext/Contents/Info.plist" ;;
+    IOHIDFamily)              echo "/System/Library/Extensions/IOHIDFamily.kext/Contents/Info.plist" ;;
+    *.plist)                  echo "$1" ;;
+    *.kext|*.plugin|*.framework|*.app)  echo "$1/Contents/Info.plist" ;;
+    *)                        [ -d "$1" ] && echo "$1/Contents/Info.plist" || echo "$1" ;;
+  esac
+}
+
+usage() {
+  sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+# --- subcommands -------------------------------------------------------------
+
+sub_disasm() {  # <target> "<fn>" ["filter"] | <start-hex> [end-hex] ["filter"]
+  bin=$(re_resolve "$1"); want=$2
+  [ -n "$bin" ] && [ -n "$want" ] || { echo "usage: $me disasm <target> \"<function>\" [\"filter\"] | <start-hex> [end-hex] [\"filter\"]" >&2; return 2; }
+  pad() { printf '%016x' "0x${1#0x}"; }
+  sig=""; filter=""
+  if printf '%s' "$want" | grep -qiE '^(0x)?[0-9a-f]+$'; then
+    start=$(pad "$want"); end=""; [ -n "$3" ] && end=$(pad "$3"); filter=$4; sig="(raw range)"
+  else
+    filter=$3
+    hit=$(nm -n -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v q="$want" '
+      $2=="T" || $2=="t" { n++; addr[n]=$1; line[n]=$0 }
+      END { for (i=1;i<=n;i++) if (index(line[i],q)>0) {
+              print addr[i]; print (i<n?addr[i+1]:""); print line[i]; exit } }')
+    [ -n "$hit" ] || { echo "no function matching: $want" >&2; return 1; }
+    start=$(pad "$(printf '%s\n' "$hit" | sed -n 1p)")
+    eraw=$(printf '%s\n' "$hit" | sed -n 2p); end=""; [ -n "$eraw" ] && end=$(pad "$eraw")
+    sig=$(printf '%s\n' "$hit" | sed -n 3p | sed -E 's/^[0-9a-f]+[[:space:]]+[A-Za-z][[:space:]]+//')
+  fi
+  si=$(printf '%d' "0x$start"); ei=""; [ -n "$end" ] && ei=$(printf '%d' "0x$end")
+  echo "# function: $sig"
+  echo "# binary:   $bin ($arch)   range 0x$(printf %x "$si")$([ -n "$ei" ] && printf '..0x%x' "$ei")"
+  echo "# columns:  offset  address  instruction${filter:+   (filtered: $filter)}"
+  emit() {
+    otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v si="$si" -v ei="$ei" -v max=400 '
+      function h2i(x,  n,i,c){ sub(/^0x/,"",x); x=tolower(x); n=0
+        for(i=1;i<=length(x);i++){ c=index("0123456789abcdef",substr(x,i,1))-1; n=n*16+c } return n }
+      $1 ~ /^[0-9a-f]{5,16}$/ {
+        a=h2i($1)
+        if (a < si) next
+        if (ei!="" && a >= ei) exit
+        instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
+        printf "+0x%-5x 0x%x  %s\n", a-si, a, instr
+        shown++; if (ei=="" && shown>=max) exit
+      }'
+  }
+  if [ -n "$filter" ]; then emit | grep -iE "$filter"; else emit; fi
+}
+
+sub_syms() {  # <target> ["name filter"]
+  bin=$(re_resolve "$1"); pat=${2:-.}
+  [ -n "$1" ] || { echo "usage: $me syms <target> [\"name filter\"]" >&2; return 2; }
+  echo "# symbols in $bin ($arch) matching: $pat"
+  echo "# columns: address  kind  name"
+  nm -n -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v q="$pat" '
+    function kindword(k){
+      if(k=="T"||k=="t") return "text"; if(k=="D"||k=="d") return "data"
+      if(k=="B"||k=="b") return "bss";  if(k=="S"||k=="s") return "symbol"
+      if(k=="C"||k=="c") return "const"; if(k=="U") return "undefined"
+      if(k=="A") return "absolute"; return k }
+    {
+      if (NF>=3 && $1 ~ /^[0-9a-f]+$/) { addr="0x"$1; kind=kindword($2); sub(/^[0-9a-f]+[ \t]+[A-Za-z][ \t]+/,"") }
+      else                            { addr="-";     kind=kindword($1); sub(/^[ \t]*[A-Za-z][ \t]+/,"") }
+      if ($0=="") next
+      if ($0 ~ q) printf "%s\t%s\t%s\n", addr, kind, $0
+    }'
+}
+
+sub_calls() {  # <target> <addr-hex>
+  bin=$(re_resolve "$1"); addr=$2
+  [ -n "$bin" ] && [ -n "$addr" ] || { echo "usage: $me calls <target> <addr-hex>" >&2; return 2; }
+  addr=$(printf '%s' "$addr" | sed 's/^0x//' | tr 'A-F' 'a-f')
+  echo "# call sites targeting 0x$addr in $bin ($arch)  — enclosing function + the call line"
+  otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v a="$addr" '
+    /:$/ && $1 !~ /^[0-9a-f]{5,16}/ { fn=$0; sub(/:$/,"",fn) }
+    /[ \t]callq[ \t]/ && (index($0,"0x" a)>0 || $0 ~ ("\\<" a "\\>")) {
+      instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
+      printf "%s  in %s\n    %s\n", $1, (fn==""?"?":fn), instr
+    }'
+}
+
+sub_str_xref() {  # <target> "<substring>" [context-lines]
+  bin=$(re_resolve "$1"); q=$2; ctx=${3:-8}
+  [ -n "$2" ] || { echo "usage: $me str-xref <target> \"<substring>\" [context-lines]" >&2; return 2; }
+  echo "# code referencing \"$q\" in $bin ($arch)  — enclosing function + window (ctx ${ctx}/3)"
+  otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v q="$q" -v ctx="$ctx" '
+    /:$/ && $1 !~ /^[0-9a-f]{5,16}/ { fn=$0; sub(/:$/,"",fn) }
+    { L[NR]=$0; F[NR]=fn }
+    index($0,q)>0 { hit[++h]=NR }
+    END {
+      if (h==0) { print "# (no references found)"; exit 1 }
+      for (j=1;j<=h;j++) {
+        m=hit[j]; printf "=== %s ===\n", (F[m]==""?"?":F[m])
+        lo=m-ctx; if (lo<1) lo=1
+        for (i=lo;i<=m+3;i++) if (i in L) print L[i]
+        print ""
+      }
+    }'
+}
+
+sub_xref_offset() {  # <target> <offset-hex> [R|W]
+  bin=$(re_resolve "$1"); off=$2; rwf=$3
+  [ -n "$bin" ] && [ -n "$off" ] || { echo "usage: $me xref-offset <target> <offset-hex> [R|W]" >&2; return 2; }
+  case "$off" in 0x*) ;; *) off="0x$off" ;; esac
+  echo "# offset $off accesses in $bin ($arch)"
+  echo "# columns: rw  address  function  instruction"
+  otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v off="$off" -v rwf="$rwf" '
+    /:$/ && $1 !~ /^[0-9a-f]{5,16}\t?/ { fn=$0; sub(/:$/,"",fn); next }
+    $1 ~ /^[0-9a-f]{5,16}$/ {
+      addr=$1; instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
+      pat = off "(%"
+      if (index(instr, pat)==0) next
+      last=instr
+      if (index(instr, ",")>0) { n=split(instr, p, ","); last=p[n] }
+      else { sub(/^[^ ]+[ ]+/,"",last) }
+      gsub(/^ +| +$/,"",last)
+      rw = (index(last, pat)==1) ? "W" : "R"
+      if (rwf!="" && toupper(rwf)!=rw) next
+      sub(/^0+/,"",addr); if (addr=="") addr="0"
+      printf "%s  0x%s  %s  %s\n", rw, addr, (fn==""?"?":fn), instr
+    }'
+}
+
+sub_vtable() {  # <target> "<Class>" <hexoff>... | --find "<regex>"
+  bin=$(re_resolve "$1"); cls=$2
+  [ -n "$cls" ] && [ -n "$3" ] || { echo "usage: $me vtable <target> \"<ClassName>\" <hexoff> [hexoff...] | --find \"<regex>\"" >&2; return 2; }
+  shift 2
+  [ -f "$bin" ] || { echo "no such binary: $bin" >&2; return 2; }
+  echo "# vtable for $cls in $bin ($arch)"
+  VT_BIN="$bin" VT_ARCH="$arch" VT_CLS="$cls" python2.7 - "$@" <<'PY'
+import os,sys,struct,subprocess
+bin=os.environ["VT_BIN"]; arch=os.environ["VT_ARCH"]; cls=os.environ["VT_CLS"]
+ns=subprocess.check_output(["nm","-arch",arch,bin]).splitlines()
+filt=subprocess.Popen(["c++filt"],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+demangled=filt.communicate("\n".join(l.split()[2] for l in ns if len(l.split())>=3))[0].splitlines()
+rows=[l.split() for l in ns if len(l.split())>=3]
+vt=None
+for (p,d) in zip(rows,demangled):
+    if d.strip()=="vtable for "+cls:
+        vt=int(p[0],16); break
+if vt is None:
+    sys.stderr.write("vtable for %s not found\n"%cls); sys.exit(1)
+print "# (vtable symbol @ 0x%x; object vptr = symbol+0x10)" % vt
+o=subprocess.check_output(["otool","-arch",arch,"-l",bin]).splitlines()
+segs=[];cur=None
+for ln in o:
+    s=ln.strip()
+    if s.startswith("sectname"): cur={}
+    elif s.startswith("addr ") and cur is not None: cur["addr"]=int(s.split()[1],16)
+    elif s.startswith("offset ") and cur is not None: cur["off"]=int(s.split()[1]);segs.append(cur);cur=None
+data=open(bin,"rb").read()
+tsyms=sorted(((int(p[0],16),p[2]) for p in rows if p[1] in ("t","T")), key=lambda x:x[0])
+import bisect
+addrs=[a for a,_ in tsyms]
+def name_at(ptr):
+    i=bisect.bisect_right(addrs,ptr)-1
+    if i<0: return ("?",0)
+    a,nm=tsyms[i]; return (nm, ptr-a)
+def demangle1(s):
+    f=subprocess.Popen(["c++filt"],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+    return f.communicate(s)[0].strip()
+def fileoff(vmaddr):
+    best=None
+    for sg in segs:
+        if sg.get("addr",0)<=vmaddr and vmaddr<sg["addr"]+0x400000 and (best is None or sg["addr"]>best["addr"]): best=sg
+    return best["off"]+(vmaddr-best["addr"])
+if sys.argv[1:2]==["--find"]:
+    import re as _re
+    pat=_re.compile(sys.argv[2])
+    base=vt+0x10
+    for i in range(0,0x800):
+        slot=base+i*8
+        ptr=struct.unpack("<Q",data[fileoff(slot):fileoff(slot)+8])[0]
+        if ptr==0: continue
+        nm,delta=name_at(ptr)
+        if delta==0:
+            d=demangle1(nm)
+            if pat.search(d): print "0x%-6x ->  %s" % (i*8, d)
+else:
+    for off in sys.argv[1:]:
+        slot=vt+0x10+int(off,16); ptr=struct.unpack("<Q",data[fileoff(slot):fileoff(slot)+8])[0]
+        nm,delta=name_at(ptr)
+        print "%-8s ->  %s%s" % (off, demangle1(nm), ("  (+0x%x)"%delta) if delta else "")
+PY
+}
+
+sub_strings() {  # <target> ["filter regex"]
+  bin=$(re_resolve "$1"); pat=${2:-.}; minlen=${RE_MINLEN:-4}
+  [ -n "$1" ] || { echo "usage: $me strings <target> [\"filter regex\"]" >&2; return 2; }
+  echo "# strings in $bin matching: $pat"
+  echo "# columns: offset  string"
+  strings -a -t x -n "$minlen" "$bin" 2>/dev/null | awk -v q="$pat" '
+    { off=$1; sub(/^[0-9a-f]+[ \t]+/,""); if ($0 ~ q) printf "0x%s\t%s\n", off, $0 }'
+}
+
+sub_consts() {  # <target> [seg] [sec]
+  bin=$(re_resolve "$1"); seg=${2:-__TEXT}; sec=${3:-__const}
+  [ -n "$1" ] || { echo "usage: $me consts <target> [seg] [sec]" >&2; return 2; }
+  echo "# section $seg,$sec of $bin ($arch)"
+  otool -v -arch "$arch" -s "$seg" "$sec" "$bin" 2>/dev/null
+}
+
+sub_hex() {  # <file> [offset] [length]
+  n() { case "$1" in 0x*|0X*) printf '%d' "$1" ;; *) printf '%d' "${1:-0}" ;; esac; }
+  f=$1
+  [ -n "$f" ] || { echo "usage: $me hex <file> [offset] [length]" >&2; return 2; }
+  [ -f "$f" ] || { echo "# hex: $f (NOT FOUND)" >&2; return 1; }
+  off=$(n "${2:-0}"); len=$(n "${3:-256}")
+  echo "# hex: $f"
+  if [ "$len" -eq 0 ]; then
+    echo "# window: offset $off .. EOF"
+    if command -v xxd >/dev/null 2>&1; then xxd -s "$off" "$f"; else od -A x -t x1z -v -j "$off" "$f"; fi
+  else
+    echo "# window: offset $off length $len"
+    if command -v xxd >/dev/null 2>&1; then xxd -s "$off" -l "$len" "$f"; else od -A x -t x1z -v -j "$off" -N "$len" "$f"; fi
+  fi
+}
+
+sub_bcmp() {  # <fileA> <fileB> [offset] [length]
+  n() { case "$1" in 0x*|0X*) printf '%d' "$1" ;; *) printf '%d' "${1:-0}" ;; esac; }
+  a=$1; b=$2
+  [ -f "$a" ] && [ -f "$b" ] || { echo "usage: $me bcmp <fileA> <fileB> [offset] [length]" >&2; return 2; }
+  off=$(n "${3:-0}"); lenarg=$4
+  echo "# bcmp: A=$a"; echo "#       B=$b"
+  if [ -n "$lenarg" ]; then
+    len=$(n "$lenarg"); echo "# window: offset $off length $len"
+    da=$(dd if="$a" bs=1 skip="$off" count="$len" 2>/dev/null | od -An -tx1)
+    db=$(dd if="$b" bs=1 skip="$off" count="$len" 2>/dev/null | od -An -tx1)
+  else
+    echo "# window: offset $off .. EOF"
+    da=$(dd if="$a" bs=1 skip="$off" 2>/dev/null | od -An -tx1)
+    db=$(dd if="$b" bs=1 skip="$off" 2>/dev/null | od -An -tx1)
+  fi
+  if [ "$da" = "$db" ]; then echo "IDENTICAL"; else
+    i=0; set -- $db; bb="$*"; set -- $da
+    for byte in "$@"; do
+      j=$(echo "$bb" | cut -d' ' -f$((i+1))); [ "$byte" != "$j" ] && break; i=$((i+1))
+    done
+    printf 'DIFFER at +0x%x (file offset 0x%x)\n' "$i" $((off+i))
+  fi
+}
+
+sub_plist() {  # <target> [keypath] [filter]
+  target=$1; key=$2; filter=$3
+  [ -n "$target" ] || { echo "usage: $me plist <target> [keypath] [filter]" >&2; return 2; }
+  f=$(re_resolve_plist "$target")
+  [ -f "$f" ] || { echo "# plist: $f (NOT FOUND)" >&2; return 1; }
+  if [ -n "$key" ]; then
+    echo "# plist: $f"; echo "# key:   $key"; /usr/libexec/PlistBuddy -c "Print :$key" "$f"
+  else
+    echo "# plist: $f"; plutil -p "$f"
+  fi | { [ -n "$filter" ] && grep -iE "^#|$filter" || cat; }
+}
+
+sub_amd_actuation() {  # [ioreg-dump-file]
+  src=${1:-}
+  if [ -n "$src" ]; then dump=$(cat "$src"); else dump=$(ioreg -l -w0 2>/dev/null); fi
+  amd=$(printf '%s\n' "$dump" | grep -cE 'class AppleMultitouchDevice,')
+  hidev=$(printf '%s\n' "$dump" | grep -cE 'class AppleMultitouchHIDEventDriver,')
+  pointing=$(printf '%s\n' "$dump" | grep -cE 'class IOHIDPointing,')
+  echo "  AppleMultitouchDevice=$amd AppleMultitouchHIDEventDriver=$hidev IOHIDPointing=$pointing"
+  if [ "$amd" -ge 1 ] && [ "$hidev" -ge 1 ] && [ "$pointing" -ge 1 ]; then
+    echo "VERDICT: STEADY amd-actuation wired"
+  else
+    echo "VERDICT: BROKEN amd-actuation missing (need AppleMultitouchHIDEventDriver + IOHIDPointing)"
+  fi
+}
+
+sub_conn_trace() {  # [logfile]   (no arg = stdin)
+  src=${1:-/dev/stdin}
+  grep 'CONNTRACE ' "$src" | awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        n = index($i, "="); if (!n) continue
+        k = substr($i, 1, n-1); v = substr($i, n+1)
+        if (k == "conn")  conn = v; if (k == "state") state = v
+        if (k == "event") event = v; if (k == "ts")    ts = v
+      }
+      print "  conn=" conn " ts=" ts " " state " <- " event
+      if (event == "DISCONNECT") next
+      last[conn] = state; seen[conn] = 1
+      if (state == "STEADY") steady[conn] = 1
+    }
+    END {
+      for (c in seen) {
+        if (steady[c]) print "VERDICT: STEADY conn=" c
+        else print "VERDICT: FAIL conn=" c " stalled at " last[c]
+      }
+    }'
+}
+
+sub_ioreg_class() {  # <IOClassName> [more...]
+  [ -n "$1" ] || { echo "usage: $me ioreg-class <IOClassName> [more...]" >&2; return 2; }
+  dump=$(ioreg -l -w0 2>/dev/null)
+  for cls in "$@"; do
+    echo "# $cls"
+    printf '%s\n' "$dump" | grep -E "\+-o $cls " | sed -E 's/ <class.*//; s/^ *//'
+    printf '  count: %s\n' "$(printf '%s\n' "$dump" | grep -cE "class $cls,")"
+  done
+}
+
+sub_ioreg_props() {  # <IOClassName> [filter]
+  cls=$1; filter=$2
+  [ -n "$cls" ] || { echo "usage: $me ioreg-props <IOClassName> [filter]" >&2; return 2; }
+  sudo ioreg -r -c "$cls" -l -w0 | { [ -n "$filter" ] && grep -iE "\+-o |$filter" || cat; }
+}
+
+sub_klog() {  # "<regex>" [tail-N]
+  pat=${1:-.}; n=${2:-25}
+  grep -E "kernel\[[0-9]*\]" /var/log/system.log 2>/dev/null | grep -iE "$pat" | tail -"$n"
+}
+
+sub_kexts() {  # ["name regex"]
+  pat=${1:-.}
+  kextstat 2>/dev/null | grep -iE "$pat|^Index" | grep -ivE "grep"
+}
+
+sub_mt_contacts() {  # stream recognizer contacts (builds tools/mt_contacts)
+  root=$(cd "$(dirname "$0")/.." && pwd); bin=$root/tools/mt_contacts
+  [ -x "$bin" ] || clang -o "$bin" "$root/tools/mt_contacts.c" \
+    -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation \
+    || { echo "build failed" >&2; return 1; }
+  sudo "$bin"
+}
+
+sub_mt_devices() {  # list MultitouchSupport devices (builds tools/mt_transport)
+  root=$(cd "$(dirname "$0")/.." && pwd); bin=$root/tools/mt_transport
+  [ -x "$bin" ] || clang -o "$bin" "$root/tools/mt_transport.c" \
+    -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation \
+    || { echo "build failed" >&2; return 1; }
+  sudo "$bin"
+}
+
+# --- dispatch ----------------------------------------------------------------
+cmd=$1; [ $# -gt 0 ] && shift
+case "$cmd" in
+  disasm)        sub_disasm "$@" ;;
+  syms)          sub_syms "$@" ;;
+  calls)         sub_calls "$@" ;;
+  str-xref)      sub_str_xref "$@" ;;
+  xref-offset)   sub_xref_offset "$@" ;;
+  vtable)        sub_vtable "$@" ;;
+  strings)       sub_strings "$@" ;;
+  consts)        sub_consts "$@" ;;
+  hex)           sub_hex "$@" ;;
+  bcmp)          sub_bcmp "$@" ;;
+  plist)         sub_plist "$@" ;;
+  amd-actuation) sub_amd_actuation "$@" ;;
+  conn-trace)    sub_conn_trace "$@" ;;
+  ioreg-class)   sub_ioreg_class "$@" ;;
+  ioreg-props)   sub_ioreg_props "$@" ;;
+  klog)          sub_klog "$@" ;;
+  kexts)         sub_kexts "$@" ;;
+  mt-contacts)   sub_mt_contacts "$@" ;;
+  mt-devices)    sub_mt_devices "$@" ;;
+  help|-h|--help|"") usage 0 ;;
+  *) echo "$me: unknown subcommand '$cmd'  (try '$me help')" >&2; exit 2 ;;
+esac

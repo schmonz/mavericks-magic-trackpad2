@@ -81,7 +81,7 @@ The catch in full-BNB: BNB's `IOHIDInterface` carries the MT2's **real BT identi
 613 / source 1 with a high probe score, so Apple's own event driver binds BNB's interface and drives
 the cursor. It's inert in fDevice mode (no VID-76 interface exists there). The fDevice path uses the
 twin `MT2HIDEventDriver` personality (VID 1452 / source 2) plus the MT1 HID shell. See `reference.md`
-→ cursor actuation; oracle: `re/amd-actuation`.
+→ cursor actuation; oracle: `tools/re amd-actuation`.
 
 ### Genuine-USB cursor path (different shape — recognition is in `hidd`, not in-kernel)
 
@@ -125,7 +125,7 @@ Healthy sequence (observable via CONNTRACE): `CONTROL_UP → INTERRUPT_BOUND →
 → HANDLER_UP → MT_MODE → STEADY`. The historical flap = the link going inactive before PSM 19 opens
 (early `0xF1`, no `waitForChannelState(OPEN)`). Defer-`0xF1` fixed the warm-reconnect case (measured
 0 flaps, 2026-06-22). Cold-boot/sleep-wake remain unmeasured — see `open-questions.md`. The
-`re/conn-trace` oracle gives a STEADY/FAIL verdict per connection.
+`tools/re conn-trace` oracle gives a STEADY/FAIL verdict per connection.
 
 ## Two architectures
 

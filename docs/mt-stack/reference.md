@@ -11,9 +11,9 @@ See `explanation.md` for how these fit together, `how-to.md` for the workflows.
 
 | Slot | `mt2_stack.h` | Purpose | Re-derive |
 |------|---------------|---------|-----------|
-| `0xcc8` | `MT2_VT_getMultitouchReport` | geometry **DATA** fetch | `re/vtable AppleBluetoothMultitouch BNBTrackpadDevice 0xcc8` |
-| `0xcd8` | `MT2_VT_getMultitouchReportInfo` | geometry **LENGTH** probe — runs **first**; if it fails the data fetch is never reached | `re/vtable … 0xcd8` |
-| `0xd08` | `MT2_VT_createMultitouchHandler` | spawns the AMD — **UNVERIFIED this session** | `re/vtable … 0xd08` |
+| `0xcc8` | `MT2_VT_getMultitouchReport` | geometry **DATA** fetch | `tools/re vtable AppleBluetoothMultitouch BNBTrackpadDevice 0xcc8` |
+| `0xcd8` | `MT2_VT_getMultitouchReportInfo` | geometry **LENGTH** probe — runs **first**; if it fails the data fetch is never reached | `tools/re vtable … 0xcd8` |
+| `0xd08` | `MT2_VT_createMultitouchHandler` | spawns the AMD — **UNVERIFIED this session** | `tools/re vtable … 0xd08` |
 
 Both `0xcc8` and `0xcd8` are stubs on the stock transport (return `kIOReturnUnsupported`); we override
 **both** on our cloned transport instance (see `explanation.md` → geometry).
@@ -22,11 +22,11 @@ Both `0xcc8` and `0xcd8` are stubs on the stock transport (return `kIOReturnUnsu
 
 | Slot | `mt2_stack.h` | Role | Re-derive |
 |------|---------------|------|-----------|
-| `0x858` | `MT2_AMD_setGetReportHandler` | installs the getReport handler | `re/vtable AppleMultitouchDriver AppleMultitouchDevice 0x858` |
-| `0x868` | `MT2_AMD_setReportInfoHandler` | installs the reportInfo handler | `re/vtable … 0x868` |
-| `0x880` | `MT2_AMD_getReport` | `_cacheDeviceProperties` calls this per D-report | `re/vtable … 0x880` |
-| `0x8e8` | `MT2_AMD_deviceGetReportWithLookUp` | length-probe-then-data dispatcher | `re/vtable … 0x8e8` |
-| `0x8f8` | `MT2_AMD_getFeatureReportInfo` | calls the handler obj → transport | `re/vtable … 0x8f8` |
+| `0x858` | `MT2_AMD_setGetReportHandler` | installs the getReport handler | `tools/re vtable AppleMultitouchDriver AppleMultitouchDevice 0x858` |
+| `0x868` | `MT2_AMD_setReportInfoHandler` | installs the reportInfo handler | `tools/re vtable … 0x868` |
+| `0x880` | `MT2_AMD_getReport` | `_cacheDeviceProperties` calls this per D-report | `tools/re vtable … 0x880` |
+| `0x8e8` | `MT2_AMD_deviceGetReportWithLookUp` | length-probe-then-data dispatcher | `tools/re vtable … 0x8e8` |
+| `0x8f8` | `MT2_AMD_getFeatureReportInfo` | calls the handler obj → transport | `tools/re vtable … 0x8f8` |
 
 Chain: `_cacheDeviceProperties → getReport(0x880) → _deviceGetReportWithLookUp(0x8e8) → _getFeatureReportInfo(0x8f8) → handler obj (AMD+0xa8) → transport 0xcd8 then 0xcc8`.
 
@@ -34,9 +34,9 @@ Chain: `_cacheDeviceProperties → getReport(0x880) → _deviceGetReportWithLook
 
 | Offset | `mt2_stack.h` | Field | Re-derive |
 |--------|---------------|-------|-----------|
-| transport `+0x1b0` | `MT2_OFF_BNB_AMD` | the spawned `AppleMultitouchDevice*` | `re/xref-offset` / disasm `startMultitouchThreaded` |
+| transport `+0x1b0` | `MT2_OFF_BNB_AMD` | the spawned `AppleMultitouchDevice*` | `tools/re xref-offset` / disasm `startMultitouchThreaded` |
 | transport `+0xf0` | `MT2_OFF_BNB_INTERRUPT_CHANNEL` | `BNBDevice::_interruptChannel` | disasm BNBDevice |
-| channel `+0x110` (`+0x118`=target) | `MT2_OFF_L2CAP_DELEGATE_CB` | L2CAP delegate callback fn-ptr | `re/xref-offset` on `newDataIn` |
+| channel `+0x110` (`+0x118`=target) | `MT2_OFF_L2CAP_DELEGATE_CB` | L2CAP delegate callback fn-ptr | `tools/re xref-offset` on `newDataIn` |
 | AMD `+0xa8` | `MT2_OFF_AMD_HANDLER_OBJ` | getReport handler object `{report fn@+0x0, refcon+0x8, reportinfo fn@+0x20, refcon+0x28}` | disasm `_deviceGetReportWithLookUp` + `_getFeatureReportInfo` |
 | AMD `this+0xb0` byte `+9` | (no macro — set via property) | device-button "S+9" gate | disasm `AppleMultitouchDevice::start` |
 
@@ -153,7 +153,7 @@ The cursor moves only if an `AppleMultitouchHIDEventDriver` binds the AMD's `IOH
 | `MT2HIDEventDriverBNB` | VID 76 / PID 613 / source 1 | full-BNB (BNB's real BT identity) |
 
 Both carry `IOProbeScore` 100000 to beat the generic driver; each is inert when its interface is
-absent, so they coexist unconditionally (no `kFullBnb` gate). Oracle: `re/amd-actuation`. See
+absent, so they coexist unconditionally (no `kFullBnb` gate). Oracle: `tools/re amd-actuation`. See
 `explanation.md` → cursor actuation.
 
 ## BT device enable, modes & the 0xF1 re-enable
@@ -193,5 +193,5 @@ finalizes the tap. Timestamp = CompactV4 packing `ts = (b1>>2) | (b2<<6) | (b3<<
 ## Runtime diagnostics
 
 `debug.mt2_log` sysctl (`kext-gesture/mt2_log.{h,cpp}`): `0` off (default), `1` milestones +
-CONNTRACE, `2` verbose (per-report geometry, per-edge clicks). `dmesg | ./re/conn-trace` →
+CONNTRACE, `2` verbose (per-report geometry, per-edge clicks). `dmesg | tools/re conn-trace` →
 per-connection STEADY/FAIL verdict.
