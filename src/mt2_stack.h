@@ -18,6 +18,12 @@
                                                 /*   data fetch (0xcc8) is never reached.          */
 #define MT2_VT_createMultitouchHandler   0xd08  /* [REF] spawns the AMD. UNVERIFIED this session   */
                                                 /*   (from prior RE); re-confirm before relying.   */
+#define MT2_VT_newTransportString        0x868  /* [BUILD] IOBluetoothHIDDriver::newTransportString;*/
+                                                /*   multitouchProperties() sets it as the AMD's    */
+                                                /*   "Transport" property. Override -> non-BT to    */
+                                                /*   skip the isBlocked edge-reserve (transport==4). */
+                                                /*   NOTE slot-collides with AMD setReportInfoHandler*/
+                                                /*   (0x868 on the AMD vtable) — different object.   */
 
 /* ---- AMD vtable slots (AppleMultitouchDevice) — [REF], the geometry GET call chain ------------ *
  * re/vtable AppleMultitouchDriver AppleMultitouchDevice <slot>                                    *

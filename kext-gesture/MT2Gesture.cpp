@@ -80,6 +80,12 @@ void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const touch_frame_t *fra
     AppleMultitouchDevice *target =
         self->fBnbTarget ? (AppleMultitouchDevice *)self->fBnbTarget : self->fDevice;
     if (!target) return;
+    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the SHARED encode point,
+     * so USB (fDevice) and BT (full-BNB) log identically. Compare the dead-zone behavior + each path's
+     * reported Transport (ioreg) to test whether the isBlocked edge reserve follows the BT transport. */
+    if (frame->ntouches > 0)
+        MT2_DLOG(2, "feed x=%d y=%d -> %s", frame->touches[0].x, frame->touches[0].y,
+                 self->fBnbTarget ? "bnbAMD" : "fDevice");
     uint8_t mt1[256];
     int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
     if (n <= 0) return;

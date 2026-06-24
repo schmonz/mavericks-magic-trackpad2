@@ -17,4 +17,19 @@ static const bool kFullBnb = true;
  * vtable. Requires kFullBnb. Override BOTH 0xcd8 (getMultitouchReportInfo, the length probe that
  * runs first) and 0xcc8 (getMultitouchReport, data). Validated on-device 2026-06-22. Default true. */
 static const bool kBnbGeometry = true;
+
+/* Edge-clamp fix EXPERIMENT (2026-06-23): override the transport's newTransportString (vtable slot
+ * 0x868, on our existing geometry clone) so BNB's AMD reports a non-BT Transport. The 10.9
+ * MTSlideGesture::isBlocked buggy edge reserve (the L/R "dead zone") is gated on transport==4
+ * (Bluetooth); a non-BT transport skips it. TRADEOFF (RE-confirmed): also disables from-edge swipe
+ * gestures (isActiveEdgeSlide, same transport==4 gate); core gestures (tap/scroll/swipe/pinch)
+ * unaffected. Requires kBnbGeometry (rides its vtable clone). Experiment ON to validate; set false +
+ * decide ship default after the on-device verdict. */
+/* FALSIFIED 2026-06-24: this override makes MTDeviceGetTransportMethod report 1 (not 4 =
+ * Bluetooth) — confirmed live via tools/mt_transport — but the L/R dead-zone PERSISTS and
+ * from-edge swipes STILL work. So the edge reserve is NOT gated on transport==4 (the prior
+ * RE was wrong; the coordinate-range theory was also falsified earlier). Left false: this
+ * is a no-op for the bug. Edge-clamp needs fresh from-evidence RE (candidate gates seen in
+ * mt_transport: builtIn=0, familyID=128, driverType=4, parserOptions=47). */
+static const bool kEdgeNoBtTransport = false;
 #endif

@@ -133,6 +133,16 @@ extern "C" int mt2_bnb_get_multitouch_report_info(void *transport, unsigned char
     return (int)0xe00002c7;
 }
 
+/* newTransportString override (transport vtable slot 0x868). multitouchProperties() calls this on the
+ * transport and stamps the result as the spawned AMD's "Transport" property. Returning a non-BT string
+ * makes _MTDeviceGetTransportMethod report != 4 (Bluetooth), so MTSlideGesture::isBlocked skips its
+ * buggy edge-reserve (the dead zone). Returns a +1 OSString the caller releases (matches the genuine
+ * contract). RE-confirmed this slot's only on-transport caller is multitouchProperties. */
+extern "C" OSString *mt2_bnb_new_transport_string(void *thisptr) {
+    (void)thisptr;
+    return OSString::withCString("USB");
+}
+
 static uint32_t bt_uptime_ms(void) {
     clock_sec_t s; clock_usec_t u;
     clock_get_system_microtime(&s, &u);
@@ -176,6 +186,13 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     /* STEADY: first real multitouch frame of this connection = the pad is streaming end-to-end. */
     { static int gSteadyConn = -1; if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
         bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, gGenuineBnb, 0, 0); } }
+
+    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 X/Y + ts, to correlate the
+     * faithful decoded position against the recognizer's norm.x (re/mt-contacts). If norm.x saturates
+     * to 0/1 while decoded x is still moving -> a downstream clamp band (in MultitouchSupport's
+     * report-X -> position step, using our published geometry). Smooth no-dwell sweep; tail = edge. */
+    if (tf.ntouches > 0)
+        MT2_DLOG(2, "edge x=%d y=%d ts=%u", tf.touches[0].x, tf.touches[0].y, bt_uptime_ms());
 
     /* FULL-BNB feed: route through the SHARED mt2_session — the same conditioning the smooth
      * fDevice path uses (drop-lifted, MakeTouch/Touching/BreakTouch lifecycle, liftoff) — but
@@ -524,6 +541,11 @@ void com_schmonz_MT2BTReader::installBnbGeometry(void *transport) {
          * fails it never reaches getMultitouchReport (0xcc8). Override both on the same clone. */
         vtc_override_slot(&gBnbVtableClone, GMRINFO_SLOT_INDEX,
                           (void *)&mt2_bnb_get_multitouch_report_info);
+        /* Edge-clamp experiment: override newTransportString so the AMD reports non-BT transport,
+         * skipping the isBlocked edge-reserve dead zone (costs from-edge swipes — see flag comment). */
+        if (kEdgeNoBtTransport)
+            vtc_override_slot(&gBnbVtableClone, MT2_VT_newTransportString / sizeof(void *),
+                              (void *)&mt2_bnb_new_transport_string);
         gBnbVtableCloned = true;
         MT2_DLOG(1, "BNB geometry override installed on transport %p (data slot %lu, info slot %lu)",
                  transport, (unsigned long)GMR_SLOT_INDEX, (unsigned long)GMRINFO_SLOT_INDEX);
