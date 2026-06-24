@@ -169,6 +169,8 @@ sub_xref_offset() {  # <target> <offset-hex> [R|W]
       else { sub(/^[^ ]+[ ]+/,"",last) }
       gsub(/^ +| +$/,"",last)
       rw = (index(last, pat)==1) ? "W" : "R"
+      mnem=instr; sub(/[ \t].*/,"",mnem)
+      if (mnem ~ /^(test|cmp|lea|push|bt)/) rw="R"   # these read/compute, never write the mem operand
       if (rwf!="" && toupper(rwf)!=rw) next
       sub(/^0+/,"",addr); if (addr=="") addr="0"
       printf "%s  0x%s  %s  %s\n", rw, addr, (fn==""?"?":fn), instr

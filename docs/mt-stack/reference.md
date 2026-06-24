@@ -102,8 +102,9 @@ the full Finger/State is a lead for future palm/tap work (the device provides it
 
 | Key | `mt2_stack.h` | Effect |
 |-----|---------------|--------|
-| `ExtractAndPostDeviceButtonState` | `MT2_PROP_EXTRACT_BUTTON` | in `DefaultMultitouchProperties` → copied to the AMD by `createMultitouchHandler` → `AMD::start` sets the S+9 device-button gate → physical + two-finger-right click dispatch |
+| `ExtractAndPostDeviceButtonState` | `MT2_PROP_EXTRACT_BUTTON` | in `DefaultMultitouchProperties` → copied to the AMD by `createMultitouchHandler` → `AMD::start` sets the S+9 device-button gate → physical + two-finger-right click dispatch (the **BT/AMD** button path) |
 | `DefaultMultitouchProperties` | — | dict on the transport (we pass it via `bnb->init`); `createMultitouchHandler` copies its keys (`parser-type`=1000, `parser-options`=47, `MTHIDDevice`, `IOCFPlugInTypes`→MultitouchHID, …) onto the spawned AMD |
+| **`parser-options` bit `0x2`** | — | **The recognizer's "clicky hardware" capability.** `MultitouchSupport` caches `parser-options` (`_mt_CachePropertiesForDevice`→device+0x1623c, read only via `_MTDeviceGetParserOptions`) and hands it to `MTSimpleHIDManager::initialize`, which stores it at the manager's **`this+0xb0`**. Bit `0x2` is then read ONLY by `handleButtonState` / `hwSupportsSecondaryClickCorners` / `hwSupports3FDrag` / `resetGestureParser` — i.e. it gates the recognizer's **gesture-side** button awareness (2-finger secondary-click, 3-finger-drag). It does NOT affect contact parsing (parser selects by `parser-type`=1000), cursor, scroll, or taps. Values: BT uses `47=0x2F` (bit set), Apple's genuine-USB personality `39=0x27` (set); `37=0x25` clears it → physical/2-finger click dead while taps work. **Seedable** → manual-start can supply it (RE'd 2026-06-24, `tools/re`). |
 
 ## BT connect handshake — the genuine sequence (input to the flap fix)
 

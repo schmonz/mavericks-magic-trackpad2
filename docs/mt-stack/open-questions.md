@@ -133,6 +133,32 @@ then `*0x148`/`*0x20` feed-calls) → `IOHIDPointing` → cursor. Same mechanism
   did `hidEventDriverPublished` fire under manual-start (is StartFinalProcessing's notifier registered)?
   does the LocationID compare pass (dump event-driver LocationID vs genuine `+0x5ac`)? what do `*0x148`/`*0x20`
   do (addFramesClient/wrapper)? Needs a live diagnostic build. Prefpane is downstream of the same actuation.
+### Genuine-USB physical/2-finger click + prefpane (manual-start path) — RE'd 2026-06-24
+
+Cursor + scroll + 4-finger-swipe + tap-to-click already WORK on the genuine-USB path (reused pipeline →
+`mt1_encode` 0x28 frame + Apple checksum). Two gaps remain; both are **manual-start-satisfiable** (no need
+to switch to IOKit normal-match):
+
+- **Physical + 2-finger click.** The recognizer's "clicky" gate is `parser-options` bit `0x2` (see
+  `reference.md` → Properties). We must seed a value with it set (`39`); blast-radius RE confirms 39 changes
+  only click capability, nothing else. **Button dispatch chain** (RE'd via `tools/re`): the button rides the
+  SAME relative-mouse channel as the cursor — `forwardButtonState → _MTDeviceDispatchButtonEvent(dev,btn) →
+  _mt_DeviceDispatchRelativeMouseEvent(dev,0,0,btn) → postRelativeMouseEvent`. The gate (`handleButtonState`,
+  bit 0x2) is the gesture-side awareness (primary-vs-secondary by finger count); the raw click dispatch
+  (`forwardButtonState`) is NOT gated. `forwardButtonState`/`_MTDeviceDispatchButtonEvent`/
+  `_mt_PostButtonStateCallbacks` have no internal callers and **`hidd` references none of them** → the button
+  apparatus lives entirely in the MultitouchSupport + recognizer-plugin layer (driven via CFPlugin COM), the
+  SAME layer that processes our reframed frame. **OPEN (on-device-decided): does MultitouchSupport extract
+  our frame's button (CompactV4 `flagA`, which `mt1_encode` carries) and fire `forwardButtonState`?** If yes,
+  `parser-options=39` completes it; if 39 opens the gate but click stays dead, the next dig is that
+  frame-button-extraction site in MultitouchSupport (also `_MTDeviceSetPickButtonShouldSendSecondaryClick`).
+- **Prefpane.** The Trackpad pane imports only `IOServiceGetMatchingService` + `IOServiceMatching` (NO
+  matching-notification API) — a one-shot **presence check by class** (`IOServiceGetMatchingService(
+  IOServiceMatching("AppleUSBMultitouchDriver"))` sets a "present" flag). Our manual-started instance is
+  `registered,matched` so it qualifies; the live auto-update comes from an `observerForService:` framework
+  helper (the only manual-start-sensitive piece). So manual-start is fine; worst case fire the notification
+  ourselves — not a `kIOMatchedNotification` requirement, not a normal-match forcing function.
+
 Everything below is the layer-by-layer investigation that led here (kept for the audit trail).
 
 ### Genuine-USB contact frames malformed — current cursor blocker (2026-06-24)

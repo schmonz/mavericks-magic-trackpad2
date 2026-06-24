@@ -185,8 +185,11 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
         mt2_dict_num(initp, "Sensor Surface Width", 13000);
         mt2_dict_num(initp, "Sensor Surface Height", 11300);
         mt2_dict_num(initp, "parser-type", 1000);          /* selects the CompactV4 frame parser in */
-        mt2_dict_num(initp, "parser-options", 37);         /* probe-proven value (yields tracking contacts via */
-                                                           /* MultitouchSupport); genuine USB personality uses 39 */
+        mt2_dict_num(initp, "parser-options", 39);         /* 39=0x27, Apple's genuine-USB value; bit 0x2 is the */
+                                                           /* "clicky hardware" capability (parser-options -> */
+                                                           /* MTSimpleHIDManager::initialize -> this+0xb0, gated by */
+                                                           /* handleButtonState/hwSupports*). 37 cleared it -> physical */
+                                                           /* + 2-finger click dead while taps worked. (RE'd 2026-06-24.) */
         initp->setObject("Driver is Ready", kOSBooleanTrue);
         initp->setObject("MTHIDDevice", kOSBooleanTrue);
 
