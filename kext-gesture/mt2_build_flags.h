@@ -32,4 +32,13 @@ static const bool kBnbGeometry = true;
  * is a no-op for the bug. Edge-clamp needs fresh from-evidence RE (candidate gates seen in
  * mt_transport: builtIn=0, familyID=128, driverType=4, parserOptions=47). */
 static const bool kEdgeNoBtTransport = false;
+
+/* Genuine-USB translate-and-feed (2026-06-24): instead of our synthetic-USB reader
+ * (MT2USBReader feeding our nub), let Apple's genuine AppleUSBMultitouchDriver own the
+ * cabled MT2 (genuine USB prefpane), and interpose its handleReport (vtable slot 0x117) via
+ * an instance-scoped vtable clone to reframe each MT2 0x02 report into Apple's path-binary
+ * frame (mt2_usb_to_compactv4) so Apple's driver accepts it. Mirrors the BT geometry interpose.
+ * Requires the MT2USBGenuine personality (Info.plist) active and MT2USB disabled. Default false
+ * until validated on-device; flip true + swap Info.plist to test. */
+static const bool kGenuineUsb = false;
 #endif
