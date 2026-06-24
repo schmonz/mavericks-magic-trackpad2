@@ -11,13 +11,64 @@
  * Replaces the inert MT2USBClaim kext plus the userspace feeder loop.
  */
 #include <IOKit/IOLib.h>
+#include <IOKit/hid/IOHIDDevice.h>     /* IOHIDReportType */
+#include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
 #include "MT2Gesture.h"
 #include "mt2_pipeline.h"
 #include "mt2_usb_decode.h"
+#define VTC_ALLOC(sz)  IOMalloc(sz)
+#define VTC_FREE(p,sz) IOFree((p), (sz))
+#include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
+#include "mt2_usb_reframe.h"           /* mt2_usb_to_compactv4 (host-tested reframe) */
+#include "mt2_build_flags.h"           /* kGenuineUsb */
 
 /* Set by com_schmonz_MT2Gesture::start (same kext). */
 extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
+
+/* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
+#define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
+#define USB_VTABLE_SPAN              0x2000
+
+static vtc_clone_t gUsbVtableClone;
+static bool        gUsbVtableCloned = false;
+typedef IOReturn (*usb_handle_report_fn)(void *self, IOMemoryDescriptor *report,
+                                         IOHIDReportType type, IOOptionBits options);
+static usb_handle_report_fn gOrigUsbHandleReport = 0;
+
+static uint32_t usb_ts_22bit(void) {
+    clock_sec_t s; clock_usec_t u;
+    clock_get_system_microtime(&s, &u);
+    return (uint32_t)(((uint64_t)s * 1000 + u / 1000) & 0x3FFFFF);   /* monotonic ms, 22-bit */
+}
+
+/* Instance-scoped override of the genuine driver's handleReport: read the raw MT2 0x02 report,
+ * reframe to Apple's CompactV4 packet (mt2_usb_to_compactv4), wrap in a fresh descriptor, and chain
+ * the original. Non-touch reports pass through untouched. extern "C" free fn; first arg is `this`. */
+extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report,
+                                          IOHIDReportType type, IOOptionBits options) {
+    if (!gOrigUsbHandleReport) return kIOReturnError;
+    if (!report) return gOrigUsbHandleReport(self, report, type, options);
+
+    uint8_t mt2[256], out[256];
+    IOByteCount mn = report->getLength();
+    if (mn == 0 || mn > sizeof(mt2)) return gOrigUsbHandleReport(self, report, type, options);
+    report->readBytes(0, mt2, mn);
+    if (mt2[0] != 0x02)                                   /* not a touch report: pass through untouched */
+        return gOrigUsbHandleReport(self, report, type, options);
+
+    size_t outlen = 0;
+    if (mt2_usb_to_compactv4(mt2, (size_t)mn, usb_ts_22bit(), out, sizeof(out), &outlen) != 0)
+        return gOrigUsbHandleReport(self, report, type, options);
+
+    IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);
+    if (!md) return kIOReturnNoMemory;
+    md->setLength(outlen);
+    md->writeBytes(0, out, outlen);
+    IOReturn rc = gOrigUsbHandleReport(self, md, type, options);
+    md->release();
+    return rc;
+}
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2USBReader, IOService)
 
@@ -25,7 +76,11 @@ bool com_schmonz_MT2USBReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
     fIntf = OSDynamicCast(IOUSBInterface, provider);
     if (!fIntf) { IOLog("MT2USBReader: provider not IOUSBInterface\n"); return false; }
-    fStopping = false; fPipe = 0; fMaxPacket = 0; fBuf = 0;
+    fStopping = false; fPipe = 0; fMaxPacket = 0; fBuf = 0; fGenuine = 0;
+
+    /* Genuine-USB path (flag-gated, default false): let Apple's AppleUSBMultitouchDriver own the
+     * interface and interpose its handleReport. The synthetic body below does NOT run in this mode. */
+    if (kGenuineUsb) return startGenuine(provider);
 
     if (!fIntf->open(this)) { IOLog("MT2USBReader: open failed\n"); return false; }
 
@@ -85,6 +140,65 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
     }
 }
 
+/* Genuine-USB path: manual-start a genuine AppleUSBMultitouchDriver on our interface (bypassing
+ * IOKit matching) and interpose its handleReport via an instance-scoped vtable clone, so each MT2
+ * report is reframed into the CompactV4 packet Apple accepts. Mirrors MT2BTReader's Path-A manual
+ * start + installBnbGeometry safety gate. The genuine driver OWNS the interface + interrupt pipe;
+ * our reader must NOT open them in this mode. Install the clone BEFORE start() so the first report
+ * is interposed. Best-effort; on any failure we restore-then-release and leave our reader untouched. */
+bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
+    OSObject *go = OSMetaClass::allocClassWithName("AppleUSBMultitouchDriver");
+    IOService *genuine = OSDynamicCast(IOService, go);
+    if (!genuine) {
+        IOLog("MT2USBReader: allocClassWithName(AppleUSBMultitouchDriver) NULL (AppleUSBMultitouch loaded?)\n");
+        if (go) go->release();
+        return false;
+    }
+    if (!genuine->init(0) || !genuine->attach(fIntf)) {
+        IOLog("MT2USBReader: genuine init/attach failed\n");
+        genuine->release();
+        return false;
+    }
+    /* Safety gate: only clone if it really is the class we expect (else a slot-write corrupts
+       an unrelated method -> panic). Mirrors installBnbGeometry's class-name check. */
+    const char *cls = genuine->getMetaClass()->getClassName();
+    if (!cls || strcmp(cls, "AppleUSBMultitouchDriver") != 0) {
+        IOLog("MT2USBReader: genuine ABORT — class is '%s'\n", cls ? cls : "(null)");
+        genuine->detach(fIntf); genuine->release();
+        return false;
+    }
+    if (vtc_clone_override(genuine, USB_VTABLE_SPAN, USB_HANDLEREPORT_SLOT_INDEX,
+                           (void *)&mt2_usb_handle_report, &gUsbVtableClone) != 0) {
+        IOLog("MT2USBReader: handleReport clone FAILED to allocate\n");
+        genuine->detach(fIntf); genuine->release();
+        return false;
+    }
+    gOrigUsbHandleReport = (usb_handle_report_fn)
+        (((void **)gUsbVtableClone.orig_vptr)[USB_HANDLEREPORT_SLOT_INDEX]);
+    gUsbVtableCloned = true;
+
+    if (!genuine->start(fIntf)) {
+        IOLog("MT2USBReader: genuine start failed\n");
+        vtc_restore(genuine, &gUsbVtableClone);     /* restore FIRST, then release */
+        gUsbVtableCloned = false; gOrigUsbHandleReport = 0;
+        genuine->detach(fIntf); genuine->release();
+        return false;
+    }
+    fGenuine = genuine;
+
+    /* The genuine driver doesn't send MT2's USB multitouch-enable; we do (same as synthetic start). */
+    IOUSBDevRequest en;
+    uint8_t payload[2] = {0x02, 0x01};
+    en.bmRequestType = 0x21; en.bRequest = 0x09;
+    en.wValue = 0x0302; en.wIndex = 1; en.wLength = sizeof(payload); en.pData = payload;
+    fIntf->DeviceRequest(&en);
+
+    IOLog("MT2USBReader: genuine AppleUSBMultitouchDriver started + handleReport interposed (slot %lu)\n",
+          (unsigned long)USB_HANDLEREPORT_SLOT_INDEX);
+    registerService();
+    return true;
+}
+
 /* Relinquish our exclusive hold on the interface so the provider subtree can
  * finalize. MUST run during the willTerminate handshake (device unplug / re-
  * enumerate): IOKit does not call stop() until our open() is released, so closing
@@ -94,6 +208,23 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
  * the device; close() lets the interface abort+close its own pipes. */
 void com_schmonz_MT2USBReader::releaseInterface(void) {
     fStopping = true;
+
+    /* Genuine-USB path teardown (reverse startGenuine). Restore the vtable FIRST (vtable_clone.h
+     * contract; avoids the in-flight handleReport use-after-free), then terminate + release the
+     * genuine driver. In this mode we never opened fIntf/fPipe ourselves, so the synthetic close
+     * below is skipped (an unmatched close(this) would unbalance the interface's open count). */
+    if (gUsbVtableCloned && fGenuine) {
+        vtc_restore(fGenuine, &gUsbVtableClone);
+        gUsbVtableCloned = false; gOrigUsbHandleReport = 0;
+    }
+    if (fGenuine) {
+        fGenuine->terminate();
+        fGenuine->release();
+        fGenuine = 0;
+        fIntf = 0;                       /* we never opened it; don't close */
+        return;
+    }
+
     fPipe = 0;
     if (fIntf) { fIntf->close(this); fIntf = 0; }
 }

@@ -21,7 +21,9 @@ class com_schmonz_MT2USBReader : public IOService {
     IOBufferMemoryDescriptor *fBuf;
     uint16_t fMaxPacket;
     bool fStopping;
+    IOService *fGenuine;           /* genuine AppleUSBMultitouchDriver, manual-started in kGenuineUsb mode */
     void releaseInterface(void);   /* drop our exclusive open; idempotent */
+    bool startGenuine(IOService *provider);   /* kGenuineUsb path: manual-start + interpose Apple's driver */
 public:
     virtual bool start(IOService *provider) override;
     /* Release the interface here, NOT just in stop(): on device unplug/re-enumerate
