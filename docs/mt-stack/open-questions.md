@@ -118,10 +118,22 @@ MultitouchSupport. Three init-dict seeds + one reframe-format fix did it:
    checksum]`, contacts at offset 4, count `(len-4)/9` (checksum absorbed by integer div). The genuine
    driver's handleReport is NOT 0x60-exclusive (non-0x02 → validateChecksum → enqueue), so it forwards 0x28.
    `src/mt2_usb_reframe.c` updated; `test_usb_reframe` updated + green.
-**REMAINING for cursor/pane:** the probe is a passive consumer (proves data flow, doesn't move the cursor).
-WindowServer (the system MT consumer) must open+drive our instance for cursor + the Trackpad pane. Next:
-auto-discovery (hotplug / required props) so the system opens the frames client itself. Everything below is
-the layer-by-layer investigation that led here (kept for the audit trail).
+**REMAINING for cursor/pane — it's KERNEL actuation, NOT WindowServer** (RE'd 2026-06-24; commit `c84f0ec`).
+The pointer is driven in-kernel: a matched `AppleUSBMultitouchHIDEventDriver` in the genuine driver's subtree
+→ `AppleUSBMultitouchDriver::hidEventDriverPublished` (~0x5746) wires it (LocationID-gated on `this+0x5ac`,
+then `*0x148`/`*0x20` feed-calls) → `IOHIDPointing` → cursor. Same mechanism as BT
+([[mt2-fullbnb-cursor-actuation]]); the event-driver class is a thin `IOHIDEventService` subclass (only
+`start`/`setPointingProperties`, NO report handling — it's fed by the multitouch frames, not raw HID reports).
+- DONE: Apple's event driver wouldn't bind because our published interface advertises DeviceUsage `{0xFF00,12}`
+  + no `MTEventSource` while Apple's personality wants `{0xFF00,1}` + `MTEventSource`. The
+  **`MT2USBHIDEventDriver`** Info.plist personality (VID 1452/PID 613, high probe score — USB twin of
+  `MT2HIDEventDriverBNB`) forces the bind: on-device the event driver now BINDS + attaches `IOHIDSystem`.
+- STILL OPEN: the bound event driver is STARVED — `hidEventDriverPublished`'s frames-wiring isn't completing
+  (no `AppleUSBMultitouchUserClient`; handleReport's `0x28` frames dropped at the enqueue gate). Next dig:
+  did `hidEventDriverPublished` fire under manual-start (is StartFinalProcessing's notifier registered)?
+  does the LocationID compare pass (dump event-driver LocationID vs genuine `+0x5ac`)? what do `*0x148`/`*0x20`
+  do (addFramesClient/wrapper)? Needs a live diagnostic build. Prefpane is downstream of the same actuation.
+Everything below is the layer-by-layer investigation that led here (kept for the audit trail).
 
 ### ▶ ON-DEVICE TEST #2 — 2026-06-24 — reframe+checksum PROVEN; blocker = no frames client
 
