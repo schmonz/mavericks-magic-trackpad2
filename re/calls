@@ -1,0 +1,36 @@
+#!/bin/sh
+# calls - find call sites that target a given code ADDRESS, with the enclosing function.
+# Fills the "who calls this function?" gap (xref of a code address) that str-xref (string refs)
+# and xref-offset (struct-field refs) don't cover -- so a multi-hop call-graph trace is one
+# command per hop instead of a hand-built `disasm 0x0 0xBIG | grep callq`.
+#
+# Matches `callq` lines whose operand contains the address (an UNNAMED/static target shows as
+# `callq 0x<addr>`; a named target shows its symbol, so for those search by name with str-xref/grep).
+#
+# Usage: calls <target> <addr-hex>        # addr like 1f884 or 0x1f884
+#   target: a path OR an alias (same set as re/disasm). Arch defaults x86_64 (RE_ARCH overrides).
+# Example:
+#   calls MultitouchHID 1f884              # who calls the function at 0x1f884
+arch=${RE_ARCH:-x86_64}
+resolve() {
+  case "$1" in
+    Trackpad)                 echo "/System/Library/PreferencePanes/Trackpad.prefPane/Contents/MacOS/Trackpad" ;;
+    Mouse)                    echo "/System/Library/PreferencePanes/Mouse.prefPane/Contents/MacOS/Mouse" ;;
+    MultitouchHID)            echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin/Contents/MacOS/MultitouchHID" ;;
+    MultitouchSupport)        echo "/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/A/MultitouchSupport" ;;
+    AppleBluetoothMultitouch) echo "/System/Library/Extensions/AppleBluetoothMultitouch.kext/Contents/MacOS/AppleBluetoothMultitouch" ;;
+    AppleMultitouchDriver)    echo "/System/Library/Extensions/AppleMultitouchDriver.kext/Contents/MacOS/AppleMultitouchDriver" ;;
+    *)                        echo "$1" ;;
+  esac
+}
+bin=$(resolve "$1"); addr=$2
+[ -n "$bin" ] && [ -n "$addr" ] || { echo "usage: $(basename "$0") <target> <addr-hex>" >&2; exit 2; }
+addr=$(printf '%s' "$addr" | sed 's/^0x//' | tr 'A-F' 'a-f')
+
+echo "# call sites targeting 0x$addr in $bin ($arch)  — enclosing function + the call line"
+otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v a="$addr" '
+  /:$/ && $1 !~ /^[0-9a-f]{5,16}/ { fn=$0; sub(/:$/,"",fn) }
+  /[ \t]callq[ \t]/ && (index($0,"0x" a)>0 || $0 ~ ("\\<" a "\\>")) {
+    instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
+    printf "%s  in %s\n    %s\n", $1, (fn==""?"?":fn), instr
+  }' || { echo "# (none found)"; exit 1; }
