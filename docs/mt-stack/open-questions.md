@@ -56,6 +56,33 @@ settled a choice).
 > X-doesn't pattern strongly implies 13000 is **our** error, but only the widen-and-observe test settles it.
 > The exact zone-mask bit that holds X (mask stored at `MTParserPath +0x108/+0x10c/+0x110`) is offset-aliased in
 > static xref (collides with MTChordIntegrating/MTHandMotion) ⇒ needs on-device instrumentation, not more static RE.
+>
+> **FREEZE MECHANISM IDENTIFIED — `MTParserPath::filterContactForScreenUI` (@0xa8a0).** Despite the name, this is
+> the per-contact, per-frame **position hysteresis / edge-hold filter** that writes the filtered contact position
+> (`0x28`/`0x2c`) and the **motion deltas `0x148`/`0x14c`** that downstream cursor motion consumes. It computes an
+> **edge-hold flag `r14b`** = `(0x1c>4 && 0x7c≠0 && 0x118≠0)` **OR `MTParserPath::detectSustainedHoverAtEdge`
+> (@0x97fc, geometry-driven)** OR `0x180`. When `r14b` is set it **snaps the position anchor (`0x130`/`0x138`) to
+> the current pixel position and zeroes the delta/velocity accumulators (`0x148`/`0x150`)** — i.e. the contact's
+> *position keeps tracking* (matching the on-device observation that decoded `x` VARIES `3440→3573`) while the
+> *motion delta driving the cursor goes to 0* (the freeze). This is an exact symptom match and supersedes
+> `computeZonesAndEdgesMask` as the *executing* mechanism (zones only classify; this holds). It's heavily
+> `MTSurfaceDimensions`-coupled (convertMillimetersToPixels / convertSurfaceFractionToPixels / pixel hysteresis),
+> so the too-narrow-X surface seed feeds it too.
+>
+> **CHAIN CLOSED — `detectSustainedHoverAtEdge` (@0x97fc) is X-only by construction.** Decoded instruction-level:
+> (1) `convertMillimetersToSurfaceFraction(const)` yields the trigger threshold **as a fraction = `threshold_mm ÷
+> surfaceWidth_mm`** (its X component); (2) it computes distance to the **nearest L/R X edge** in fraction
+> (`min(|contactX|,|contactX+c|)`, from `0x28` = contact **X only**); (3) sets the hold flag `0x180` iff
+> **X-edge-distance < X-threshold-fraction** AND **hover sustained > time threshold** AND a ratio test. There is
+> **no Y term in the geometry gate** — only the X fraction vs an X-width-derived threshold. So the sustained-hover
+> edge-hold is **X-axis by construction** (freezes X, never Y) and its band width scales as `threshold_mm ÷
+> surfaceWidth`. THE COMPLETE CAUSAL CHAIN: *seeded surfaceWidth (130mm, too narrow) → inflated X-edge-fraction
+> threshold → sustained-hover hold (`0x180`→`r14b` in filterContactForScreenUI) → motion deltas (`0x148`) zeroed →
+> X frozen while position still tracks.* Every symptom (X-only, Y-fine, position-tracks-while-cursor-frozen,
+> transport-independent) falls out of this one mechanism scaled by the one wrong constant. **Decisive on-device
+> test unchanged: widen `MT2_SURFACE_WIDTH` 13000→~16000** (predict the X hold band shrinks ~24%→~20%/side; watch
+> cursor speed + prefpane/gesture regressions; verify both transports). This is the off-device end of the line —
+> the investigation is complete pending that single experiment.
 
 > **UPDATE 2026-06-24 — transport theory FALSIFIED.** The `kEdgeNoBtTransport` build (override
 > `newTransportString` → non-BT) was tested on-device. `tools/mt_transport` confirms it worked at the
