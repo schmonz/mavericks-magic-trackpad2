@@ -98,3 +98,35 @@ Healthy sequence (observable via CONNTRACE): `CONTROL_UP → INTERRUPT_BOUND →
 - **Hybrid (earlier, `1f4bf79`):** our own fDevice drives input; a `+0x1b0` poke routed prefs.
   Simpler in some ways (geometry was free via our `getReportStub`) but the poke was a panic path.
   See `decisions.md` for why we moved past it (and the live-vs-fragile trade).
+
+## The reframe seam generalizes — a config dimension for the "97% API" mission
+
+The load-bearing principle has a reusable shape worth naming, because it is the clearest concrete
+form of the mission (a reusable engine that makes writing such a driver easy; a new device should be
+mostly a *config*, not new code — see the `mt2-mission-interface-over-driver` note):
+
+> **Engine capability:** *translate a device's native report into the format some genuine consumer
+> already understands, and feed it at that consumer's input seam.*
+>
+> **Config dimensions** (per device × per target): the device's native decode; the target's expected
+> packet format (framing, header, checksum); and **where the seam is** — which method/slot we
+> interpose to inject the translated frame.
+
+We already have **three instances of this one capability**, differing only in their config:
+
+| Path | translate | target consumer | the seam (where we feed) |
+|---|---|---|---|
+| BT (shipped) | MT2 `0x31` → MT1 `0x28` | genuine BNB's spawned AMD | L2CAP delegate-callback slot `channel+0x110` |
+| Synthetic-USB (shipped) | MT2 USB `0x02` → MT1 | our own `MT2Gesture` nub | `submitFrame` (no interpose; we own the nub) |
+| Genuine-USB (new) | MT2 USB `0x02` → Apple CompactV4 path-binary | genuine `AppleUSBMultitouchDriver` | its `handleReport` (vtable slot `0x117`), instance-clone interpose |
+
+**The point for the future:** *other* multitouch devices that want to ride a genuine Apple driver
+will need their own seam at exactly this kind of point. A different trackpad/mouse over USB would
+reuse the genuine-USB seam (`AppleUSBMultitouchDriver::handleReport` + the CompactV4 reframe) with a
+different native decode; one over BT would reuse the BNB delegate seam. So "interpose `handleReport`
+and reframe" is **not an MT2 special case** — it's a slot in the eventual engine's device table
+(`{ native-decode, target-format+checksum, seam-locator }`). When we generalize, each genuine
+consumer contributes one row of "here is its input seam and the format it expects"; each device
+contributes one row of "here is how I decode and which consumer/seam I target." See
+`reference.md` (vtable slots, report formats) and `open-questions.md` (the genuine-USB packet
+layout + interpose seam, fully pinned 2026-06-24) for the concrete values that would populate it.
