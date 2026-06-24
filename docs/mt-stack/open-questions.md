@@ -8,7 +8,21 @@ settled a choice).
 
 ---
 
-## Edge-clamp: frozen edge bands — CAUSE CONFIRMED = `MTSlideGesture::isBlocked`, gated on BT transport
+## Edge-clamp: frozen edge bands — STILL OPEN; TWO theories now falsified on-device
+
+> **UPDATE 2026-06-24 — transport theory FALSIFIED.** The `kEdgeNoBtTransport` build (override
+> `newTransportString` → non-BT) was tested on-device. `tools/mt_transport` confirms it worked at the
+> recognizer level: `transportMethod=1` (not 4 = Bluetooth). **But the L/R dead-zone PERSISTED and
+> from-edge swipes STILL worked** — both should have changed if they were gated on `transport==4`. So the
+> edge reserve is NOT gated on transport (the `0xf8a4 cmpl $0x4` reading below is either misread or not the
+> operative gate). This is the SECOND falsified theory (coordinate-range was first). Per systematic
+> debugging: stop theory-guessing; re-investigate from evidence (instrument what happens to the cursor's
+> X delta inside the band). Candidate gates to examine instead (from `mt_transport`): `builtIn=0`,
+> `familyID=128`, `driverType=4`, `parserType=1000`, `parserOptions=47`; also whether toggling the NC
+> edge-swipe pref changes it. The `kEdgeNoBtTransport` flag is reverted to false (no-op for the bug).
+> Everything below is the (now-doubted) prior transport RE, kept for the audit trail.
+
+### (superseded) prior reading: `MTSlideGesture::isBlocked`, gated on BT transport
 
 **Symptom:** cursor freezes in a band near the pad edges (you must clutch/lift more); the cursor still
 reaches all screen edges (it's relative). Up/down works in the band.
@@ -40,6 +54,105 @@ in `makeHidProps`. Full-BNB path: harder — the AMD's `Transport` is set by `cr
 no gesture/tap/pane regression from a non-BT transport (the only transport==4-gated thing found is this
 block, but confirm). **Verify:** dead zone gone + gestures OK; `ioreg` shows `Transport` ≠ Bluetooth.
 Relates to [[mt2-cursor-edge-clamp]]. (Test bed: the fDevice/USB path under `kFullBnb=false`.)
+
+---
+
+## Genuine USB presentation (AppleUSBMultitouchDriver) — viable but structurally unlike BT-genuine
+
+RE'd 2026-06-23 (off-device) to inform "should the genuine presentation cover USB too / the full-BNB-BT
+decision." Findings:
+- **Genuine USB stack exists:** `AppleUSBMultitouchDriver` in `AppleUSBMultitouch.kext` (twin of
+  AppleBluetoothMultitouch.kext), pane-matched, lineage `IOUSBHIDDriver : IOHIDDevice`.
+- **Opposite object model to BT:** it IS the multitouch device (one object — has `cacheDeviceProperties`,
+  `_deviceGetReportWithLookUp`, `_deviceGetReport`, `handleReport` itself), NOT a transport that spawns a
+  separate AMD. No `createMultitouchHandler`/trigger. Touch feed seam = **`handleReport` @0x4196** (the
+  USB pipe → its handleReport parses). Geometry seam = its own **`_deviceGetReport`** (USB), not a
+  transport vtable. `newTransportString` = `IOUSBHIDDriver`'s → **"USB"** → no `isBlocked` edge-clamp.
+- **So "genuine for both" is NOT one parameterized strategy** — BT (two-object transport+AMD, vtable
+  geometry, L2CAP-interpose feed) and USB (one-object HID driver, _deviceGetReport geometry, handleReport
+  feed) are different implementations. It buys the pane on both + no USB edge-clamp, at the cost of a
+  SECOND genuine impl (vs today's working synthetic-USB). Genuine-USB looks *simpler* than genuine-BT
+  (no manual-trigger/interpose/flap), possibly near-free IF handleReport parses MT2's USB format.
+- **Decision input:** decide full-BNB-for-BT on its own merits (pane/genuine vs flap+dirty-tricks cost),
+  NOT on a unify-with-USB benefit (there isn't one). See [[mt2-mission-interface-over-driver]].
+
+**RESOLVED on-device 2026-06-24 (genuine-usb-prefpane spike): NO — Apple's USB driver rejects MT2's
+packets; genuine-USB is not viable for input.** What the spike proved, in order:
+- Inject a device-match personality for pid 613 (one past Apple's `{566..612}` list) → genuine
+  `AppleUSBMultitouchDriver` starts on the MT2 interface, `Transport="USB"`, no panic. **Pane lights**
+  (userspace `IOHIDLibUserClient`s attach) — BUT shows the **built-in-laptop-trackpad** animation, not
+  `BTTrackpad` art (see [[mt2-prefpane-asset-swap]]).
+- Apple's `AppleUSBMultitouchHIDEventDriver` matches `{page 65280, usage 1}`; MT2 presents
+  `{65280, 12}`. Inject a twin event-driver personality (usage 12) → it binds + wires to `IOHIDSystem`.
+  Cursor plumbing complete.
+- Device only streams after MT2's USB enable (SET_REPORT Feature id 0x02 `{0x02,0x01}`); Apple's driver
+  doesn't send it. Sent it from userspace (`tools/mt2_usb_enable.c`, `IOHIDDeviceSetReport`, returned OK)
+  → device streams: `handleReport` fired 1755× on finger movement (dtrace `fbt:com.apple.driver.AppleUSBMultitouch`).
+- **But every packet is rejected.** dmesg: `handleReport - not in path binary mode, received 0x2 data
+  packet of length 21` + `validateChecksum - 21-byte packet checksum is incorrect`. Two independent
+  incompatibilities between MT2 and Apple's 10.9 USB driver (a "path binary mode" the device isn't in,
+  and a different checksum scheme over the 21-byte packet) → nothing dispatched → no cursor.
+
+**Verdict:** genuine-USB assembles the *presentation* (pane) and the device streams, but Apple's driver
+can't *consume* MT2's raw packets natively (mode + checksum mismatch). This is **not a dead end — it's a
+translation target we haven't written**: the same translate-and-feed pattern we already use everywhere
+(BT: MT2→MT1→BNB's AMD; synthetic-USB: MT2→MT1→our nub). Genuine-USB would be **MT2 packets → Apple's
+older USB packet format ("path binary mode" + valid checksum) → feed `handleReport`** (interpose via an
+instance vtable clone, as with the BT geometry override). Leverage we already hold: dmesg gives checksum
+test vectors (`expected 0x499` vs `bytes 0x249` …) to crack `AppleUSBMultitouchDriver::validateChecksum`,
+and `handleReport`/`_deviceGetReport` give the packet layout.
+
+**SIZING RE done 2026-06-24 (off-device):**
+- **`validateChecksum` CRACKED — trivial.** 16-bit additive sum of bytes[0 .. n-3]; the last two bytes
+  hold it little-endian (`low=byte[n-2], high=byte[n-1]`). Verified vs the live vector (`expected 0x499`
+  = sum of bytes[0..18]; MT2's own trailing `0x0249` is a different scheme). A ~5-line encoder appends it.
+- **The checksum is the ONLY hard gate.** "not in path binary mode" / "Mouse mode was detected" are just
+  IOLog warnings; `handleReport` computes the checksum and proceeds regardless.
+- **Mode-coax route is OUT.** On seeing MT2's `0x2` packets (read as "mouse mode") the driver calls
+  `configureDataMode`, which switches mode via Apple-specific feature reports (read/modify/write report id
+  3 @8B, then set report `0xac` @1B). MT2 won't honor these → it won't natively emit Apple's format. So we
+  can't just flip a mode; we **translate**.
+- **Route = translate-and-feed:** emit Apple path-binary packets (header `0x60` + Apple's contact layout)
+  + the now-known checksum, and interpose `handleReport` (instance vtable clone). Source contacts: we
+  already decode them (`mt2_usb_decode`).
+- **One sizing unknown left:** the exact `0x60` packet LAYOUT (contact struct fields/offsets/count). RE
+  from `handleReport`'s parse (the `callq *0xb28` contact path) + cross-ref Linux `bcm5974`. That's the
+  last read before a tight estimate.
+
+**Effort: medium, bounded** — and likely SMALLER than feared. The kext doesn't parse contacts; after the
+checksum it calls `AppleUSBMultitouchUserClient::enqueueData(raw,len)` → the format lives in MultitouchSupport's
+parser family (`_MTParse_*BinaryFrameHeader` + `*BinaryPath`). **The decisive find:** `_MTParse_CompactV4BinaryPath`
+computes contact count as `(length-4)/9` (signed div-by-9, `imul 0x38E38E39`) ⇒ format = **4-byte header + N × 9-byte
+contacts** — and **MT2 is already a CompactV4 device** (its BT path uses `_MTCompactV4HeaderUnpack`, cracked during
+tap-to-click; MT2 wire contacts are 9-byte records). So the parser wants the format MT2 already speaks. The
+genuine-USB rejection is NOT a contact-layout mismatch — it's (a) framing/header (`0x02` report-id vs the `0x60`
+path-binary the kext gates on) + (b) the checksum. So translate-and-feed ≈ **re-frame header + recompute Apple's
+checksum**, contact bodies largely pass-through. Last confirmation before building: byte-align a captured MT2 USB
+`0x02` packet against the CompactV4 frame the parser expects (header size, whether the enqueued length includes the
+checksum / how the `(len-4)/9` lands). Then it's a small interpose at `handleReport`/`enqueueData` + a checksum fn.
+
+**BYTE-ALIGN DONE 2026-06-24 — contacts are PASS-THROUGH (bit-for-bit).** Diffed `_MTCompactV4BinaryContactUnpack`
+vs `src/mt2_decode.c`: X = `(b1&0x1F)<<8 | b0`; Y = `b1>>5 | b2<<3 | (b3&0x3)<<11` — IDENTICAL in both (we only
+negate Y's sign). touch_major/minor = bytes 4/5, size = byte 6 (`&0x3F`), state in byte 3, id/orientation byte 8
+— all the same bytes our decoder uses. So MT2's raw 9-byte USB contact IS the CompactV4 contact; no per-contact
+transform. **Final genuine-USB build spec:** interpose `handleReport`/`enqueueData`; leave the 9-byte contact
+bodies untouched; (1) reframe the header to the CompactV4 frame the parser expects (4-byte CompactV4 header —
+packing already RE'd for tap-to-click: `ts=(b1>>2)|(b2<<6)|(b3<<14)` — plus the `0x60` path-binary framing the
+kext gate wants) and (2) append Apple's 16-bit additive-sum checksum (replacing MT2's trailing bytes). SIZE =
+SMALL: one buffer-rewrite shim + a ~5-line checksum. Only detail to pin while building: exact MT2-USB-header →
+CompactV4-4-byte-header byte mapping + whether the enqueued length includes the checksum. No remaining unknowns
+of consequence.
+
+**Cost/benefit (the real decision):** synthetic-USB already delivers working cursor+gestures. Genuine-USB
+*adds* a genuine prefpane on USB and makes our role uniform across transports — on BOTH we'd just
+translate MT2's native packets into what Apple's genuine driver expects and feed it (BT→BNB's AMD,
+USB→`handleReport`). (Pane art is a non-issue per the user 2026-06-24 — the laptop animation is fine.)
+Cost = RE Apple's USB packet format + `validateChecksum` (have dmesg test vectors), write the encoder,
+interpose `handleReport` (instance vtable clone). This is the clearest concrete instance of the mission's
+reusable engine capability — "translate a device's native format into whatever the target consumer
+expects" ([[mt2-mission-interface-over-driver]]). Next cheap step if pursued: RE `validateChecksum` +
+the packet layout off-device to size it. Until/unless pursued, **keep synthetic-USB** (works today).
+Relates to [[mt2-prefpane-detection-mechanism]], [[mt2-prefpane-asset-swap]].
 
 ---
 
