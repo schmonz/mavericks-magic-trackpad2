@@ -188,6 +188,22 @@ byte[len-2..len-1] = 16-bit additive checksum   sum of bytes[0..len-3], little-e
   (passive `addMatchingNotification` + post-start clone) rejected: races a report arriving before the clone installs.
   Teardown reverses with `vtc_restore` FIRST, then release the genuine instance ([[mt2-unload-while-streaming-uaf]]).
 
+**BUILD DONE + FIRST ON-DEVICE TEST BLOCKED BY CATALOGUE RESIDUE 2026-06-24.** The translate-and-feed
+build is complete on branch `genuine-usb-translate-feed` (checksum + reframe host-tested; manual-start +
+`handleReport` interpose, flag `kGenuineUsb`). First on-device load: Apple's `AppleUSBMultitouchDriver`
+bound the interface directly (matched `idProduct 613`, bundle `com.apple.driver.AppleUSBMultitouch`,
+score 99000), our `com_schmonz_MT2USBReader` had **0 instances** and never ran `startGenuine` → no
+interpose, no multitouch-enable → device emitted only 8-byte mouse-mode packets, all rejected. But 613
+is **NOT in Apple's on-disk personalities** (`re/plist AppleUSBMultitouch` → zero "613"), and the box
+had **not rebooted since the 2026-06-24 spike** that injected a live IOCatalogue personality
+`idProduct 613 → AppleUSBMultitouchDriver`. **Injected catalogue personalities persist across
+kextload/kextunload — only a reboot clears them** — and this residue pre-empted seam A (which needs OUR
+reader to win the interface). Our code never ran; it is not implicated. NEXT: reboot to clear, reload
+the genuine build, retest (does our reader now win + interpose + checksum-accept?). If Apple still grabs
+613 after a clean reboot, seam A is flawed (pivot to intercepting Apple's match). Dev-loop lesson: verify
+the *matching environment* (who won the match), not just the loaded binary. Full handoff in the
+`mt2-genuine-usb-resume-here` memory.
+
 **Cost/benefit (the real decision):** synthetic-USB already delivers working cursor+gestures. Genuine-USB
 *adds* a genuine prefpane on USB and makes our role uniform across transports — on BOTH we'd just
 translate MT2's native packets into what Apple's genuine driver expects and feed it (BT→BNB's AMD,
