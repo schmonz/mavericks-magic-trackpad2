@@ -21,6 +21,20 @@ settled a choice).
 > `familyID=128`, `driverType=4`, `parserType=1000`, `parserOptions=47`; also whether toggling the NC
 > edge-swipe pref changes it. The `kEdgeNoBtTransport` flag is reverted to false (no-op for the bug).
 > Everything below is the (now-doubted) prior transport RE, kept for the audit trail.
+>
+> **UPDATE 2026-06-24 (off-device, `tools/re`) — the `isBlocked` theory targets the WRONG mechanism.**
+> Re-RE'd `MTSlideGesture::isBlocked` (@0xf7ae) fresh: it decides whether the edge-**swipe gesture** is
+> blocked (returns the slide-block verdict), NOT pointer suppression. Its reserve-zone test
+> `testb $0x20, 0xd9(%r15)` (@0xf8a4) is reached only via event-type `0x44` + `chord+0x108==0` +
+> `chord+0xd8==1` + a timing gate + **transport==4** + `(al&3)!=0`. Decisively: `MTHandStatistics+0xd9` bit
+> `0x20` (the "contact in reserve zone" flag) is **read in exactly ONE place — this `isBlocked` line**
+> (`tools/re xref-offset MultitouchHID 0xd9 R`). So it is NOT a pointer-motion gate; the frozen-X *pointer*
+> band must come from a SEPARATE suppression (the edge-swipe-vs-pointer arbitration HOLDING X delta while a
+> contact sits in the edge reserve). That's why flipping transport (which only affects this swipe-block
+> path) left the pointer dead-zone untouched. **NEXT (from evidence): find where relative-pointer X delta is
+> held/zeroed near the L/R edges — the motion-accumulation / mickey path, not `isBlocked`.** Candidates:
+> `MTSlideGesture::sendSlideMickeys`/`integrateAxisMotion`, or a reserve-hold in the pointer dispatch keyed
+> on the contact's edge position vs the **Sensor Region** (ours is seeded all-zero — a live H3 lead).
 
 ### (superseded) prior reading: `MTSlideGesture::isBlocked`, gated on BT transport
 
