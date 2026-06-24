@@ -143,6 +143,51 @@ SMALL: one buffer-rewrite shim + a ~5-line checksum. Only detail to pin while bu
 CompactV4-4-byte-header byte mapping + whether the enqueued length includes the checksum. No remaining unknowns
 of consequence.
 
+**PACKET LAYOUT PINNED 2026-06-24 (Task 0.2 RE — CORRECTS the "4-byte header" shorthand above).** Disassembled
+`AppleUSBMultitouchDriver::handleReport` (file off `0x4196`), `::validateChecksum` (`0x4506`), the `enqueueData`
+call site, and MultitouchSupport `_MTCompactV4HeaderUnpack` (`0x5c84`) / `_MTParse_CompactV4BinaryFrameHeader`
+(`0x5ee3`) / `_MTParse_CompactV4BinaryPath` (`0x5f69`). The `0x60` is NOT part of the CompactV4 header — it is a
+framing prefix that sits BEFORE it. The full packet `handleReport` validates and forwards is:
+```
+byte[0]            = 0x60                       framing magic — gated at handleReport+0xed (cmpb $0x60); CONFIRMED
+byte[1]            = prefix/length byte         skipped by both content scans (start at +2); HYPOTHESIS = length
+byte[2..5]         = 4-byte CompactV4 header    [type, flags+timestamp] — see below
+byte[6 .. 6+9N-1]  = N x 9-byte contacts        pass-through bit-identical (proven)
+byte[len-2..len-1] = 16-bit additive checksum   sum of bytes[0..len-3], little-endian; CONFIRMED (validateChecksum)
+```
+- **CompactV4 4-byte header** (`_MTCompactV4HeaderUnpack`): `cv4[0]`=frame/report type (copied verbatim, no value
+  check); `cv4[1]`=`(ts&0x3F)<<2 | flagB<<1 | flagA` (low-6 ts + 2 flag bits); `cv4[2]`=`(ts>>6)&0xFF`;
+  `cv4[3]`=`(ts>>14)&0xFF`. Timestamp packing `ts=(cv4[1]>>2)|(cv4[2]<<6)|(cv4[3]<<14)` (22-bit) — CONFIRMED, matches
+  the tap-to-click RE (b1=cv4[1] etc.). Note cv4[1]'s low 2 bits are flags, not ts.
+- **Contact count is length-derived, NOT in the header:** `_MTParse_CompactV4BinaryPath` computes `(flen-4)/9` on the
+  FRAME (the post-`0x60`/prefix region the parser is handed, i.e. starting at byte[2]); `flen = 4 + 9N`. CONFIRMED.
+- **enqueueData range = the WHOLE packet** including byte[0]=`0x60` and the 2 checksum bytes; `len` comes from the
+  descriptor's `getLength` (`handleReport+0x69`), checksum-validated with that same len, then `enqueueData(%r14=buf,
+  len)` at `handleReport+0x28b`. CONFIRMED. So total packet `len = 8 + 9N` (with a 2-byte `0x60`+prefix region).
+- **Still pin on-device (static RE cannot decide — Apple's code never sees MT2's layout):** (1) prefix width 1 vs 2
+  bytes (does the CV4 header start at byte[1] or byte[2]? → `len = 7+9N` vs `8+9N`); (2) `byte[1]` semantics;
+  (3) the `cv4[0]` type constant a genuine CV4 USB frame uses; (4) the MT2-USB-header → `ts` source (locate a
+  timestamp field in MT2's 12-byte header, or synthesize a monotonic full-res ts — the tap-to-click work showed a
+  synthesized ts is acceptable to the recognizer). Resolve (1)/(2)/(4) with the Task 0.1 captured fixture.
+
+**INTERPOSE SEAM PINNED 2026-06-24 (Task 0.3 RE).** Via `re/vtable` on the Apple kext:
+- **`handleReport` vtable slot byte offset = `0x8b8`** → slot index `0x8b8 / sizeof(void*)` = `0x117` (279). CONFIRMED.
+- **Signature CONFIRMED 3-arg:** `IOReturn handleReport(IOMemoryDescriptor *report, IOHIDReportType reportType,
+  IOOptionBits options)` (not the 2-arg variant). Override C sig = `(OSObject *thisptr, IOMemoryDescriptor*,
+  IOHIDReportType, IOOptionBits)`.
+- **Clone span:** full vtable is `0xb70` bytes (`vtable for AppleUSBMultitouchDriver` @ `0xb5a0` → MetaClass vtable @
+  `0xc110`); pass `span_bytes = 0x1000` to `vtc_clone_override` (covers it with margin; the helper adds the 2 ABI
+  words itself). Reusing the BT path's `0x2000` is also safe.
+- **Instance acquisition = (A) MANUAL-START** (mirrors the BT manual-start of BNB; endorsed by
+  [[reuse-apple-code-construct-seam]]). `AppleUSBMultitouchDriver::gMetaClass` is an external symbol and its
+  `MetaClass::alloc`/`init`/ctor are present → the class is externally constructable at runtime via
+  `OSMetaClass::getMetaClassWithName("AppleUSBMultitouchDriver")`. Our `com_schmonz_MT2USBReader` matches the
+  `IOUSBInterface` (vid 1452/pid 613/iface 1), instantiates + `init`/`attach`/`start`s the genuine driver on that
+  interface, holds the pointer, clones slot `0x117`, and chains the saved original. **CRITICAL: our reader must NOT
+  open the interrupt pipe in this route** — Apple's driver opens it itself; double-open would conflict. Route (B)
+  (passive `addMatchingNotification` + post-start clone) rejected: races a report arriving before the clone installs.
+  Teardown reverses with `vtc_restore` FIRST, then release the genuine instance ([[mt2-unload-while-streaming-uaf]]).
+
 **Cost/benefit (the real decision):** synthetic-USB already delivers working cursor+gestures. Genuine-USB
 *adds* a genuine prefpane on USB and makes our role uniform across transports — on BOTH we'd just
 translate MT2's native packets into what Apple's genuine driver expects and feed it (BT→BNB's AMD,
