@@ -87,6 +87,31 @@
             <key>IOProbeScore</key>
             <integer>100000</integer>
         </dict>
+        <!-- USB cursor actuation (genuine-USB path). Apple drives the pointer only when a matched
+             AppleUSBMultitouchHIDEventDriver lives in the genuine driver's subtree (its
+             hidEventDriverPublished -> AppleMultitouchEventDriverWrapper -> IOHIDPointing, fed by
+             the multitouch frames our reframe delivers). Apple's own AppleUSBMultitouchHIDEventDriver
+             personality requires DeviceUsage {0xFF00,1} + MTEventSource, but the genuine driver
+             publishes our MT2's interface as DeviceUsage {0xFF00,12} with no MTEventSource, so it
+             never binds -> no cursor. This is the USB twin of MT2HIDEventDriverBNB: same IOClass /
+             CFBundleIdentifier, keyed to the MT2's real USB identity (VID 1452 / PID 613), high
+             probe score, so Apple's event driver binds our interface and actuates the cursor.
+             Inert unless the genuine USB driver published such an interface (kGenuineUsb path). -->
+        <key>MT2USBHIDEventDriver</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.apple.driver.AppleUSBMultitouch</string>
+            <key>IOClass</key>
+            <string>AppleUSBMultitouchHIDEventDriver</string>
+            <key>IOProviderClass</key>
+            <string>IOHIDInterface</string>
+            <key>VendorID</key>
+            <integer>1452</integer>
+            <key>ProductID</key>
+            <integer>613</integer>
+            <key>IOProbeScore</key>
+            <integer>100000</integer>
+        </dict>
         <!-- Bind the Magic Trackpad 2's Bluetooth L2CAP channels by its BT-SIG identity
              (VendorID 76 / ProductID 613 / VendorIDSource 1). NO IOMatchCategory: we
              compete in the DEFAULT category against the generic IOBluetoothHIDDriver
