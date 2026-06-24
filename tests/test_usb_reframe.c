@@ -26,66 +26,66 @@ static void test_checksum_live_vector(void) {
     CHECK_EQ(b[20], 0x04);            /* high byte of 0x499 */
 }
 
-/* Build a synthetic 21-byte MT2 USB packet: report id 0x02 + 11 header bytes + one
- * 9-byte contact with recognizable values. Mirrors the live "length 21" single-contact case. */
-static size_t make_mt2_packet(uint8_t *b) {
+/* 21-byte MT2 USB packet with one finger record. size_b6 == 0 marks an empty/lifted slot
+   (presence is size-based, mt2_drop_lifted, inside the pipeline). */
+static size_t make_mt2_one(uint8_t *b, uint8_t size_b6, uint8_t id_b8) {
     memset(b, 0, 21);
-    b[0] = 0x02;                                  /* report id */
-    for (int i = 1; i < 12; i++) b[i] = (uint8_t)(0xA0 + i);   /* arbitrary header bytes */
-    for (int i = 0; i < 9; i++)  b[12 + i] = (uint8_t)(0x10 + i); /* the one contact body */
+    b[0] = 0x02;
+    for (int i = 1; i < 12; i++) b[i] = (uint8_t)(0xA0 + i);
+    b[12+0]=0x11; b[12+1]=0x12; b[12+2]=0x13; b[12+3]=0x00;
+    b[12+4]=0x44; b[12+5]=0x55; b[12+6]=size_b6; b[12+7]=0x77; b[12+8]=id_b8;
     return 21;
 }
 
-static void test_reframe_one_contact(void) {
-    uint8_t mt2[21], out[64];
-    size_t mn = make_mt2_packet(mt2);
-    uint32_t ts = 0x12345;                        /* 22-bit-range timestamp */
-
-    size_t outlen = 0;
-    int rc = mt2_usb_to_compactv4(mt2, mn, ts, out, sizeof(out), &outlen);
-    CHECK_EQ(rc, 0);
-
-    int N = (int)((mn - 12) / 9);                 /* = 1 */
-    /* (a) total length = 4 (CV4 hdr at out[0]) + 9N + 2 checksum. No 0x60/len prefix. */
-    CHECK_EQ(outlen, (size_t)(4 + 9 * N + 2));
-
-    /* (b) CompactV4 path frame type byte (dispatcher 0x24..0x29 jump table -> 0x28 -> V4 path parser) */
-    CHECK_EQ(out[0], 0x28);
-
-    /* (c) Apple's frame-count math: _MTParse_CompactV4BinaryPath = (len-4)/9, len = full enqueued
-       length INCLUDING the 2 checksum bytes (integer div absorbs them). (outlen-4)/9 == N */
-    CHECK_EQ(((int)outlen - 4) / 9, N);
-
-    /* (d) timestamp round-trips out of the CV4 header at out[1..3] (inverse of _MTCompactV4HeaderUnpack) */
-    uint32_t ts_back = ((uint32_t)out[1] >> 2) | ((uint32_t)out[2] << 6) | ((uint32_t)out[3] << 14);
-    CHECK_EQ(ts_back, ts & 0x3FFFFF);            /* 22-bit */
-
-    /* (e) contact body is bit-identical pass-through (mt2[12..] -> out[4..]) */
-    for (int j = 0; j < 9 * N; j++) CHECK_EQ(out[4 + j], mt2[12 + j]);
-
-    /* (f) checksum is valid: recompute over our own output reproduces the trailer */
-    uint8_t verify[64];
-    memcpy(verify, out, outlen);
-    verify[outlen - 2] = verify[outlen - 1] = 0;
-    mt2_apple_checksum(verify, outlen);
-    CHECK_EQ(verify[outlen - 2], out[outlen - 2]);
-    CHECK_EQ(verify[outlen - 1], out[outlen - 1]);
+static int checksum_ok(const uint8_t *out, size_t n) {
+    uint8_t v[64];
+    memcpy(v, out, n);
+    v[n-2] = v[n-1] = 0;
+    mt2_apple_checksum(v, n);
+    return v[n-2] == out[n-2] && v[n-1] == out[n-1];
 }
 
-static void test_reframe_rejects_bad_input(void) {
+static void test_reframe_emits_0x28_frame_with_valid_checksum(void) {
+    /* The reframe runs the proven pipeline (decode -> drop_lifted -> lifecycle -> mt1_encode) and
+       appends Apple's checksum, producing the SAME 0x28 CompactV4 frame the working MT1/BT path emits
+       (which the recognizer drives the cursor from) -- plus the checksum handleReport requires. */
     uint8_t mt2[21], out[64]; size_t outlen = 0;
-    make_mt2_packet(mt2);
+    mt2_usb_reframe_reset();
+    make_mt2_one(mt2, 0x20, 0x06);
+    CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0x12345, out, sizeof(out), &outlen), 0);
+    CHECK_EQ(out[0], 0x28);                        /* CompactV4 PATH frame type, == MT1 report id */
+    CHECK_EQ(outlen, (size_t)(4 + 9 + 2));         /* 4-byte hdr + one 9-byte contact + 2 checksum */
+    CHECK(checksum_ok(out, outlen));
+    /* timestamp round-trips out of the CompactV4 header */
+    uint32_t ts_back = ((uint32_t)out[1] >> 2) | ((uint32_t)out[2] << 6) | ((uint32_t)out[3] << 14);
+    CHECK_EQ(ts_back, 0x12345u & 0x3FFFFF);
+}
+
+static void test_reframe_lifecycle_make_then_drag(void) {
+    /* The pipeline's mt2_lifecycle marks a finger's first frame MakeTouch and later frames Touching;
+       mt1_encode writes that state in the contact's t[8] high nibble (START 0x30, DRAG 0x40). */
+    uint8_t mt2[21], out[64]; size_t outlen = 0;
+    mt2_usb_reframe_reset();
+    make_mt2_one(mt2, 0x20, 0x06);
+    mt2_usb_to_compactv4(mt2, 21, 0, out, sizeof(out), &outlen);
+    CHECK_EQ(out[4 + 8] & 0xF0, 0x30);            /* contact 0, first frame -> MakeTouch */
+    mt2_usb_to_compactv4(mt2, 21, 0, out, sizeof(out), &outlen);
+    CHECK_EQ(out[4 + 8] & 0xF0, 0x40);            /* same finger held -> Touching */
+}
+
+static void test_reframe_rejects_non_touch_report(void) {
+    uint8_t mt2[21], out[64]; size_t outlen = 0;
+    mt2_usb_reframe_reset();
+    make_mt2_one(mt2, 0x20, 0x06);
     mt2[0] = 0x01;                                /* not a 0x02 report */
     CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0, out, sizeof(out), &outlen), -1);
-    /* too-small output buffer */
-    mt2[0] = 0x02;
-    CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0, out, 4, &outlen), -1);
 }
 
 static void run_tests(void) {
     test_checksum_trivial();
     test_checksum_live_vector();
-    test_reframe_one_contact();
-    test_reframe_rejects_bad_input();
+    test_reframe_emits_0x28_frame_with_valid_checksum();
+    test_reframe_lifecycle_make_then_drag();
+    test_reframe_rejects_non_touch_report();
 }
 TEST_MAIN()

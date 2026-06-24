@@ -51,6 +51,28 @@ Verified empirically 2026-06-22: a live dump showed AMD `+0xa8` → handler obj 
 | MT1 multitouch | `0x28` (`MT2_REPORT_ID_MT1`) | `src/mt1_encode.c` (button at `buf[1]&0x01`; CompactV4 timestamp packing) |
 | geometry D-reports | `0xd1 0xd3 0xd0 0xa1 0xd9 0x7f` | `src/mt2_geometry.c` |
 
+### CompactV4 PATH frame + 9-byte contact (genuine-USB reframe target)
+
+The genuine-USB path feeds Apple's USB driver a CompactV4 PATH frame (`handleReport` → `enqueueData` →
+`AppleUSBMultitouchUserClient` → MultitouchSupport). Frame = `[0x28][3 more header bytes][N×9 contacts]
+[2-byte checksum]`; **contact count = `(frameLen-4)/9`** (`_MTParse_CompactV4BinaryPath` @0x5f69) and the
+length is the kext's enqueue length = `handleReport`'s descriptor `getLength`. The 9-byte contact byte
+layout, RE'd from `_MTCompactV4BinaryContactUnpack` (@0x5cd3):
+
+| field | bits | notes |
+|-------|------|-------|
+| X | `(b1&0x1F)<<8 \| b0` | 13-bit; **same bytes as MT2** (`src/mt2_decode.c`) — bit-identical |
+| Y | `b1>>5 \| b2<<3 \| (b3&0x3)<<11` | 13-bit; same bytes as MT2 |
+| **touch state** | **`(b6>>6) \| ((b7&0x3)<<2)`** | 4-bit `MTTouchState`; Touching=4 ⇒ `b7\|=1`. **NOT MT2's byte** |
+| size | `b6 & 0x3F` | low 6 bits of b6 (state is the top 2) |
+| angle/axis | from `b7` (`<<7 & 0x7E00`) | b7's low 2 bits are state |
+
+**Critical mismatch (the genuine-USB cursor blocker, 2026-06-24):** MT2 encodes finger-down in **`b3 & 0xC0`
+(`0x80`=down)** (`src/mt2_decode.c`), but CompactV4 reads state from **b6/b7**. X/Y are bit-identical so a
+pass-through reframe tracks position, but **state reads ≈0 (not touching)** → the recognizer ignores every
+contact → no cursor. The reframe (`src/mt2_usb_to_compactv4`) must **translate** MT2 `b3` state into the
+CompactV4 `b6[7:6]`/`b7[1:0]` bits, not pass bytes through. See `explanation.md` → genuine-USB cursor path.
+
 Geometry id → property (from `AppleMultitouchDevice::decodeDeviceProperty`):
 
 | id | Publishes |

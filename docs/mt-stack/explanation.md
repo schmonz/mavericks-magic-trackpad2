@@ -83,6 +83,42 @@ the cursor. It's inert in fDevice mode (no VID-76 interface exists there). The f
 twin `MT2HIDEventDriver` personality (VID 1452 / source 2) plus the MT1 HID shell. See `reference.md`
 → cursor actuation; oracle: `re/amd-actuation`.
 
+### Genuine-USB cursor path (different shape — recognition is in `hidd`, not in-kernel)
+
+For the genuine-USB target (`AppleUSBMultitouchDriver`, manual-started + `handleReport` interposed —
+see the reframe seam), the cursor is driven by a **userspace** loop, RE-confirmed 2026-06-24 from the
+carved kernelcache (`captures/kc/AppleUSBMultitouch.rebased`):
+
+```
+device → handleReport → validateChecksum → enqueueData
+   → AppleUSBMultitouchUserClient (frames client, opened by hidd)
+   → hidd runs the MultitouchHID.plugin recognizer (loaded via IOCFPlugInTypes)
+   → UC::postRelativeMouseEvent / postScrollWheelEvent  (user-client external methods)
+   → driver postRelativeMouseEvent (vtable byte 0xb30)  [gated on +0x178 / +0x180]
+   → the wired AppleUSBMultitouchHIDEventDriver  → IOHIDPointing → cursor
+```
+
+Two independent gates, **both** required, and the first is the master:
+1. **Frames client open by `hidd`.** It delivers frames to the recognizer AND is the channel the
+   recognizer posts motion back through. `allocClassWithName` manual-start skips the IOKit personality
+   merge, so the instance lacks the properties `hidd` engages on — seed them in the **init dict**
+   (`setProperty` is dropped): `HIDServiceSupport`, `IOCFPlugInTypes`→MultitouchHID.plugin, plus
+   `IOUserClientClass` + geometry. With these, `hidd` (pid ~89) opens `AppleUSBMultitouchUserClient`
+   (confirmed on-device 2026-06-24). The working BT AMD carries the same set and is likewise opened by
+   `hidd` (`captures/cursor-seam/A-usb-working-amd.txt`).
+2. **Event driver wired.** `AppleUSBMultitouchDriver::hidEventDriverPublished` (a notifier registered
+   in `StartFinalProcessing` for `AppleUSBMultitouchHIDEventDriver`) gates on a **LocationID** match
+   (published driver's provider `LocationID` vs the driver's own `+0x5ac`); on match it caches the event
+   driver at `+0x180` / sets `+0x178`. `postRelativeMouseEvent` only actuates when those are set. (USB
+   gates on LocationID equality; the BT AMD path gates on provider-subtree ancestry — different test,
+   same role.)
+
+Contrast with BT: there recognition produces the pointer the same userspace way (hidd opens the AMD's
+user client), but the BT AMD is a normally-matched service so hidd finds it without the property-seeding
+dance. **Open blocker (genuine-USB):** even with gate 1 solved, the contacts the recognizer receives are
+malformed (phantom count, state-0 lead contact, X pinned to 0) → no pointer. See `open-questions.md` →
+"Genuine-USB contact frames malformed". Oracle for this layer = `tools/mt_frames_probe`.
+
 ## Connect lifecycle (and the flap)
 
 Healthy sequence (observable via CONNTRACE): `CONTROL_UP → INTERRUPT_BOUND → BNB_FORMED → INTERPOSED

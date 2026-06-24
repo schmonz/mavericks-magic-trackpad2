@@ -22,6 +22,7 @@
 # Examples:
 #   disasm MultitouchHID "tapHasValidTimingAndStrength"
 #   disasm MultitouchHID "createPointClickTapDragCombo" "Tap|Click|cfstring"
+#   disasm captures/kc/AppleUSBMultitouch.rebased 0x0 0xb000 "0x180\(%|callq"  # raw range + filter
 arch=${RE_ARCH:-x86_64}
 
 resolve() {
@@ -39,12 +40,12 @@ resolve() {
 
 bin=$(resolve "$1"); want=$2
 [ -n "$bin" ] && [ -n "$want" ] || {
-  echo "usage: $(basename "$0") <target> \"<function name>\" [\"filter\"] | <start-hex> [end-hex]" >&2; exit 2; }
+  echo "usage: $(basename "$0") <target> \"<function name>\" [\"filter\"] | <start-hex> [end-hex] [\"filter\"]" >&2; exit 2; }
 
 pad() { printf '%016x' "0x${1#0x}"; }
 sig=""; filter=""
 if printf '%s' "$want" | grep -qiE '^(0x)?[0-9a-f]+$'; then
-  start=$(pad "$want"); end=""; [ -n "$3" ] && end=$(pad "$3"); sig="(raw range)"
+  start=$(pad "$want"); end=""; [ -n "$3" ] && end=$(pad "$3"); filter=$4; sig="(raw range)"
 else
   filter=$3
   hit=$(nm -n -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v q="$want" '

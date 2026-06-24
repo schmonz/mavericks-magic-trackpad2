@@ -75,7 +75,7 @@ test_geometry: tests/test_geometry.c $(SRC)/mt2_geometry.c
 	$(CC) $(CFLAGS) -I$(SRC) -o $@ $^
 test_vtable_clone: tests/test_vtable_clone.c
 	$(CC) $(CFLAGS) -Ikext-gesture -o $@ $^
-test_usb_reframe: tests/test_usb_reframe.c $(SRC)/mt2_usb_reframe.c
+test_usb_reframe: tests/test_usb_reframe.c $(SRC)/mt2_usb_reframe.c $(SRC)/mt2_usb_decode.c $(SRC)/mt2_decode.c $(SRC)/mt2_pipeline.c $(SRC)/mt2_lifecycle.c $(SRC)/mt1_encode.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:

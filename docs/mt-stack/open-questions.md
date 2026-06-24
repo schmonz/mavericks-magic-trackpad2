@@ -135,6 +135,30 @@ then `*0x148`/`*0x20` feed-calls) → `IOHIDPointing` → cursor. Same mechanism
   do (addFramesClient/wrapper)? Needs a live diagnostic build. Prefpane is downstream of the same actuation.
 Everything below is the layer-by-layer investigation that led here (kept for the audit trail).
 
+### Genuine-USB contact frames malformed — current cursor blocker (2026-06-24)
+
+Gate 1 is solved: seeding `HIDServiceSupport` + `IOCFPlugInTypes`→MultitouchHID.plugin (+ `IOUserClientClass`
++ geometry) in the manual-started driver's **init dict** makes `hidd` open `AppleUSBMultitouchUserClient`
+(confirmed on-device; the personality-merge properties manual-start otherwise skips). But the cursor still
+doesn't move, and a diagnostic interpose on the driver's `postRelativeMouseEvent` (vtable byte `0xb30`) stays
+**silent** while `handleReport` keeps reframing — so the recognizer produces no pointer. `tools/mt_frames_probe`
+(the contact oracle) shows **why: the contacts are garbage** — `n=4` contacts for one finger, lead contact
+`state=0` (invalid touch ⇒ ignored), and normalized **X pinned to 0.000** while Y tracks fine.
+
+Open sub-questions:
+- **Why `n=4` not 1?** Our enqueued frame is 15 bytes (`[0x28][4-byte CV4 hdr][9-byte contact][2-byte cksum]`),
+  so `(len-4)/9 = 1` — yet MultitouchSupport yields 4. It is **not** using our enqueue length; trace
+  `_mt_ProcessPathFrame` / `_MTParse_CompactV4BinaryPath` for the frame-length source (candidate: the
+  `"* Packet Size"` IORegistry prop the driver sets from `getMaxPacketSize`, or a header length field) — the
+  parser is reading a longer buffer and slurping phantom contacts from the tail.
+- **Why X normalizes to 0** while Y is correct (same geometry). Contact byte-offset vs the CV4 header size, or
+  a sensor-region/X-range normalization (cf. the [[mt2-cursor-edge-clamp]] X-pin).
+- **Regression vs session 2:** then (probe sole consumer) `c0` X *tracked*; now (hidd co-consumes) `c0` is
+  garbage ⇒ a shared frame-buffer contention or a length bug exposed once hidd drains/reconfigures.
+
+Fix the reframe (and/or `* Packet Size`) so the probe shows `n=1`, `state≠0`, X tracking **before** the next
+on-device cursor test. The phantom-contact `(len-4)/9` boundary noted as "cosmetic" above is now load-bearing.
+
 ### ▶ ON-DEVICE TEST #2 — 2026-06-24 — reframe+checksum PROVEN; blocker = no frames client
 
 The translate-and-feed build (branch `genuine-usb-translate-feed`) was loaded and tested on a clean

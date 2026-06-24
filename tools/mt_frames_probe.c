@@ -66,11 +66,12 @@ static CFArrayRef     gList;
 static int frame_cb(int device, MTTouch *contacts, int n, double ts, int frame) {
     static unsigned long count = 0;
     if ((count++ % 30) == 0 || n > 0) {   /* throttle idle frames, always show touches */
-        printf("FRAME dev=%d n=%d ts=%.3f frame=%d", device, n, ts, frame);
-        if (n > 0) printf("  c0: state=%d norm=(%.3f,%.3f) size=%.2f",
-                          contacts[0].state, contacts[0].normalized.pos.x,
-                          contacts[0].normalized.pos.y, contacts[0].size);
-        printf("\n");
+        printf("FRAME dev=%d n=%d ts=%.3f frame=%d\n", device, n, ts, frame);
+        for (int i = 0; i < n; i++)        /* print ALL slots + the density inputs (axes/pressure/zDensity) */
+            printf("   c%d: state=%d id=%d path=%d norm=(%.3f,%.3f) size=%.2f maj=%.2f min=%.2f press=%d zd=%.2f\n",
+                   i, contacts[i].state, contacts[i].fingerID, contacts[i].pathIndex,
+                   contacts[i].normalized.pos.x, contacts[i].normalized.pos.y, contacts[i].size,
+                   contacts[i].majorAxis, contacts[i].minorAxis, contacts[i].pressure, contacts[i].zDensity);
         fflush(stdout);
     }
     return 0;

@@ -146,6 +146,12 @@ static void mt2_dict_num(OSDictionary *d, const char *key, uint32_t val) {
     if (n) { d->setObject(key, n); n->release(); }
 }
 
+/* Set a C-string property in an init dictionary (released after init copies it). */
+static void mt2_dict_str(OSDictionary *d, const char *key, const char *val) {
+    OSString *s = OSString::withCString(val);
+    if (s) { d->setObject(key, s); s->release(); }
+}
+
 /* Genuine-USB path: manual-start a genuine AppleUSBMultitouchDriver on our interface (bypassing
  * IOKit matching) and interpose its handleReport via an instance-scoped vtable clone, so each MT2
  * report is reframed into the CompactV4 packet Apple accepts. Mirrors MT2BTReader's Path-A manual
@@ -153,6 +159,7 @@ static void mt2_dict_num(OSDictionary *d, const char *key, uint32_t val) {
  * our reader must NOT open them in this mode. Install the clone BEFORE start() so the first report
  * is interposed. Best-effort; on any failure we restore-then-release and leave our reader untouched. */
 bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
+    mt2_usb_reframe_reset();          /* fresh per-finger lifecycle history for this stream */
     OSObject *go = OSMetaClass::allocClassWithName("AppleUSBMultitouchDriver");
     IOService *genuine = OSDynamicCast(IOService, go);
     if (!genuine) {
@@ -168,7 +175,7 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
        class -> MTDeviceStart's IOServiceOpen fails -> 0 frames clients; and (b) sensor geometry ->
        MultitouchSupport's _mt_CachePropertiesForDevice reads 0x0 cols/rows -> algorithm yields no
        contacts. Supply both here. Geometry values from src/mt2_geometry.c (BT-proven). (RE'd 2026-06-24.) */
-    OSDictionary *initp = OSDictionary::withCapacity(8);
+    OSDictionary *initp = OSDictionary::withCapacity(24);
     OSString *ucc = OSString::withCString("AppleUSBMultitouchUserClient");
     if (initp && ucc) initp->setObject("IOUserClientClass", ucc);
     if (initp) {
@@ -178,9 +185,59 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
         mt2_dict_num(initp, "Sensor Surface Width", 13000);
         mt2_dict_num(initp, "Sensor Surface Height", 11300);
         mt2_dict_num(initp, "parser-type", 1000);          /* selects the CompactV4 frame parser in */
-        mt2_dict_num(initp, "parser-options", 37);         /* MultitouchSupport (from genuine personality) */
+        mt2_dict_num(initp, "parser-options", 37);         /* probe-proven value (yields tracking contacts via */
+                                                           /* MultitouchSupport); genuine USB personality uses 39 */
         initp->setObject("Driver is Ready", kOSBooleanTrue);
         initp->setObject("MTHIDDevice", kOSBooleanTrue);
+
+        /* hidd-engagement properties the IOKit personality merge would have supplied — but
+         * allocClassWithName manual-start skips that merge. WITHOUT these, hidd never opens an
+         * AppleUSBMultitouchUserClient frames client on our instance: no contact frames reach the
+         * userspace recognizer (MultitouchHID.plugin) and nothing posts the relative-mouse / scroll
+         * events back through the user client -> AppleUSBMultitouchDriver::postRelativeMouseEvent ->
+         * the wired event driver -> IOHIDPointing. So no cursor, regardless of the event-driver bind.
+         * The working BT AMD carries exactly this set (HIDServiceSupport + IOCFPlugInTypes ->
+         * MultitouchHID.plugin) and IS opened by hidd (captures/cursor-seam/A-usb-working-amd.txt).
+         * Values from Apple's genuine AppleUSBMultitouchDriver USB personality. (RE'd 2026-06-24.) */
+        initp->setObject("HIDServiceSupport", kOSBooleanTrue);
+        /* "Trackpad" (NOT the personality's "Mouse"): in "Mouse" behavior the system drives the cursor
+         * from the device's own relative-mouse HID reports and uses multitouch only for gestures — but
+         * MT2 in multitouch-streaming mode emits NO mouse reports, so the cursor never moves (total
+         * silence, observed on-device 2026-06-24). "Trackpad" makes the recognizer synthesize the cursor
+         * from the touch frames, exactly as the working BT AMD does (it carries HIDDefaultBehavior=Trackpad). */
+        mt2_dict_str(initp, "HIDDefaultBehavior", "Trackpad");
+        initp->setObject("TrackpadMomentumScroll", kOSBooleanTrue);
+        initp->setObject("TrackpadFourFingerGestures", kOSBooleanTrue);
+        initp->setObject("TrackpadSecondaryClickCorners", kOSBooleanTrue);
+        initp->setObject("TrackpadThreeFingerDrag", kOSBooleanTrue);
+        /* Device-button gate: only TAP gestures worked (pure contact recognition); every PHYSICAL-button
+         * action (single click, two-finger right-click) was dead because the device's button state wasn't
+         * extracted+posted. This is the BT path's click fix (sets the device-button gate). (2026-06-24.) */
+        initp->setObject("ExtractAndPostDeviceButtonState", kOSBooleanTrue);
+        /* The recognizer reads gesture/click prefs from MultitouchPreferences (and TrackpadUserPreferences),
+         * NOT the top-level flags above; an EMPTY prefs dict can even shadow the live defaults (RE'd on BT).
+         * Seed the working set (incl. TrackpadRightClick) under both keys so right-click + clicking enable. */
+        const char *prefKeys[] = { "Clicking", "Dragging", "TrackpadRightClick",
+            "TrackpadSecondaryClickCorners", "TrackpadMomentumScroll", "TrackpadScroll",
+            "TrackpadThreeFingerDrag", "TrackpadFourFingerGestures" };
+        OSDictionary *prefs = OSDictionary::withCapacity(8);
+        if (prefs) {
+            for (unsigned i = 0; i < sizeof(prefKeys) / sizeof(prefKeys[0]); i++)
+                prefs->setObject(prefKeys[i], kOSBooleanTrue);
+            initp->setObject("MultitouchPreferences", prefs);
+            initp->setObject("TrackpadUserPreferences", prefs);
+            prefs->release();
+        }
+        /* IOCFPlugInTypes tells hidd which CFPlugIn (the multitouch recognizer) to instantiate. */
+        OSDictionary *plugins = OSDictionary::withCapacity(1);
+        OSString *pluginPath = OSString::withCString(
+            "AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin");
+        if (plugins && pluginPath) {
+            plugins->setObject("0516B563-B15B-11DA-96EB-0014519758EF", pluginPath);
+            initp->setObject("IOCFPlugInTypes", plugins);
+        }
+        if (pluginPath) pluginPath->release();
+        if (plugins) plugins->release();
     }
     bool inited = genuine->init(initp);
     if (ucc) ucc->release();
