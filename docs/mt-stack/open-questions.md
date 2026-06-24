@@ -84,6 +84,19 @@ settled a choice).
 > cursor speed + prefpane/gesture regressions; verify both transports). This is the off-device end of the line —
 > the investigation is complete pending that single experiment.
 
+**Scope + implementation note (the bug is on ALL transports — it is NOT transport-dependent).** The frozen-X
+band is a *shared-geometry* defect: every transport path publishes the same too-narrow `13000`. Confirmed in
+code — BT (full-BNB) and synthetic-USB both emit it via `mt2_fill_geometry_report` (the `MT2_SURFACE_WIDTH`
+#define in `src/mt2_geometry.c`), and genuine-USB seeds the **same value as a separate hardcoded literal** at
+`kext-gesture/MT2USBReader.cpp:185` (`mt2_dict_num(initp, "Sensor Surface Width", 13000)`). So the fix has
+**two edit sites**, not one: (1) the `MT2_SURFACE_WIDTH` #define → fixes BT + synthetic-USB; (2) the literal at
+MT2USBReader.cpp:185 → fixes genuine-USB. Cleanest is to make site (2) reference the #define so there's a single
+knob (honors the "changes apply to both transports" rule). This also retires the old belief that genuine-USB's
+`Transport="USB"` dodges the clamp — it does not (the clamp is geometry-driven, transport-independent; the
+recognizer's X/Y edge thresholds `[0x8]`/`[0xc]` don't vary by transport, only `[0x14]`/`[0x1c]` do). **Sequencing
+(user-directed 2026-06-24): HOLD this edit until genuine-USB is device-tested + merged to `main`**, so the
+edge-clamp change lands on top of a known-good base and is verified across both transports at once.
+
 > **UPDATE 2026-06-24 — transport theory FALSIFIED.** The `kEdgeNoBtTransport` build (override
 > `newTransportString` → non-BT) was tested on-device. `tools/mt_transport` confirms it worked at the
 > recognizer level: `transportMethod=1` (not 4 = Bluetooth). **But the L/R dead-zone PERSISTED and
@@ -155,10 +168,13 @@ decision." Findings:
   `_deviceGetReportWithLookUp`, `_deviceGetReport`, `handleReport` itself), NOT a transport that spawns a
   separate AMD. No `createMultitouchHandler`/trigger. Touch feed seam = **`handleReport` @0x4196** (the
   USB pipe → its handleReport parses). Geometry seam = its own **`_deviceGetReport`** (USB), not a
-  transport vtable. `newTransportString` = `IOUSBHIDDriver`'s → **"USB"** → no `isBlocked` edge-clamp.
+  transport vtable. `newTransportString` = `IOUSBHIDDriver`'s → **"USB"**. (⚠️ CORRECTED 2026-06-24:
+  this was once thought to dodge the edge-clamp — it does NOT. The edge-clamp is geometry-driven and
+  **transport-independent** (see the Edge-clamp section); USB has the same frozen-X band as BT.)
 - **So "genuine for both" is NOT one parameterized strategy** — BT (two-object transport+AMD, vtable
   geometry, L2CAP-interpose feed) and USB (one-object HID driver, _deviceGetReport geometry, handleReport
-  feed) are different implementations. It buys the pane on both + no USB edge-clamp, at the cost of a
+  feed) are different implementations. It buys the pane on both (~~+ no USB edge-clamp~~ — false; the
+  edge-clamp is transport-independent geometry, present on USB too), at the cost of a
   SECOND genuine impl (vs today's working synthetic-USB). Genuine-USB looks *simpler* than genuine-BT
   (no manual-trigger/interpose/flap), possibly near-free IF handleReport parses MT2's USB format.
 - **Decision input:** decide full-BNB-for-BT on its own merits (pane/genuine vs flap+dirty-tricks cost),
