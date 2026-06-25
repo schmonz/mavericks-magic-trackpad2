@@ -542,22 +542,24 @@ pane's target/selector to reload. So the pane IS wired for live appear+terminate
 works because the notification's iterator is pre-drained for already-present services (and the pane also
 does a one-shot `IOServiceGetMatchingService` presence check) — that's why relaunch always lights it.
 
-**The gap:** the live `kIOFirstMatchNotification` doesn't reach the open pane when our **manual-started**
-genuine driver (`AppleUSBMultitouchDriver` / `BNBTrackpadDevice`) appears. Likely because the instance
-enters the registry via our `allocClassWithName`+`attach`+`start`+`registerService()` rather than via
-normal IOKit driver matching, so the first-match delivery differs. The *matching dict* clearly matches
-us (the one-shot query finds us), so it's the notification DELIVERY on appear (and possibly a non-clean
-terminate on transport-switch-away) that's missing.
+**Hypothesis FALSIFIED 2026-06-25 — the IOKit layer is healthy.** Built `tools/mt_svc_observe.c` (mirrors
+the pane: registers the SAME `kIOFirstMatchNotification` + `kIOTerminatedNotification` on both classes,
+logs each callback). On-device, powering the MT2 off→on and hot-swapping BT↔USB **both directions** fired
+EVERY expected notification with fresh registry IDs each time (clean teardown + fresh instance):
+`TERMINATED AppleUSBMultitouchDriver` on off/unplug, `FIRST-MATCH AppleUSBMultitouchDriver` on on,
+`FIRST-MATCH BNBTrackpadDevice` on fall-to-BT, etc. So our manual-started drivers **DO** deliver exactly
+the notifications the pane's `IOServiceObserver` listens for — `registerService()`/`terminate()` are not
+the gap.
 
-**Decisive next step (on-device evidence):** a tiny CF tool that registers the SAME two notifications —
-`IOServiceAddMatchingNotification(kIOFirstMatchNotification / kIOTerminatedNotification,
-IOServiceMatching("AppleUSBMultitouchDriver"))` (and `"BNBTrackpadDevice"`) — and logs each callback.
-Then power the MT2 off→on / hot-swap BT↔USB. This shows directly whether our `registerService()` fires
-first-match and whether `terminate()` fires terminated. (`tools/re calls` is unreliable on these dylibs —
-file-offset≠vmaddr — so use runtime evidence, not static caller analysis.)
+**Therefore the earlier "open pane didn't light" was NOT a notification-delivery failure.** Most likely
+transient pane-side state (the pane's observer wasn't armed at that instant — e.g. System Prefs
+backgrounded / on another pane / opened during the BT-dead window), cleared by a relaunch. Possible
+remaining (narrower) cause: the pane receives the notification but its reload doesn't re-light under some
+condition — a pane-side issue, not ours.
 
-**Fix candidates (pick after evidence):** (a) if `registerService()` doesn't deliver first-match for a
-manual-start, make our instance complete enough matching that it does (or re-register so the notification
-fires); (b) ensure teardown calls a clean `terminate()` so `kIOTerminatedNotification` fires on
-switch-away; (c) last resort — drive the pane another way. Goal: pane updates live on appear/disappear
-and BOTH transport directions.
+**Decisive next step (cheap):** re-test the PANE directly — open Trackpad, leave it open, do off→on +
+hot-swap both ways, watch whether the pane updates live. Given the notifications provably fire, it most
+likely DOES update live now and there's nothing to fix (earlier symptom transient). Only if the pane
+still fails to update *while its observer is demonstrably armed* is there a real pane-side gap to chase —
+and that's in Apple's pane, not our driver, so options would be limited (e.g. nudge System Prefs).
+`tools/mt_svc_observe` is the standing oracle for "are the notifications firing?".
