@@ -4,14 +4,23 @@ Native gestures with Apple's Magic Trackpad 2 on Mac OS X 10.9.
 
 ## How it works
 
-A kernel extension translates input to look like it came from an original Magic Trackpad, which 10.9's `hidd` understands:
+A kernel extension reuses Apple's own genuine multitouch drivers and feeds them a translated stream, so 10.9's existing recognizer does all the gesture/cursor/click work:
 
 1. `MT2USBReader` and `MT2BTReader` out-bid `IOUSBHIDDriver` and
-   `IOBluetoothHIDDriver`, enable multitouch, and `mt2_decode` raw
-   frames. `mt2_session` and `mt2_pipeline` merge USB frames or
-   Bluetooth events into a unified stream to `mt1_encode`.
-2. `MT2Gesture` receives Magic Trackpad 1 events and passes them
-   to a constructed `AppleMultitouchDevice`.
+   `IOBluetoothHIDDriver` to win the Magic Trackpad 2, then **manually
+   start Apple's genuine driver** on the same transport —
+   `AppleUSBMultitouchDriver` over USB, `BNBTrackpadDevice` over
+   Bluetooth — and **interpose its input seam** (`handleReport` over
+   USB; the L2CAP delegate callback over BT).
+2. Each raw MT2 frame is decoded (`mt2_decode` plus the
+   `mt2_usb_decode`/`mt2_bt_decode` transport wrappers), conditioned by
+   the shared `mt2_session` (settle gate, contact lifecycle, liftoff),
+   and translated to the report Apple's driver expects (`mt1_encode` to
+   the MT1 `0x28` report over BT; a CompactV4 reframe over USB). We also
+   inject the two things Apple's path can't read off this device's wire
+   — sensor **geometry** and the **device-button gate** — so the genuine
+   `AppleMultitouchDevice` drives the cursor, gestures, and the Trackpad
+   preference pane. See `docs/mt-stack/` for the full architecture.
 
 Mavericks will load an unsigned kext as long as it's _not_ in
 `/Library/Extensions` and therefore not present at early boot. Once
@@ -52,10 +61,10 @@ under `/usr/local/sbin`, and a LaunchDaemon for when you reboot
   thin `mt2_usb_decode`/`mt2_bt_decode` transport wrappers, `mt1_encode`,
   `mt2_pipeline`/`mt2_session` (settle / lift-drop / decel / click logic), and
   `touch_model.h`. `vhid_mt1` is a kextless research path kept for reference.
-- `kext-gesture/` — `MT2Gesture`, the one shipped kext: the `IOResources` nub
-  that builds the in-kernel MT1 HID interface (`MT2HIDShell`) which Apple's
-  `AppleMultitouchDevice`/event driver binds onto, plus the `MT2USBReader` and
-  `MT2BTReader` transport reader personalities.
+- `kext-gesture/` — `MT2Gesture`, the one shipped kext: the `MT2USBReader` and
+  `MT2BTReader` transport readers that manual-start + interpose Apple's genuine
+  drivers, and the `MT2Gesture` nub that hosts the shared session and feeds the
+  conditioned stream to Apple's spawned `AppleMultitouchDevice`.
 - `tools/` — dev/diagnostic helpers; only `mt2_reenumerate` ships, the rest are
   reverse-engineering probes (`tools/re` is the RE toolkit). `tools/spikes/` holds one-off probes.
 - `tests/` — unit tests.
