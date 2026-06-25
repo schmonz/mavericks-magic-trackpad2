@@ -2,6 +2,7 @@
 #define MT2BTREADER_H
 #include <IOKit/IOService.h>
 #include "touch_model.h"
+#include "genuine_host.h"          /* shared manual-start + ordered-teardown core */
 
 class IOBluetoothL2CAPChannel;
 class IOTimerEventSource;
@@ -23,6 +24,21 @@ class com_schmonz_MT2BTReader : public IOService {
     IOTimerEventSource *fInterposeTimer;  /* polls for BNB's interrupt channel, then installs the shim */
     int fInterposeTries;            /* retry budget for the installer poll */
     int fReEnableCount;             /* Path A: # of post-install 0xF1 re-enables sent (force multitouch mode) */
+    gh_host_t fHost;                /* genuine_host lifecycle handle for fManualBnb */
+
+    /* genuine_host adapter callbacks (ctx = this reader, obj = the genuine BNBTrackpadDevice).
+     * "interpose" here is the geometry vtable clone (installBnbGeometry); the L2CAP delegate poke is
+     * NOT part of the host — it stays async in the interpose timer. */
+    static void *gh_alloc(void *ctx, const char *cls);
+    static bool  gh_class_ok(void *ctx, void *obj, const char *e);
+    static bool  gh_init_attach(void *ctx, void *obj);
+    static int   gh_interpose(void *ctx, void *obj);
+    static bool  gh_start_drv(void *ctx, void *obj);
+    static void  gh_restore(void *ctx, void *obj);
+    static void  gh_detach(void *ctx, void *obj);
+    static void  gh_terminate(void *ctx, void *obj);
+    static void  gh_release(void *ctx, void *obj);
+    static const gh_adapter_t kBtAdapter;
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;

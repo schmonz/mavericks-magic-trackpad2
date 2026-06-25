@@ -30,6 +30,7 @@
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
+#include "../src/mt2_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 
 extern "C" {
 #include "mt2_geometry.h"      /* single source of the sensor-geometry D-report payloads */
@@ -268,6 +269,54 @@ static OSDictionary *bt_build_bnb_props(void) {
     return top;
 }
 
+/* ---- genuine_host adapter: host BNBTrackpadDevice + geometry vtable interpose ----
+ * The L2CAP delegate poke (the input seam) is NOT here — it is installed async by interposeTimerFired
+ * after BNB's interrupt channel appears. The host's "interpose" is the geometry clone, which (as before)
+ * must be live before start() and is restored before terminate(). */
+void *com_schmonz_MT2BTReader::gh_alloc(void *ctx, const char *cls) {
+    (void)ctx;
+    OSObject *o = OSMetaClass::allocClassWithName(cls);
+    IOService *s = OSDynamicCast(IOService, o);
+    if (!s && o) o->release();
+    return s;
+}
+bool com_schmonz_MT2BTReader::gh_class_ok(void *ctx, void *obj, const char *e) {
+    (void)ctx;
+    const char *cls = ((IOService *)obj)->getMetaClass()->getClassName();
+    return cls && strcmp(cls, e) == 0;
+}
+bool com_schmonz_MT2BTReader::gh_init_attach(void *ctx, void *obj) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
+    OSDictionary *props = bt_build_bnb_props();
+    bool ok = props && ((IOService *)obj)->init(props) && ((IOService *)obj)->attach(self->fChannel);
+    if (props) props->release();
+    return ok;
+}
+int com_schmonz_MT2BTReader::gh_interpose(void *ctx, void *obj) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
+    self->installBnbGeometry(obj);          /* geometry vtable clone (class-gated internally too) */
+    return gBnbVtableCloned ? 0 : -1;       /* all-or-nothing: a failed clone is an interpose failure */
+}
+bool com_schmonz_MT2BTReader::gh_start_drv(void *ctx, void *obj) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
+    return ((IOService *)obj)->start(self->fChannel);
+}
+void com_schmonz_MT2BTReader::gh_restore(void *ctx, void *obj) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
+    self->removeBnbGeometry(obj);           /* vtc_restore of the geometry clone */
+}
+void com_schmonz_MT2BTReader::gh_detach(void *ctx, void *obj) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
+    ((IOService *)obj)->detach(self->fChannel);
+}
+void com_schmonz_MT2BTReader::gh_terminate(void *ctx, void *obj) { (void)ctx; ((IOService *)obj)->terminate(); }
+void com_schmonz_MT2BTReader::gh_release(void *ctx, void *obj)   { (void)ctx; ((IOService *)obj)->release(); }
+
+const gh_adapter_t com_schmonz_MT2BTReader::kBtAdapter = {
+    gh_alloc, gh_class_ok, gh_init_attach, gh_interpose, gh_start_drv,
+    gh_restore, gh_detach, gh_terminate, gh_release
+};
+
 bool com_schmonz_MT2BTReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
 
@@ -305,39 +354,18 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
      * IOHIDDevice chain on a real provider, so the IOHIDDevice state initializes (no publish-handler
      * panic). Best-effort; failure leaves our reader untouched. */
     if (fIsControl) {
-        OSObject *bo = OSMetaClass::allocClassWithName("BNBTrackpadDevice");
-        IOService *bnb = OSDynamicCast(IOService, bo);
-        if (!bnb) {
-            IOLog("MT2BTReader: allocClassWithName(BNBTrackpadDevice) NULL (AppleBluetoothMultitouch loaded?)\n");
-            if (bo) bo->release();
+        /* Host a genuine BNBTrackpadDevice via the shared genuine_host core: manual-start + class-gate +
+         * geometry vtable interpose (live BEFORE start, so the AMD bring-up's first cacheDeviceProperties
+         * sees real geometry) + start. gh_start fully unwinds on any failure (restore-before-terminate). */
+        static const gh_config_t cfg = { "BNBTrackpadDevice", "BNBTrackpadDevice" };
+        if (gh_start(&fHost, &cfg, &kBtAdapter, this) == 0) {
+            fManualBnb = (IOService *)fHost.obj;
+            gGenuineBnb = fManualBnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
+            (void)mt2_coordinator_activate(MT2_XPORT_BT, 0);   /* no-op seam (MT2 single-transport) */
+            IOLog("MT2BTReader: manual BNBTrackpadDevice start OK\n");
+            bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, fManualBnb, 0, 0);
         } else {
-            /* Pass genuine DefaultMultitouchProperties so BNB's spawned AppleMultitouchDevice is
-             * recognized + drives the cursor (findings S2.17). */
-            OSDictionary *props = bt_build_bnb_props();
-            bool ok = props && bnb->init(props);
-            if (props) props->release();
-            if (ok) IOLog("MT2BTReader: [diag] pre-attach chan->isInactive=%d\n", fChannel->isInactive());
-            if (ok && bnb->attach(fChannel)) {
-                /* Geometry override must be live BEFORE start()/the AMD bring-up's first
-                 * _cacheDeviceProperties query, or the MTDevice is born with empty geometry and
-                 * the late timer-install is never consulted. Install here (idempotent; the later
-                 * pre-trigger call no-ops). If start() fails we restore before release. */
-                installBnbGeometry(bnb);
-                if (bnb->start(fChannel)) {
-                    fManualBnb = bnb;
-                    gGenuineBnb = bnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
-                    IOLog("MT2BTReader: manual BNBTrackpadDevice start OK\n");
-                    bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, bnb, 0, 0);
-                } else {
-                    IOLog("MT2BTReader: manual BNBTrackpadDevice start() FAILED\n");
-                    removeBnbGeometry(bnb);   /* restore vtable before freeing */
-                    bnb->detach(fChannel);
-                    bnb->release();
-                }
-            } else {
-                IOLog("MT2BTReader: manual BNBTrackpadDevice init/attach FAILED (init=%d)\n", ok);
-                bnb->release();
-            }
+            IOLog("MT2BTReader: manual BNBTrackpadDevice host start FAILED\n");
         }
 
         if (fManualBnb) {
@@ -582,12 +610,10 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
      * Unload safety rests on the in-gate delegate + vtable restores ABOVE (not on quiescence); the
      * async termination completes after release(). So: plain terminate() + release(), no wait. */
     if (fManualBnb) {
-        /* Restore the transport's original vtable pointer (and free the clone) BEFORE terminate,
-         * so BNB tears down through Apple's own code, not our override. */
-        removeBnbGeometry(fManualBnb);
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
-        fManualBnb->terminate();
-        fManualBnb->release();
+        /* genuine_host ordered teardown: removeBnbGeometry (vtc_restore the geometry clone) BEFORE
+         * terminate — so BNB tears down through Apple's own code, not our override — then release. */
+        gh_stop(&fHost, &kBtAdapter, this);
         fManualBnb = 0;
         IOLog("MT2BTReader: manual BNBTrackpadDevice terminate+release\n");
     }
