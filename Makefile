@@ -75,7 +75,7 @@ pkg: mt2_reenumerate mt2_set_btname kext-gesture
 
 # Unit tests are pure C, no frameworks needed. Built into build/tests/ (gitignored) to keep root clean.
 TESTDIR = build/tests
-TESTS = $(addprefix $(TESTDIR)/,test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_connect_sm test_conn_trace test_geometry test_vtable_clone test_usb_reframe)
+TESTS = $(addprefix $(TESTDIR)/,test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle test_session test_connect_sm test_conn_trace test_geometry test_vtable_clone test_usb_reframe test_genuine_host)
 test: $(TESTS)
 	@fail=0; for t in $(TESTS); do echo "== $$(basename $$t) =="; "$$t" || fail=1; done; \
 	 echo "== test_mt2d_run.sh =="; sh tests/test_mt2d_run.sh || fail=1; \
@@ -108,6 +108,8 @@ $(TESTDIR)/test_geometry: tests/test_geometry.c $(SRC)/mt2_geometry.c | $(TESTDI
 $(TESTDIR)/test_vtable_clone: tests/test_vtable_clone.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -Ikext-gesture -o $@ $^
 $(TESTDIR)/test_usb_reframe: tests/test_usb_reframe.c $(SRC)/mt2_usb_reframe.c $(SRC)/mt2_usb_decode.c $(SRC)/mt2_decode.c $(SRC)/mt2_pipeline.c $(SRC)/mt2_lifecycle.c $(SRC)/mt1_encode.c | $(TESTDIR)
+	$(CC) $(CFLAGS) -o $@ $^
+$(TESTDIR)/test_genuine_host: tests/test_genuine_host.c $(SRC)/genuine_host.c | $(TESTDIR)
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
