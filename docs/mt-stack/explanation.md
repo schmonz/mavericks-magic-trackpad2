@@ -135,6 +135,84 @@ Healthy sequence (observable via CONNTRACE): `CONTROL_UP → INTERRUPT_BOUND →
   Simpler in some ways (geometry was free via our `getReportStub`) but the poke was a panic path.
   See `decisions.md` for why we moved past it (and the live-vs-fragile trade).
 
+## Retired synthetic approach (pre-2026-06-24)
+
+Before the genuine paths became the default, the kext drove the MT2 a second way: **decode the
+device ourselves and feed our own fabricated `AppleMultitouchDevice`.** That code was deleted
+2026-06-25 once genuine-BNB (BT) + genuine-USB both shipped, but its hard-won RE is preserved here —
+several of these findings are reusable for the "97% API" mission and were not obvious.
+
+**The fabricated AMD nub (the strict-cast story).** We `allocClassWithName("AppleMultitouchDevice")`,
+`init`'d it with **`IsFake=false`**, installed an enable stub + geometry handler, then `attach`+`start`
+under our `com_schmonz_MT2Gesture` nub. `AppleMultitouchDevice::start` reads `getProperty("IsFake")`:
+- **`IsFake=true`** → LENIENT: best-effort event-service lookup, always continues `start()`.
+- **`IsFake=false`** → STRICT: walks the IOService plane to the parent provider and **requires it cast
+  to `AppleMultitouchHIDEventDriverV2`/`…EventDriver`/`…EventService`**, else logs "Could not cast our
+  provider" → "Failing start." → returns false.
+
+We deliberately ran the **strict** path (`IsFake=false`) — not the easy bypass — because strict is what
+wires in-kernel cursor actuation. To satisfy the cast we published **`MT2HIDShell`** (see below) under
+the nub so a real event driver lived in the AMD's provider subtree. (The file's top-of-source comment
+described an `IsFake=true` bypass from an earlier milestone; the shipped synthetic code used `false`.)
+After start we set `MT Built-In=true` + `Driver is Ready=true` so `MultitouchSupport`/`hidd` would adopt
+the device's `AppleMultitouchDeviceUserClient`.
+
+**`MT2HIDShell` — an in-kernel `IOHIDDevice` published under the nub.** Its only job: be a real
+`IOHIDInterface` provider that Apple's `AppleMultitouchHIDEventDriver` matches and binds, so a started
+`IOHIDEventService` (→ `IOHIDPointing` → cursor) comes into existence **as a descendant of our nub** —
+which is exactly where AMD's `hidEventDriverPublished` ancestor-walk looks (a standalone userspace
+`IOHIDUserDevice` lives under `IOHIDResource`, not our nub, and is rejected). Load-bearing detail:
+`IOHIDDevice::publishProperties` sources the interface match keys (VendorID/VendorIDSource/Transport)
+from the **virtual `new*String`/`new*Number` accessors, NOT the property table** — so the shell had to
+override `newVendorIDNumber`/`newVendorIDSourceNumber`/`newTransportString`/… or the interface carried
+no identity and Apple's event driver never matched. The shell sent no HID input reports; real touch data
+flowed feeder → `submitFrame` → `handleTouchFrame`. It matched the **`MT2HIDEventDriver`** personality
+(VID 1452 / PID 782 / source 2).
+
+**`IOCFPlugInTypes` adoption fix (the "M5 fix").** Diffed against a real hidd-adopted device: the
+fabricated AMD must advertise **`IOCFPlugInTypes` → `MultitouchHID.plugin`** (UUID
+`0516B563-B15B-11DA-96EB-0014519758EF` → `AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin`)
+or `hidd`/MultitouchSupport never instantiates the plugin, never opens a user client, and no frames flow.
+This is the same key the genuine `DefaultMultitouchProperties` carries — see `reference.md`.
+
+**The `MultitouchPreferences` vs `TrackpadUserPreferences` shadowing finding (reusable, subtle).**
+`MTTrackpadHIDManager::determineHIDManagerSettings` (in `MultitouchHID.plugin`) builds its trackpad
+settings + chord-gesture-set by reading a prefs dict from the device's IORegistry entry. It reads
+**`TrackpadUserPreferences` FIRST** and falls back to **`MultitouchPreferences`** only if the first key
+is **absent** (`0x1c3ae`/`0x1c3c4`: the `testq/jne` skips the fallback whenever the first key is present).
+With **neither** present it runs a bare-defaults path that leaves the chord set empty → no chord ever
+commits → no cursor/tap/scroll/gesture output. We seeded **`MultitouchPreferences`** (NOT
+`TrackpadUserPreferences`) on purpose: the genuine settings-push pipeline
+(prefpane → BNB `setProperties` → `_setMultitouchPreferences` → `AppleMultitouchDevice::setPreferences`)
+writes the user's live prefs into the `MultitouchPreferences` key. Seeding `TrackpadUserPreferences`
+instead would **permanently shadow** that push (recognizer reads our stale defaults, never sees the
+user's real `Clicking=No`) → the classic "tapping always clicks regardless of the checkbox" bug. Seed
+the same key the push targets, and our defaults activate gestures pre-push, then get overwritten/merged
+by the user's real settings. (Genuine BNB gets its prefs via the genuine pipeline, so this seeding is
+unnecessary there — but the read-order finding is the reusable part.)
+
+**Synthetic geometry via `getReport` (vs genuine's vtable override).** The fabricated path got geometry
+"for free": we installed a `getReportStub` on the AMD (`setGetReportHandler`) that answered the D-report
+queries (`0xd1/0xd3/0xd9/0xd0/0xa1/0x7f`, skip `0xdb`) straight from `mt2_geometry`. A paired
+`setReportStub` remembered the 1-byte value `hidd` SET per reportID in a `g_reg[256]` table so a later
+GET echoed it back — because `hidd` SETs mode registers (`0xC8/0xDC/0xDD`) then GETs them and disables
+gestures if the GET fails. The genuine path can't install a `getReport` handler on BNB's AMD, so it
+instead clones the transport vtable and overrides slots `0xcd8`/`0xcc8` (see "The two injected
+side-channels").
+
+**Synthetic transport feeds (BT + USB).** Both retired feeds owned the wire themselves instead of
+interposing Apple's driver:
+- **BT:** our reader listened on the interrupt channel (`incomingData`), decoded raw `0x31` →
+  `submitFrame`, sent the `0xF1` multitouch-enable on PSM 17 itself (it owned the channel), and tee'd an
+  MT1-encoded frame to BNB's original delegate (`gOrigCb`) to keep BNB's 5s restart watchdog quiet.
+  **Timing lesson (kept even though the code went):** firing `0xF1` on PSM 17 *before* the channel
+  reaches OPEN makes `sendTo` block ~14s and the device tears the link down → flap. The genuine path
+  avoids this by letting BNB run its own handshake (see "Connect lifecycle").
+- **USB:** our reader opened the interface, found the interrupt pipe, sent the SET_REPORT enable, and ran
+  an async `armRead`/`readComplete` loop that decoded MT2 USB `0x02` reports → `submitFrame`. The genuine
+  USB path instead manual-starts `AppleUSBMultitouchDriver` and interposes its `handleReport` (the
+  CompactV4 reframe seam).
+
 ## The reframe seam generalizes — a config dimension for the "97% API" mission
 
 The load-bearing principle has a reusable shape worth naming, because it is the clearest concrete
@@ -153,7 +231,7 @@ We already have **three instances of this one capability**, differing only in th
 | Path | translate | target consumer | the seam (where we feed) |
 |---|---|---|---|
 | BT (shipped) | MT2 `0x31` → MT1 `0x28` | genuine BNB's spawned AMD | L2CAP delegate-callback slot `channel+0x110` |
-| Synthetic-USB (shipped) | MT2 USB `0x02` → MT1 | our own `MT2Gesture` nub | `submitFrame` (no interpose; we own the nub) |
+| Synthetic-USB (retired) | MT2 USB `0x02` → MT1 | our own `MT2Gesture` nub | `submitFrame` (no interpose; we own the nub) |
 | Genuine-USB (new) | MT2 USB `0x02` → Apple CompactV4 path-binary | genuine `AppleUSBMultitouchDriver` | its `handleReport` (vtable slot `0x117`), instance-clone interpose |
 
 **The point for the future:** *other* multitouch devices that want to ride a genuine Apple driver

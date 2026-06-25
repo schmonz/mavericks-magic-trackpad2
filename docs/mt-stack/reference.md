@@ -106,6 +106,27 @@ the full Finger/State is a lead for future palm/tap work (the device provides it
 | `DefaultMultitouchProperties` | — | dict on the transport (we pass it via `bnb->init`); `createMultitouchHandler` copies its keys (`parser-type`=1000, `parser-options`=47, `MTHIDDevice`, `IOCFPlugInTypes`→MultitouchHID, …) onto the spawned AMD |
 | **`parser-options` bit `0x2`** | — | **The recognizer's "clicky hardware" capability.** `MultitouchSupport` caches `parser-options` (`_mt_CachePropertiesForDevice`→device+0x1623c, read only via `_MTDeviceGetParserOptions`) and hands it to `MTSimpleHIDManager::initialize`, which stores it at the manager's **`this+0xb0`**. Bit `0x2` is then read ONLY by `handleButtonState` / `hwSupportsSecondaryClickCorners` / `hwSupports3FDrag` / `resetGestureParser` — i.e. it gates the recognizer's **gesture-side** button awareness (2-finger secondary-click, 3-finger-drag). It does NOT affect contact parsing (parser selects by `parser-type`=1000), cursor, scroll, or taps. Values: BT uses `47=0x2F` (bit set), Apple's genuine-USB personality `39=0x27` (set); `37=0x25` clears it → physical/2-finger click dead while taps work. **Seedable** → manual-start can supply it (RE'd 2026-06-24, `tools/re`). |
 
+## Retired synthetic-path constants (deleted 2026-06-25; see `explanation.md` → "Retired synthetic approach")
+
+The fabricated-`AppleMultitouchDevice` path's property/identity values, kept for the RE record. All were
+set on a self-allocated `AppleMultitouchDevice` (`allocClassWithName`) published under our nub.
+
+| Constant / key | Value | Role |
+|----------------|-------|------|
+| `IsFake` | `false` | STRICT `AMD::start` path — requires the provider to cast to an event driver/service (satisfied by `MT2HIDShell`); enables in-kernel cursor actuation wiring |
+| `parser-type` | `1000` | parser selector (same as genuine; both transports) |
+| `parser-options` | BT `47` (`0x2F`), USB `39` (`0x27`) | bit `0x2` = clicky-hardware gate (see Properties table) |
+| `MT Built-In` | `true` | `MTDeviceIsBuiltIn` → system auto-drives it regardless of the "default device" pref |
+| `Driver is Ready` | `true` | cached by `_mt_CachePropertiesForDevice` |
+| `ExtractAndPostDeviceButtonState` | `true` | S+9 device-button gate (set directly on the fabricated device) |
+| `IOCFPlugInTypes` | UUID `0516B563-B15B-11DA-96EB-0014519758EF` → `AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin` | required or `hidd` never instantiates the plugin / opens the user client |
+| seeded prefs key | `MultitouchPreferences` (NOT `TrackpadUserPreferences`) | `determineHIDManagerSettings` reads `TrackpadUserPreferences` first, falls back to `MultitouchPreferences`; seeding the wrong one permanently shadows the live prefs push |
+
+Synthetic Info.plist personalities (also deleted): **`MT2Gesture`** (IOResources nub publisher) and
+**`MT2HIDEventDriver`** (Apple's `AppleMultitouchHIDEventDriver` `IOClass`, keyed VID 1452 / PID 782 /
+source 2 — bound the `MT2HIDShell`). The kept cursor-actuation personality for genuine BT is
+**`MT2HIDEventDriverBNB`** (VID 76 / PID 613 / source 1) — see "Cursor actuation personalities" above.
+
 ## BT connect handshake — the genuine sequence (input to the flap fix)
 
 RE'd from the genuine `IOBluetoothHIDDriver` (10.9). **PSM 19 is device-initiated** — the host opens
