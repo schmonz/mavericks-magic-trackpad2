@@ -355,14 +355,6 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
                 if (bnb->start(fChannel)) {
                     fManualBnb = bnb;
                     gGenuineBnb = bnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
-                    /* B1-b: point BNB's handler slot at our fDevice, so BNB's prefs path
-                     * (_setMultitouchPreferences → +0x1b0 → setPreferences) lands prefpane settings on
-                     * the device that actually emits frames. No trigger → BNB makes no AMD of its own. */
-                    if (kB1Spike && gActiveMT2Gesture && gActiveMT2Gesture->rawDevice()) {
-                        *(void **)((uint8_t *)bnb + BNB_HANDLER_OFF) = gActiveMT2Gesture->rawDevice();
-                        IOLog("MT2BTReader: B1-b — redirected BNB+0x1b0 to our fDevice (%p)\n",
-                              gActiveMT2Gesture->rawDevice());
-                    }
                     IOLog("MT2BTReader: Path A manual BNBTrackpadDevice start OK\n");
                     bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, bnb, 0, 0);
                 } else {

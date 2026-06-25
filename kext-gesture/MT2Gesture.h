@@ -4,24 +4,19 @@
 #include "amd_shim.h"
 #include "mt2_session.h"
 
-/* The transport nub: constructs/drives an AppleMultitouchDevice (see MT2Gesture.cpp).
- * The in-kernel readers (MT2BTReader, MT2USBReader) submit decoded frames through
- * connectionEstablished()/submitFrame(); the session decides what reaches the device. */
-class com_schmonz_MT2HIDShell;
+/* The transport nub + session/conditioning core. It creates NO multitouch device of its own —
+ * Apple's genuine driver does (BNBTrackpadDevice over BT, AppleUSBMultitouchDriver over USB). The
+ * in-kernel readers (MT2BTReader, MT2USBReader) submit decoded frames through
+ * connectionEstablished()/submitFrame(); the session conditions them and the sink feeds the genuine
+ * AMD via fBnbTarget. See MT2Gesture.cpp. */
 class IOTimerEventSource;
 class IOWorkLoop;
 
 class com_schmonz_MT2Gesture : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2Gesture)
-    AppleMultitouchDevice *fDevice;
-    void *fBnbTarget;                     /* full-BNB: BNB's own spawned AppleMultitouchDevice
-                                             (from BNB+0x1b0). When set, the session sink feeds
-                                             THIS instead of fDevice, so full-BNB gets the same
-                                             conditioned (lifecycle/liftoff) stream the fDevice
-                                             path uses. NULL in the hybrid path. */
-    com_schmonz_MT2HIDShell *fHidShell;   /* in-kernel MT1 HID device under us;
-                                             instantiates the started event driver
-                                             the actuation wrapper wires to (M5) */
+    void *fBnbTarget;                     /* the genuine spawned AppleMultitouchDevice (BNB+0x1b0 over
+                                             BT). The session sink feeds THIS the conditioned
+                                             (lifecycle/liftoff) stream + device-button edges. */
     mt2_session_t fSession;               /* pure functional core: owns all post-decode
                                              logic (settle/guard/lift-drop/decel/click) */
     mt2_session_sink_t fSink;             /* effects seam: callbacks drive IOKit */
@@ -39,12 +34,7 @@ public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
 
-    /* Our cursor-wired AppleMultitouchDevice, as a raw pointer. Path A B1-b redirects BNB's
-     * handler slot (BNB+0x1b0) to this so BNB's prefpane settings (_setMultitouchPreferences →
-     * setPreferences on +0x1b0) land on the device that actually emits frames. */
-    void *rawDevice() const { return (void *)fDevice; }
-
-    /* Full-BNB: point the session sink at BNB's own AMD (or NULL to revert to fDevice). */
+    /* Point the session sink at the genuine spawned AMD (or NULL to detach before it is freed). */
     void setBnbTarget(void *amd) { fBnbTarget = amd; }
 
     /* Session-backed transport path: a reader arms a connection, then submits decoded
@@ -54,13 +44,7 @@ public:
     static void idleTimeout(OSObject *owner, IOTimerEventSource *sender);
 
     /* DEBUG/TEST seam: the user client routes injected encoded 0x28 bytes here, straight
-     * to the device (bypasses the session) for hands-free on-device testing. */
+     * to the genuine AMD (bypasses the session) for hands-free on-device testing. */
     IOReturn feedFrame(const unsigned char *bytes, unsigned int len);
-
-    /* Wire an AppleMultitouchDevice's get/set-report handlers to our geometry stubs, so the
-     * recognizer learns sensor geometry (13000x11300, Rows 13, Cols 16, Family 128) instead of
-     * querying a device that does not answer the MT1 D-reports. Used for our fDevice AND for
-     * BNB's spawned AMD under full-BNB (findings 2026-06-22-fullbnb-cursor-geometry). */
-    void installGeometryHandler(AppleMultitouchDevice *amd);
 };
 #endif
