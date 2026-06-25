@@ -69,5 +69,33 @@ else
     echo "FAIL: recover_full (out: $rec_out)"; fail=1
 fi
 
+# Regression (two-transport / desktop): a normal boot with NO trackpad connected (BT=0 USB=0, nub
+# loaded = kext loaded without panic) must end the sentinel at 'ok' -- NOT 'trying', which would make
+# the NEXT boot skip-load -- and must NOT thrash recover_full (there is no device to recover). The
+# brick-guard is for load panics (which reboot before this point), not for "no device present".
+nod="$TMP/nod"; mkdir -p "$nod/sbin"
+cat > "$nod/ioclasscount" <<EOF
+#!/bin/sh
+case "\$1" in
+  com_schmonz_MT2BTReader)  echo "x 0" ;;
+  com_schmonz_MT2USBReader) echo "x 0" ;;
+  com_schmonz_MT2Gesture)   echo "x 1" ;;
+esac
+EOF
+chmod +x "$nod/ioclasscount"
+printf '#!/bin/sh\nexit 0\n' > "$nod/kextload";   chmod +x "$nod/kextload"
+printf '#!/bin/sh\nexit 0\n' > "$nod/kextunload"; chmod +x "$nod/kextunload"
+printf '#!/bin/sh\nexit 1\n' > "$nod/sbin/mt2_reenumerate"; chmod +x "$nod/sbin/mt2_reenumerate"
+echo ok > "$nod/state"
+nod_out="$(MT2D_STATE_FILE="$nod/state" MT2D_IOCLASSCOUNT="$nod/ioclasscount" \
+    MT2D_KEXTLOAD="$nod/kextload" MT2D_KEXTUNLOAD="$nod/kextunload" MT2D_SBIN="$nod/sbin" \
+    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 "$WRAPPER" 2>&1)"
+nod_state="$(cat "$nod/state")"
+if [ "$nod_state" = "ok" ] && ! echo "$nod_out" | grep -q "recovery attempt"; then
+    echo "PASS: no-device boot -> ok, no recovery thrash"
+else
+    echo "FAIL: no-device boot (state=$nod_state, recovery in out? — out: $nod_out)"; fail=1
+fi
+
 if [ $fail -eq 0 ]; then echo "ALL mt2d-run TESTS PASS"; else echo "mt2d-run TESTS FAILED"; exit 1; fi
 exit 0
