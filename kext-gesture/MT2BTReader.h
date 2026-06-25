@@ -17,9 +17,9 @@ class com_schmonz_MT2BTReader : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2BTReader)
     IOBluetoothL2CAPChannel *fChannel;
     bool fIsControl;        /* set in-gate: PSM 17 (control) — the channel BNBTrackpadDriver wants */
-    IOService *fManualBnb;  /* Path A (kGenuinePathA): a genuine BNBTrackpadDevice we instantiate +
-                               start directly on this real channel (bypass IOKit matching, which
-                               can't be tricked — see findings S2.2c). */
+    IOService *fManualBnb;  /* a genuine BNBTrackpadDevice we instantiate + start directly on this
+                               real channel (bypass IOKit matching, which can't be tricked — see
+                               findings S2.2c). */
     IOTimerEventSource *fInterposeTimer;  /* polls for BNB's interrupt channel, then installs the shim */
     int fInterposeTries;            /* retry budget for the installer poll */
     int fReEnableCount;             /* Path A: # of post-install 0xF1 re-enables sent (force multitouch mode) */
@@ -54,7 +54,7 @@ public:
      * AppleMultitouchDevice (S2.16/S2.17). arg0 = the interposed interrupt channel. */
     static IOReturn triggerInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
 
-    /* Full-BNB geometry (kBnbGeometry): clone the transport's vtable + override
+    /* BNB geometry: clone the transport's vtable + override
      * getMultitouchReport so BNB's spawned AMD publishes real sensor geometry on its first
      * cacheDeviceProperties (before the MTDevice is born). installBnbGeometry() runs BEFORE the
      * create trigger; removeBnbGeometry() restores the original vtable on stop. */

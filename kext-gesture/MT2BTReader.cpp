@@ -27,7 +27,6 @@
  * with C++ linkage on both sides — no extern "C". */
 #include "mt2_bt_decode.h"
 #include "mt2_pipeline.h"   /* MT2_EVENT_DRIVEN */
-#include "mt2_build_flags.h"   /* kFullBnb, kBnbGeometry */
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
@@ -53,19 +52,10 @@ extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 
-/* PATH A (branch genuine-bnbtrackpad-citizen, design 2026-06-20-bnb-pathA-interpose-seam).
- * When true: manual-start a genuine BNBTrackpadDevice on the control channel, YIELD the
- * interrupt-channel data delegate so BNB's own listenAt succeeds (removing the §S2.5 panic
- * vector), then interpose our MT2->MT1 shim on the channel's delegate-callback slot. Default
- * false = today's behaviour (we own the delegate + feed our AppleMultitouchDevice). */
-static const bool kGenuinePathA = true;
-
-/* B1-b (findings S2.17): keep the proven hybrid input (shim → submitFrame → our fDevice drives
- * cursor + gestures), and redirect BNB's handler slot (BNB+0x1b0) to our fDevice. BNB's prefs path
- * _setMultitouchPreferences reads +0x1b0 and calls setPreferences on it (RE-confirmed) — so prefpane
- * settings land on the device actually emitting frames → controls apply. No trigger / no BNB tee
- * (would double-feed via the redirect). */
-static const bool kB1Spike = false;
+/* The shipped architecture (design 2026-06-20-bnb-pathA-interpose-seam): on the control channel we
+ * manual-start a genuine BNBTrackpadDevice, YIELD the interrupt-channel data delegate so BNB's own
+ * listenAt succeeds (removing the §S2.5 panic vector), then interpose our MT2->MT1 shim on the
+ * channel's delegate-callback slot. Apple's BNB drives cursor/gestures/prefpane; we condition + inject. */
 
 /* Field offsets: canonical values + re/ commands live in ../src/mt2_stack.h. These are readable
  * local aliases so the numbers exist in exactly one place (no doc/build drift). */
@@ -80,17 +70,18 @@ static const bool kB1Spike = false;
 IOService *gGenuineBnb = 0;
 
 /* The PSM-19 (interrupt) reader instance — the session's active frame source (it calls
- * connectionEstablished(self)). Under Path A the hybrid shim feeds decoded frames back through
- * gActiveMT2Gesture->submitFrame(gInterruptReader, ...) so OUR cursor-wired AppleMultitouchDevice
- * drives the cursor + gestures, while BNB (fed the MT1 tee) keeps the genuine prefpane lit. */
+ * connectionEstablished(self)). The interpose shim feeds decoded frames through
+ * gActiveMT2Gesture->submitFrame(gInterruptReader, ...), conditioned by the shared session and
+ * routed to BNB's own spawned AMD (setBnbTarget). */
 static IOService *gInterruptReader = 0;
 
-/* Saved BNB delegate the shim forwards to (single genuine device, like gGenuineBnb). */
+/* Saved BNB delegate: triggerInGate injects the handler-create trigger through it (spawning BNB's
+ * AMD) and stop()'s restore puts it back on the channel (single genuine device, like gGenuineBnb). */
 static void *gOrigCb = 0;
 static IOService *gOrigTarget = 0;
 static IOBluetoothL2CAPChannel *gInterposedChannel = 0;
 
-/* Full-BNB geometry (kBnbGeometry): our transport instance's cloned vtable. */
+/* BNB geometry: our transport instance's cloned vtable. */
 static vtc_clone_t gBnbVtableClone;
 static bool        gBnbVtableCloned = false;
 
@@ -128,16 +119,6 @@ extern "C" int mt2_bnb_get_multitouch_report_info(void *transport, unsigned char
         return 0;
     }
     return (int)0xe00002c7;
-}
-
-/* newTransportString override (transport vtable slot 0x868). multitouchProperties() calls this on the
- * transport and stamps the result as the spawned AMD's "Transport" property. Returning a non-BT string
- * makes _MTDeviceGetTransportMethod report != 4 (Bluetooth), so MTSlideGesture::isBlocked skips its
- * buggy edge-reserve (the dead zone). Returns a +1 OSString the caller releases (matches the genuine
- * contract). RE-confirmed this slot's only on-transport caller is multitouchProperties. */
-extern "C" OSString *mt2_bnb_new_transport_string(void *thisptr) {
-    (void)thisptr;
-    return OSString::withCString("USB");
 }
 
 static uint32_t bt_uptime_ms(void) {
@@ -191,25 +172,15 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     if (tf.ntouches > 0)
         MT2_DLOG(2, "edge x=%d y=%d ts=%u", tf.touches[0].x, tf.touches[0].y, bt_uptime_ms());
 
-    /* FULL-BNB feed: route through the SHARED mt2_session — the same conditioning the smooth
-     * fDevice path uses (drop-lifted, MakeTouch/Touching/BreakTouch lifecycle, liftoff) — but
-     * with the session sink targeting BNB's own AMD (setBnbTarget). The previous direct feed
-     * (raw mt1_encode -> handleTouchFrame, no lifecycle states) janked the cursor everywhere:
-     * the recognizer never saw proper contact-start/lift transitions. Reuses the proven path. */
-    if (kFullBnb) {
-        if (gActiveMT2Gesture && gInterruptReader) {
-            void *amd = gGenuineBnb ? *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF) : 0;
-            gActiveMT2Gesture->setBnbTarget(amd);
-            gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
-        }
-        return;
-    }
-
-    /* HYBRID feed (retired synthetic path, !kFullBnb): drove OUR own AppleMultitouchDevice through
-     * the shared session. kFullBnb is unconditional now (the branch above always returns), so this is
-     * unreachable; the flag collapse removes it. */
-    if (gActiveMT2Gesture && gInterruptReader)
+    /* Feed: route through the SHARED mt2_session — drop-lifted, MakeTouch/Touching/BreakTouch
+     * lifecycle, liftoff — with the session sink targeting BNB's own spawned AMD (setBnbTarget). A
+     * raw direct feed (mt1_encode -> handleTouchFrame, no lifecycle states) janked the cursor: the
+     * recognizer never saw proper contact-start/lift transitions. */
+    if (gActiveMT2Gesture && gInterruptReader) {
+        void *amd = gGenuineBnb ? *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF) : 0;
+        gActiveMT2Gesture->setBnbTarget(amd);
         gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
+    }
 }
 
 /* Runs in-gate (the channel's Bluetooth workloop): the only place IOBluetoothFamily
@@ -333,16 +304,16 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
      * channel handshakes, and blocking while holding the gate would deadlock. start() runs the full
      * IOHIDDevice chain on a real provider, so the IOHIDDevice state initializes (no publish-handler
      * panic). Best-effort; failure leaves our reader untouched. */
-    if (kGenuinePathA && fIsControl) {
+    if (fIsControl) {
         OSObject *bo = OSMetaClass::allocClassWithName("BNBTrackpadDevice");
         IOService *bnb = OSDynamicCast(IOService, bo);
         if (!bnb) {
             IOLog("MT2BTReader: allocClassWithName(BNBTrackpadDevice) NULL (AppleBluetoothMultitouch loaded?)\n");
             if (bo) bo->release();
         } else {
-            /* B1: pass genuine DefaultMultitouchProperties so BNB's spawned AppleMultitouchDevice is
-             * recognized + drives the cursor (findings S2.17). Hybrid (no B1) only needs a non-null dict. */
-            OSDictionary *props = (kB1Spike || kFullBnb) ? bt_build_bnb_props() : OSDictionary::withCapacity(2);
+            /* Pass genuine DefaultMultitouchProperties so BNB's spawned AppleMultitouchDevice is
+             * recognized + drives the cursor (findings S2.17). */
+            OSDictionary *props = bt_build_bnb_props();
             bool ok = props && bnb->init(props);
             if (props) props->release();
             if (ok) IOLog("MT2BTReader: [diag] pre-attach chan->isInactive=%d\n", fChannel->isInactive());
@@ -351,15 +322,15 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
                  * _cacheDeviceProperties query, or the MTDevice is born with empty geometry and
                  * the late timer-install is never consulted. Install here (idempotent; the later
                  * pre-trigger call no-ops). If start() fails we restore before release. */
-                if (kFullBnb) installBnbGeometry(bnb);
+                installBnbGeometry(bnb);
                 if (bnb->start(fChannel)) {
                     fManualBnb = bnb;
                     gGenuineBnb = bnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
-                    IOLog("MT2BTReader: Path A manual BNBTrackpadDevice start OK\n");
+                    IOLog("MT2BTReader: manual BNBTrackpadDevice start OK\n");
                     bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, bnb, 0, 0);
                 } else {
                     IOLog("MT2BTReader: manual BNBTrackpadDevice start() FAILED\n");
-                    if (kFullBnb) removeBnbGeometry(bnb);   /* restore vtable before freeing */
+                    removeBnbGeometry(bnb);   /* restore vtable before freeing */
                     bnb->detach(fChannel);
                     bnb->release();
                 }
@@ -473,7 +444,7 @@ IOReturn com_schmonz_MT2BTReader::triggerInGate(OSObject * /*owner*/, void *arg0
  * Instance-scoped: only this transport's vtable pointer changes; the shared class vtable (and a
  * co-connected genuine MT1's transport) is untouched. */
 void com_schmonz_MT2BTReader::installBnbGeometry(void *transport) {
-    if (!kBnbGeometry || !transport || gBnbVtableCloned) return;
+    if (!transport || gBnbVtableCloned) return;
     /* Safety gate: we clone THIS object's vtable and write slot 0xcc8, valid only if it really is
      * the BNBTrackpadDevice transport (its vtable has getMultitouchReport there). If the handle is
      * ever something else, cloning + slot-write would corrupt an unrelated method -> panic. Verify
@@ -493,11 +464,6 @@ void com_schmonz_MT2BTReader::installBnbGeometry(void *transport) {
          * fails it never reaches getMultitouchReport (0xcc8). Override both on the same clone. */
         vtc_override_slot(&gBnbVtableClone, GMRINFO_SLOT_INDEX,
                           (void *)&mt2_bnb_get_multitouch_report_info);
-        /* Edge-clamp experiment: override newTransportString so the AMD reports non-BT transport,
-         * skipping the isBlocked edge-reserve dead zone (costs from-edge swipes — see flag comment). */
-        if (kEdgeNoBtTransport)
-            vtc_override_slot(&gBnbVtableClone, MT2_VT_newTransportString / sizeof(void *),
-                              (void *)&mt2_bnb_new_transport_string);
         gBnbVtableCloned = true;
         MT2_DLOG(1, "BNB geometry override installed on transport %p (data slot %lu, info slot %lu)",
                  transport, (unsigned long)GMR_SLOT_INDEX, (unsigned long)GMRINFO_SLOT_INDEX);
@@ -553,13 +519,11 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
                 /* Override OUR transport's getMultitouchReport BEFORE the trigger, so the AMD the
                  * trigger is about to spawn answers its bring-up geometry query from our constants
                  * (the MTDevice is born with correct dims; a late install would be too late). */
-                if (kFullBnb)
-                    self->installBnbGeometry(gGenuineBnb);
-                /* B1-drive: interpose is in (gOrigCb = BNB's data cb). Inject the handler-create
-                 * trigger ONCE, in this same channel gate, so BNB spawns its own AMD before the
-                 * re-enable phase. (gInterposedChannel is now set; this success branch runs once.) */
-                if (kFullBnb)
-                    gate->runAction(&com_schmonz_MT2BTReader::triggerInGate, ch);
+                self->installBnbGeometry(gGenuineBnb);
+                /* Interpose is in (gOrigCb = BNB's data cb). Inject the handler-create trigger ONCE,
+                 * in this same channel gate, so BNB spawns its own AMD before the re-enable phase.
+                 * (gInterposedChannel is now set; this success branch runs once.) */
+                gate->runAction(&com_schmonz_MT2BTReader::triggerInGate, ch);
                 ts->setTimeoutMS(250);  /* installed → enter phase 2 (re-enable multitouch) */
                 return;
             }
