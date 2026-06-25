@@ -231,8 +231,9 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
  * genuine config — parser-type 1000 + the MultitouchHID plugin IOCFPlugInTypes — so the AppleMultitouchDevice
  * BNB spawns is recognized by MultitouchSupport (gets a user client, drives the cursor). Mirrors the
  * BNBTrackpadDriver personality (re/plist AppleBluetoothMultitouch). Caller inits with it, then releases.
- * Returns NULL on alloc failure. */
-static OSDictionary *bt_build_bnb_props(void) {
+ * Returns NULL on alloc failure. Returns the dict as void* (the gh_config_t build_props signature;
+ * gh_default_init_attach casts back). */
+static void *bt_build_bnb_props(void) {
     OSDictionary *top    = OSDictionary::withCapacity(1);
     OSDictionary *mt     = OSDictionary::withCapacity(9);
     OSDictionary *plugin = OSDictionary::withCapacity(1);
@@ -270,18 +271,11 @@ static OSDictionary *bt_build_bnb_props(void) {
     return top;
 }
 
-/* ---- genuine_host adapter: the six generic ops are the shared gh_default_* (gh_default_adapter.h);
- * BT supplies init_attach (bt_build_bnb_props + attach), interpose (the geometry vtable clone), restore.
- * The L2CAP delegate poke (the input seam) is NOT here — it is installed async by interposeTimerFired
- * after BNB's interrupt channel appears. interpose/restore call the reader's installBnbGeometry/
- * removeBnbGeometry, so they read h->ctx; init_attach reads only h->obj/h->provider. ---- */
-static bool bt_gh_init_attach(gh_host_t *h) {
-    OSDictionary *props = bt_build_bnb_props();
-    bool ok = props && ((IOService *)h->obj)->init(props)
-                    && ((IOService *)h->obj)->attach((IOService *)h->provider);
-    if (props) props->release();
-    return ok;
-}
+/* ---- genuine_host adapter: the seven generic ops are the shared gh_default_* (gh_default_adapter.h),
+ * with bt_build_bnb_props supplied via cfg.build_props; BT supplies only interpose (the geometry vtable
+ * clone) + restore. The L2CAP delegate poke (the input seam) is NOT here — it is installed async by
+ * interposeTimerFired after BNB's interrupt channel appears. interpose/restore call the reader's
+ * installBnbGeometry/removeBnbGeometry, so they read h->ctx. ---- */
 static int bt_gh_interpose(gh_host_t *h) {
     ((com_schmonz_MT2BTReader *)h->ctx)->installBnbGeometry(h->obj);  /* geometry vtable clone (class-gated) */
     return gBnbVtableCloned ? 0 : -1;       /* all-or-nothing: a failed clone is an interpose failure */
@@ -290,7 +284,7 @@ static void bt_gh_restore(gh_host_t *h) {
     ((com_schmonz_MT2BTReader *)h->ctx)->removeBnbGeometry(h->obj);   /* vtc_restore of the geometry clone */
 }
 static const gh_adapter_t kBtAdapter = {
-    gh_default_alloc, gh_default_class_ok, bt_gh_init_attach, bt_gh_interpose,
+    gh_default_alloc, gh_default_class_ok, gh_default_init_attach, bt_gh_interpose,
     gh_default_start, bt_gh_restore, gh_default_detach, gh_default_terminate, gh_default_release
 };
 
@@ -334,7 +328,7 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
         /* Host a genuine BNBTrackpadDevice via the shared genuine_host core: manual-start + class-gate +
          * geometry vtable interpose (live BEFORE start, so the AMD bring-up's first cacheDeviceProperties
          * sees real geometry) + start. gh_start fully unwinds on any failure (restore-before-terminate). */
-        static const gh_config_t cfg = { "BNBTrackpadDevice", "BNBTrackpadDevice" };
+        static const gh_config_t cfg = { "BNBTrackpadDevice", "BNBTrackpadDevice", bt_build_bnb_props };
         if (gh_start(&fHost, &cfg, &kBtAdapter, this, fChannel) == 0) {
             fManualBnb = (IOService *)fHost.obj;
             gGenuineBnb = fManualBnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */

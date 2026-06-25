@@ -154,8 +154,9 @@ static void mt2_dict_str(OSDictionary *d, const char *key, const char *val) {
  * (HIDServiceSupport + IOCFPlugInTypes -> MultitouchHID.plugin). HIDDefaultBehavior=Trackpad (NOT the
  * personality's Mouse) because MT2 multitouch-streaming emits no mouse reports. parser-options 39=0x27
  * (bit 0x2 = clicky-hardware gate); prefs seeded under both keys so click/right-click enable. Values
- * from src/mt2_geometry.c + Apple's genuine USB personality (RE'd 2026-06-24). Caller releases. */
-static OSDictionary *usb_build_init_props(void) {
+ * from src/mt2_geometry.c + Apple's genuine USB personality (RE'd 2026-06-24). Caller releases.
+ * Returns the dict as void* (the gh_config_t build_props signature; gh_default_init_attach casts back). */
+static void *usb_build_init_props(void) {
     OSDictionary *initp = OSDictionary::withCapacity(24);
     if (!initp) return 0;
     OSString *ucc = OSString::withCString("AppleUSBMultitouchUserClient");
@@ -200,16 +201,9 @@ static OSDictionary *usb_build_init_props(void) {
     return initp;
 }
 
-/* ---- genuine_host adapter: the six generic ops are the shared gh_default_* (gh_default_adapter.h);
- * USB supplies only init_attach (seed dict + attach), interpose (handleReport vtable clone), restore.
- * These three read only h->obj/h->provider (+ file-static clone state), so they need no reader ctx. ---- */
-static bool usb_gh_init_attach(gh_host_t *h) {
-    OSDictionary *initp = usb_build_init_props();
-    bool ok = initp && ((IOService *)h->obj)->init(initp)
-                    && ((IOService *)h->obj)->attach((IOService *)h->provider);
-    if (initp) initp->release();
-    return ok;
-}
+/* ---- genuine_host adapter: the seven generic ops are the shared gh_default_* (gh_default_adapter.h),
+ * with usb_build_init_props supplied via cfg.build_props; USB supplies only interpose (handleReport
+ * vtable clone) + restore. These read only h->obj (+ file-static clone state), so they need no ctx. ---- */
 static int usb_gh_interpose(gh_host_t *h) {
     if (vtc_clone_override(h->obj, USB_VTABLE_SPAN, USB_HANDLEREPORT_SLOT_INDEX,
                            (void *)&mt2_usb_handle_report, &gUsbVtableClone) != 0) return -1;
@@ -225,7 +219,7 @@ static void usb_gh_restore(gh_host_t *h) {
     }
 }
 static const gh_adapter_t kUsbAdapter = {
-    gh_default_alloc, gh_default_class_ok, usb_gh_init_attach, usb_gh_interpose,
+    gh_default_alloc, gh_default_class_ok, gh_default_init_attach, usb_gh_interpose,
     gh_default_start, usb_gh_restore, gh_default_detach, gh_default_terminate, gh_default_release
 };
 
@@ -238,7 +232,8 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     mt2_usb_reframe_reset();          /* fresh per-finger lifecycle history for this stream */
     gLastUsbButton = 0;               /* fresh physical-button edge state for this stream */
 
-    static const gh_config_t cfg = { "AppleUSBMultitouchDriver", "AppleUSBMultitouchDriver" };
+    static const gh_config_t cfg = { "AppleUSBMultitouchDriver", "AppleUSBMultitouchDriver",
+                                     usb_build_init_props };
     if (gh_start(&fHost, &cfg, &kUsbAdapter, this, fIntf) != 0) {
         IOLog("MT2USBReader: genuine host start failed\n");
         return false;

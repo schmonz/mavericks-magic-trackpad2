@@ -21,10 +21,12 @@ typedef enum {
     GH_IDLE = 0, GH_ALLOCED, GH_ATTACHED, GH_INTERPOSED, GH_STARTED
 } gh_state_t;
 
-/* Per-transport config (becomes a device-table ROW in any future engine). */
+/* Per-transport config (a device-table ROW: the per-device facts the generic adapter ops read). */
 typedef struct {
     const char *driver_class;   /* allocClassWithName target */
     const char *safety_class;   /* expected getClassName() before any vtable write */
+    void *(*build_props)(void); /* build the seeded init dict (as OSDictionary*, returned as void*;
+                                   gh_default_init_attach init+attaches it, caller releases). */
 } gh_config_t;
 
 /* The live hosting operation: state + everything the adapter callbacks read. */
