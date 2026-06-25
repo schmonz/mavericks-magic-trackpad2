@@ -166,3 +166,55 @@ consumer contributes one row of "here is its input seam and the format it expect
 contributes one row of "here is how I decode and which consumer/seam I target." See
 `reference.md` (vtable slots, report formats) and `open-questions.md` (the genuine-USB packet
 layout + interpose seam, fully pinned 2026-06-24) for the concrete values that would populate it.
+
+## Bluetooth prefpane device identity: name + picture (RE'd 2026-06-25)
+
+How the **Bluetooth** System-Prefs pane labels and pictures our MT2, and what it would take to make
+it look like a genuine Magic Trackpad. These are SEPARATE from the *Trackpad* pane (that one is the
+recognizer/`BNBTrackpadDevice` story above); this is the **`Bluetooth` pane's device row**.
+
+### Name — cleanly fixable via `displayName`
+The pane shows the device's Bluetooth friendly name from `blued`'s cache
+(`/Library/Preferences/com.apple.Bluetooth` → `DeviceCache[<addr>]`). `blued` fetches it from the
+device (HCI Remote Name Request) on every connect and stores it in **`Name`**, stamping
+`LastNameUpdate`. On 10.9 the MT2's fetch yields **garbage — the two bytes `0x02 0x01`** (not text);
+this is a **stock-10.9 limitation, NOT our driver** — proven by A/B: it re-corrupts on a clean
+power-cycle with our kext fully unloaded (the `0x02 0x01` matching our enable payload was coincidence).
+BUT the pane prefers a separate user-rename key, **`displayName`**, which `blued` does NOT clobber on
+re-fetch. Setting `displayName` once (e.g. "Magic Trackpad 2") sticks across power-cycles/transports —
+**proven on-device** (a manual Rename persisted). That's the (a) fix; it must be set through the proper
+path (a direct PlistBuddy edit of the cache is overwritten by `cfprefsd`/`blued`).
+
+### Picture — CoD-driven, no per-device hook, only fixable by in-process hook/patch
+The device picture resolves in **`IOBluetoothUI.framework`**, class **`IOBluetoothDeviceImageVault`**:
+`imageForDevice:forMacTarget:` reads the device's **Class-of-Device** (`deviceClassMajor` /
+`deviceClassMinor`) → `imageForMajorDeviceClass:minorDeviceClass:forMacTarget:` → a **nested dict
+lookup `vault[NSNumber(major)][NSNumber(minor)]`** (with a per-major `minor="none"` fallback). On a
+miss it returns the generic **`UIBluetoothLogo.icns`**. The vault is populated in
+`-[IOBluetoothDeviceImageVault initImageDictionaries]`; there is also an `imageForModelString:`
+by-model path. Each entry is a dict resolved by **`loadResourcesForDict:`**, which supplies the image
+via ANY of: **`ImageObject`** (a ready `NSImage`), **`SystemIconID`** (→ `imageForSystemIconType:ofSize:`),
+**`BundleID`** (→ `_LSCopyBundleURLWithIdentifier`), or **`BundlePath` + `ResourceName`** (an `NSBundle`
+resource file). → **An arbitrary external image file is natively supported by the entry format**
+(`BundlePath`+`ResourceName`, or a constructed `ImageObject`).
+
+- The **MT2's CoD = `0x594`** → major 5 (Peripheral), minor `0x25` → not a vault key → generic logo
+  (user-confirmed icon = the Bluetooth logo).
+- The **Magic Trackpad 1 asset is `Trackpad.prefPane/TrackpadPicture.png`** (the picture we'd want).
+- There is **no per-device image override** like `displayName`, and the **CoD is re-fetched from the
+  live device every connect** (a cache override of `ClassOfDevice` does NOT stick — proven: set
+  `1428`→`9600`, restarted `blued`, it re-fetched and overwrote back to `1428`). So the picture cannot
+  be fixed via the cache.
+
+**To make the Bluetooth pane show the MT1 picture (or any custom file) for our device**, the resolution
+happens in-process from the live CoD, so we must hook `IOBluetoothUI` in the processes that render BT
+device rows — **System Preferences (Bluetooth pane), `BluetoothUIServer`, the Bluetooth menu extra** —
+by either: (i) inserting a `vault[5][0x25]` entry after `initImageDictionaries`, or (ii) swizzling
+`imageForDevice:`/`imageForMajorDeviceClass:` to return our image for our device. The entry/return is:
+- **MT1 asset:** `{ BundlePath = "/System/Library/PreferencePanes/Trackpad.prefPane"; ResourceName = "TrackpadPicture.png"; }`
+- **Arbitrary file:** `{ BundlePath = "<our dir>"; ResourceName = "<our file>"; }` or `{ ImageObject = <NSImage from our file>; }`
+
+Delivery: `DYLD_INSERT_LIBRARIES` / a SIMBL-style plugin into those processes, OR a binary patch of the
+on-disk `IOBluetoothUI` (feasible only because **10.9 has no SIP**). Tradeoffs (see `decisions.md`):
+invasive (shared Apple UI), per-process or system-file, reverted by OS updates — cosmetic, unlike the
+clean `displayName` name fix.

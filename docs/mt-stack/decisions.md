@@ -115,3 +115,15 @@ IOKit msg `kIOMessageVoodooInputMessage`=12345), so one device targets both eras
 (open question, not decided): VoodooInput's normal **publish-a-nub-and-let-IOKit-match** is cleaner than
 our manual-start — does it work on 10.9? (Has teeth: catalogue residue, built-in gating, the un-started
 `IOHIDDevice` panic above.)
+
+### Override the cached `ClassOfDevice` to fix the Bluetooth-pane picture — *not functioning*
+The pane's device picture is chosen from the device's Class-of-Device via `IOBluetoothDeviceImageVault`
+(see explanation.md "Bluetooth prefpane device identity"). We hoped to override the MT2's CoD in
+`blued`'s cache so it maps to the trackpad vault entry. **Doesn't stick:** set `DeviceCache[<addr>]
+.ClassOfDevice` `1428`→`9600`, restarted `blued`; on the MT2's reconnect `blued` **re-fetched the CoD
+from the live device and overwrote it back to `1428`** (`LastNameUpdate` advanced; file reverted). So
+CoD is live-sourced every connect, and there is no per-device image override key (unlike `displayName`
+for the name). **Reopening criterion:** none via the cache — the only ways to change the picture are
+hooking/patching `IOBluetoothUI` in the BT-UI processes (System Prefs / `BluetoothUIServer` / menu
+extra) or a binary patch of the framework (feasible only because 10.9 has no SIP). Cosmetic; deferred.
+Contrast: the **name** has the `displayName` user-override key → clean, persistent fix (do that).
