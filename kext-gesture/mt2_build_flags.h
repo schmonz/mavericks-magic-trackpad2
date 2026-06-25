@@ -46,8 +46,11 @@ static const bool kEdgeNoBtTransport = false;
  * (vtable slot 0xb28) ourselves; parser-options=39 opens its capability gate. Two-finger TAP-to-right-
  * click also works now: the recognizer's deferred secondary-tap commit runs per-frame, but our device
  * goes silent at liftoff, so we pump zero-contact absence frames (IOTimerEventSource) for ~450ms after
- * silence to carry the commit across the double-tap window. ALL features now work on-device. Synthetic-USB
- * stays the DEFAULT (flag false = ship-safe) until genuine-USB is signed off + this branch merges to main.
- * Flip true to run on-device (see memory mt2-genuine-usb-resume-here for the sequence). */
-static const bool kGenuineUsb = false;
+ * silence to carry the commit across the double-tap window. ALL features now work on-device.
+ * NOW THE DEFAULT (signed off + merged 2026-06-24). The synthetic-USB reader below (flag false) is kept
+ * as a fallback until the thorough synthetic-removal plan runs (see memory mt2-synthetic-removal-plan).
+ * DEPLOY PREREQ: genuine-USB needs AppleUSBMultitouch.kext LOADED (for the class symbol; it does not bind
+ * our device — its on-disk personalities lack PID 613). On a clean boot it is NOT auto-loaded, so the
+ * deploy path must load it (OSBundleLibraries dep or the LaunchDaemon) for booted genuine-USB to work. */
+static const bool kGenuineUsb = true;
 #endif
