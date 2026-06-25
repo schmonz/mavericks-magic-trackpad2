@@ -81,11 +81,52 @@ static void test_reframe_rejects_non_touch_report(void) {
     CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0, out, sizeof(out), &outlen), -1);
 }
 
+/* --- physical-button edge (genuine-USB handleButton feed) ---------------------------------------
+ * The genuine driver never gets the button from the MT frame (its handleButtonState/handleButton are
+ * fed by a separate button provider that manual-start lacks). So we detect the button edge in the MT2
+ * 0x02 report (byte[1] bit0) and hand AppleUSBMultitouchDriver::handleButton a button report whose
+ * byte[15] carries the state (RE'd: handleButton reads only report[0xf]). */
+
+static void test_button_edge_press_fills_byte15(void) {
+    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0x01;  /* button DOWN */
+    uint8_t last = 0, rep[16];
+    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 1);     /* changed -> dispatch */
+    CHECK_EQ(rep[15], 0x01);                                   /* button in report byte 15 */
+    for (int i = 0; i < 15; i++) CHECK_EQ(rep[i], 0x00);       /* rest zero */
+    CHECK_EQ(last, 0x01);                                      /* state advanced */
+}
+
+static void test_button_edge_no_change_no_dispatch(void) {
+    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0x01;
+    uint8_t last = 0x01, rep[16]; memset(rep, 0xEE, sizeof(rep));
+    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 0);     /* unchanged -> no dispatch */
+    CHECK_EQ(rep[0], 0xEE);                                    /* report left untouched */
+}
+
+static void test_button_edge_release_dispatches(void) {
+    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0x00;  /* button UP */
+    uint8_t last = 0x01, rep[16]; memset(rep, 0xEE, sizeof(rep));
+    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 1);     /* 1 -> 0 -> dispatch */
+    CHECK_EQ(rep[15], 0x00);
+    CHECK_EQ(last, 0x00);
+}
+
+static void test_button_edge_masks_bit0_only(void) {
+    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0xFE;  /* bit0 clear */
+    uint8_t last = 0x01, rep[16];
+    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 1);     /* only bit0 counts -> 1->0 */
+    CHECK_EQ(rep[15], 0x00);
+}
+
 static void run_tests(void) {
     test_checksum_trivial();
     test_checksum_live_vector();
     test_reframe_emits_0x28_frame_with_valid_checksum();
     test_reframe_lifecycle_make_then_drag();
     test_reframe_rejects_non_touch_report();
+    test_button_edge_press_fills_byte15();
+    test_button_edge_no_change_no_dispatch();
+    test_button_edge_release_dispatches();
+    test_button_edge_masks_bit0_only();
 }
 TEST_MAIN()

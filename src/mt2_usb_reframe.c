@@ -18,6 +18,17 @@ static int             g_lc_ready = 0;
 
 void mt2_usb_reframe_reset(void) { mt2_lifecycle_reset(&g_lc); g_lc_ready = 1; }
 
+/* Physical-button edge detector for the genuine-USB handleButton feed. See header. */
+int mt2_usb_button_edge(const uint8_t *mt2, size_t mt2_len, uint8_t *last, uint8_t *out_report) {
+    if (!mt2 || !last || !out_report || mt2_len < 2) return 0;
+    uint8_t btn = mt2[1] & 0x01;
+    if (btn == *last) return 0;                 /* no edge -> nothing to dispatch */
+    *last = btn;
+    for (int i = 0; i < 16; i++) out_report[i] = 0;
+    out_report[15] = btn;                       /* handleButton reads the button from report[0xf] */
+    return 1;
+}
+
 /* Genuine-USB feed = the SAME pipeline the working synthetic/BT paths use, then Apple's checksum.
  * mt1_encode already emits report 0x28 — the CompactV4 PATH frame type MultitouchSupport parses — with
  * the 4-byte CompactV4 timestamp header and the contact byte layout the recognizer drives the cursor

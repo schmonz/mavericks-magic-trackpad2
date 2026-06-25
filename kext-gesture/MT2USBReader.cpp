@@ -28,6 +28,10 @@ extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
 
 /* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
 #define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
+/* handleButton vtable BYTE offset 0xb28 -> slot index (RE'd 2026-06-24). The genuine driver gets the
+ * physical button from a separate button-provider service (buttonPublished) that our manual-start
+ * lacks, so handleButton never fires; we call it ourselves with a button report (byte[15]=state). */
+#define USB_HANDLEBUTTON_SLOT_INDEX  (0xb28 / sizeof(void *))
 #define USB_VTABLE_SPAN              0x2000
 
 static vtc_clone_t gUsbVtableClone;
@@ -35,6 +39,8 @@ static bool        gUsbVtableCloned = false;
 typedef IOReturn (*usb_handle_report_fn)(void *self, IOMemoryDescriptor *report,
                                          IOHIDReportType type, IOOptionBits options);
 static usb_handle_report_fn gOrigUsbHandleReport = 0;
+typedef void (*usb_handle_button_fn)(void *self, uint8_t *report);
+static uint8_t gLastUsbButton = 0;             /* last physical-button state seen (edge-gated) */
 
 static uint32_t usb_ts_22bit(void) {
     clock_sec_t s; clock_usec_t u;
@@ -56,6 +62,15 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     report->readBytes(0, mt2, mn);
     if (mt2[0] != 0x02)                                   /* not a touch report: pass through untouched */
         return gOrigUsbHandleReport(self, report, type, options);
+
+    /* Physical click: the genuine driver's handleButton is normally fed by a button-provider service
+     * our manual-start lacks, so it never fires. Detect the button edge in the report and drive
+     * handleButton ourselves (reuses Apple's dispatch to the already-wired event driver). */
+    uint8_t btnrep[16];
+    if (mt2_usb_button_edge(mt2, (size_t)mn, &gLastUsbButton, btnrep)) {
+        usb_handle_button_fn hb = (usb_handle_button_fn)((*(void ***)self)[USB_HANDLEBUTTON_SLOT_INDEX]);
+        if (hb) hb(self, btnrep);
+    }
 
     size_t outlen = 0;
     if (mt2_usb_to_compactv4(mt2, (size_t)mn, usb_ts_22bit(), out, sizeof(out), &outlen) != 0)
@@ -160,6 +175,7 @@ static void mt2_dict_str(OSDictionary *d, const char *key, const char *val) {
  * is interposed. Best-effort; on any failure we restore-then-release and leave our reader untouched. */
 bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     mt2_usb_reframe_reset();          /* fresh per-finger lifecycle history for this stream */
+    gLastUsbButton = 0;               /* fresh physical-button edge state for this stream */
     OSObject *go = OSMetaClass::allocClassWithName("AppleUSBMultitouchDriver");
     IOService *genuine = OSDynamicCast(IOService, go);
     if (!genuine) {

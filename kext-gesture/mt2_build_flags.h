@@ -39,11 +39,13 @@ static const bool kEdgeNoBtTransport = false;
  * dict (its setProperty override drops keys; manual-start skips personality merge), and interpose
  * handleReport (vtable slot 0x117) to reframe each MT2 0x02 report into a CompactV4 PATH frame
  * (the reframe now reuses the proven pipeline: mt2_usb_decode -> drop_lifted -> lifecycle -> mt1_encode
- * which already emits the 0x28 CompactV4 PATH frame, + Apple checksum). CURSOR/SCROLL/SWIPE/TAP WORK
- * on-device (committed 8041e8d, 2026-06-24). UNTESTED gaps pending one device test: (a) physical +
- * 2-finger right CLICK via parser-options=39 (the "clicky hardware" bit 0x2; committed f1652c2), and
- * (b) Trackpad PREFPANE appearance (manual-start vs IOKit-matching presence check). Synthetic-USB stays
- * the DEFAULT (flag false = ship-safe) until those two are device-validated + this branch merges to main.
- * Flip true to run the click+prefpane test (see memory mt2-genuine-usb-resume-here for the sequence). */
+ * which already emits the 0x28 CompactV4 PATH frame, + Apple checksum). CURSOR/SCROLL/SWIPE/TAP/
+ * PHYSICAL CLICK/2-FINGER PHYSICAL RIGHT-CLICK and the Trackpad PREFPANE all WORK on-device
+ * (2026-06-24). Physical click: the genuine driver's handleButton is normally fed by a button-provider
+ * service our manual-start lacks, so we detect the button edge in the report and call handleButton
+ * (vtable slot 0xb28) ourselves; parser-options=39 opens its capability gate. Remaining refinement:
+ * two-finger TAP-to-right-click is flaky (a recognizer gesture, not the physical button). Synthetic-USB
+ * stays the DEFAULT (flag false = ship-safe) until genuine-USB is signed off + this branch merges to main.
+ * Flip true to run on-device (see memory mt2-genuine-usb-resume-here for the sequence). */
 static const bool kGenuineUsb = false;
 #endif

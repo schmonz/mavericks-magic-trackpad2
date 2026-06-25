@@ -28,6 +28,16 @@ int mt2_usb_to_compactv4(const uint8_t *mt2, size_t mt2_len, uint32_t ts,
 /* Clear the per-finger lifecycle history (call at device start). */
 void mt2_usb_reframe_reset(void);
 
+/* Physical-button edge for the genuine-USB path. The genuine AppleUSBMultitouchDriver gets the
+ * button from a separate button-provider service (handleButton, fed via buttonPublished) that our
+ * manual-start lacks — NOT from the MT frame — so the in-frame button bit can never click here.
+ * Instead, detect the button edge in the MT2 0x02 report (button = mt2[1] & 0x01) and, on a CHANGE,
+ * fill a 16-byte button report for AppleUSBMultitouchDriver::handleButton, which reads the button
+ * from report byte[15] (RE'd 2026-06-24). *last holds the previously-seen button (0/1); the caller
+ * persists it across reports. Returns 1 if the button changed (out_report filled, *last updated),
+ * else 0 (out_report untouched). mt2_len < 2 is treated as no change. */
+int mt2_usb_button_edge(const uint8_t *mt2, size_t mt2_len, uint8_t *last, uint8_t *out_report);
+
 #ifdef __cplusplus
 }
 #endif
