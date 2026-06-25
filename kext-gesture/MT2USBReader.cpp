@@ -22,6 +22,7 @@
 #include "mt2_usb_reframe.h"           /* mt2_usb_to_compactv4 (host-tested reframe) */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
+#include "mt2_geometry.h"              /* MT2_SURFACE_WIDTH/HEIGHT — one knob shared with the BT report */
 
 /* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
 #define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
@@ -146,6 +147,12 @@ static void mt2_dict_str(OSDictionary *d, const char *key, const char *val) {
     if (s) { d->setObject(key, s); s->release(); }
 }
 
+/* Set a raw-bytes (OSData) property in an init dictionary (released after init copies it). */
+static void mt2_dict_data(OSDictionary *d, const char *key, const void *bytes, unsigned int len) {
+    OSData *o = OSData::withBytes(bytes, len);
+    if (o) { d->setObject(key, o); o->release(); }
+}
+
 /* Build the init dict that seeds the manually-started AppleUSBMultitouchDriver. Seed via the INIT
  * dictionary, not setProperty: the driver overrides every setProperty variant and drops unknown keys,
  * but init() forwards the dict to super::init which populates the property table directly. Manual-start
@@ -161,11 +168,24 @@ static void *usb_build_init_props(void) {
     if (!initp) return 0;
     OSString *ucc = OSString::withCString("AppleUSBMultitouchUserClient");
     if (ucc) { initp->setObject("IOUserClientClass", ucc); ucc->release(); }
-    mt2_dict_num(initp, "Family ID", 0x80);            /* 128 */
-    mt2_dict_num(initp, "Sensor Rows", 13);
-    mt2_dict_num(initp, "Sensor Columns", 16);
-    mt2_dict_num(initp, "Sensor Surface Width", 13000);
-    mt2_dict_num(initp, "Sensor Surface Height", 11300);
+    /* GENUINE MT2 geometry (one source of truth in mt2_geometry.h; the half-resolution 16x13 grid +
+     * zeroed region we used before was the edge-dead-zone root cause — see docs/mt-stack). */
+    mt2_dict_num(initp, "Family ID", MT2_FAMILY_ID);   /* 129 */
+    mt2_dict_num(initp, "Sensor Rows", MT2_SENSOR_ROWS);     /* 22 */
+    mt2_dict_num(initp, "Sensor Columns", MT2_SENSOR_COLS);  /* 30 */
+    mt2_dict_num(initp, "Sensor Surface Width", MT2_SURFACE_WIDTH);    /* 15600 = 156mm */
+    mt2_dict_num(initp, "Sensor Surface Height", MT2_SURFACE_HEIGHT);  /* 11040 = 110.4mm */
+    mt2_dict_data(initp, "Sensor Region Descriptor", mt2_region_descriptor, sizeof(mt2_region_descriptor));
+    mt2_dict_data(initp, "Sensor Region Param", mt2_region_param, sizeof(mt2_region_param));
+    {   /* Surface Descriptor = Width/Height u32 LE + the genuine 8-byte tail */
+        unsigned char sdesc[16];
+        sdesc[0] = MT2_SURFACE_WIDTH & 0xff;        sdesc[1] = (MT2_SURFACE_WIDTH >> 8) & 0xff;
+        sdesc[2] = (MT2_SURFACE_WIDTH >> 16) & 0xff; sdesc[3] = (MT2_SURFACE_WIDTH >> 24) & 0xff;
+        sdesc[4] = MT2_SURFACE_HEIGHT & 0xff;       sdesc[5] = (MT2_SURFACE_HEIGHT >> 8) & 0xff;
+        sdesc[6] = (MT2_SURFACE_HEIGHT >> 16) & 0xff; sdesc[7] = (MT2_SURFACE_HEIGHT >> 24) & 0xff;
+        for (unsigned i = 0; i < 8; i++) sdesc[8 + i] = mt2_surface_desc_tail[i];
+        mt2_dict_data(initp, "Sensor Surface Descriptor", sdesc, sizeof(sdesc));
+    }
     mt2_dict_num(initp, "parser-type", 1000);
     mt2_dict_num(initp, "parser-options", 39);
     initp->setObject("Driver is Ready", kOSBooleanTrue);

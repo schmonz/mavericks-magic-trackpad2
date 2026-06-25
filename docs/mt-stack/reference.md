@@ -85,7 +85,27 @@ Geometry id → property (from `AppleMultitouchDevice::decodeDeviceProperty`):
 | `0x7f` | rCRITICAL_ERRORS (must read 0) |
 | `0xdb` | Multitouch ID — **skipped** (driver must not answer) |
 
-Calibrated MT2 values (`src/mt2_geometry.c`): Family `0x80`(128), Rows 13, Cols 16, Surface 13000×11300.
+**GENUINE MT2 geometry — ground truth (captured 2026-06-25 from a real Magic Trackpad 2, ProductID 613,
+on macOS 26.5.1 / M1, via `tools/genuine_mt2_geometry.sh` → `ioreg`).** These are the values to seed; our
+earlier seeds were a half-resolution grid + zeroed region (the edge-dead-zone root cause — see
+`open-questions.md` / [[mt2-cursor-edge-clamp]]):
+
+| Property (`0xNN`) | Genuine MT2 | We had seeded |
+|---|---|---|
+| Family ID (`0xd1`) | **129** | 128 (`0x80`) |
+| Sensor Rows (`0xd3`) | **22** | 13 |
+| Sensor Columns (`0xd3`) | **30** | 16 |
+| Surface Width/Height (`0xd9`) | **15600 × 11040** (156.0 × 110.4 mm) | 13000×11300 |
+| Surface Descriptor (`0xd9` tail) | `f0 3c 00 00  20 2b 00 00  44 e3 52 ff bd 1e e4 26` (16B; first 8 = W/H LE) | not sent (len 8) |
+| Sensor Region Descriptor (`0xd0`) | `02 01 00 14 01 00 1e 00 02 14 02 01 0e 02 00` (15B; `0x1e`=30=Cols) | 16 zero bytes |
+| Sensor Region Param (`0xa1`) | `00 00 05 00 fe 01` (6B) | 16 zero bytes |
+
+(Built-in MacBookAir trackpad, for contrast: Family 106, Cols 24, Rows 18, Surface 11897×8044.) **How we
+got it:** `ioreg -lrw0 -c AppleMultitouchDevice` on modern macOS with the genuine MT2 attached; the MT2 is
+the node with `Product="Magic Trackpad"` / `ProductID 613` / `MT Built-In=No`. The recognizer builds its
+position-normalization rectangle from this grid/region, so the half-resolution seed shrank the active area
+to ~half the pad → perpendicular-axis edge dead zones. Seed these genuine values in `src/mt2_geometry.c`
+(BT) and `usb_build_init_props` (USB).
 
 **Coordinate-range caveat (edge-clamp root):** MT1 native X `-2909..3167`, Y `-2456..2565`; MT2 X
 `-3678..3934`, Y `-2478..2587` — an ~18–20% X-scale variance. `mt1_encode`'s X range can clamp near
