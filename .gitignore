@@ -12,10 +12,7 @@ kext-gesture/*.o
 # root tool binaries (compiled from tools/*.c by `make`)
 /mt2d
 /mt_listen
-/vhid_probe
-/mt2_reenumerate
-/mt2_usb_enable
-/mt2_set_btname
+/sbin/
 
 # tools/ compiled helpers (the .c sources + the `re` toolkit are tracked; these built binaries aren't)
 tools/feed_probe

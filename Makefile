@@ -2,6 +2,8 @@ CC      = clang
 CFLAGS  = -Wall -Wextra -Wno-missing-field-initializers -O2 -std=c99
 FRAMEWORKS = -framework IOKit -framework CoreFoundation
 SRC = src
+# built command-line tools live here (gitignored), not the repo root
+SBIN = sbin
 VERSION = 1.0.0
 PKG_ID  = com.schmonz.mt2d
 
@@ -9,27 +11,30 @@ PKG_ID  = com.schmonz.mt2d
 
 all: tools
 
-tools: vhid_probe mt2_reenumerate mt2_set_btname mt2_bt_bounce
+tools: $(SBIN)/vhid_probe $(SBIN)/mt2_reenumerate $(SBIN)/mt2_set_btname $(SBIN)/mt2_bt_bounce
 
-vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c
+$(SBIN):
+	@mkdir -p $@
+
+$(SBIN)/vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c | $(SBIN)
 	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
-mt2_reenumerate: tools/mt2_reenumerate.c
+$(SBIN)/mt2_reenumerate: tools/mt2_reenumerate.c | $(SBIN)
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
 
 # ObjC (IOBluetooth): give the paired MT2 a proper Bluetooth-prefpane name via setDisplayName:.
 # 10.9 mis-fetches the device name (stores garbage 0x02 0x01); displayName is the user-override key
 # blued keeps. Picture stays generic (a 10.9 limitation; see docs/mt-stack).
-mt2_set_btname: tools/mt2_set_btname.m
+$(SBIN)/mt2_set_btname: tools/mt2_set_btname.m | $(SBIN)
 	$(CC) $(CFLAGS) -fobjc-arc -o $@ $< -framework Foundation -framework IOBluetooth
 
 # ObjC (IOBluetooth): force a clean BT re-establish of the paired MT2 (closeConnection->openConnection),
 # the Bluetooth twin of mt2_reenumerate. Used by `make reload` so a hot reload doesn't strand the device
 # on a stale link (the device never re-opens PSM 19 -> BNB manual-start fails until a manual tap).
-mt2_bt_bounce: tools/mt2_bt_bounce.m
+$(SBIN)/mt2_bt_bounce: tools/mt2_bt_bounce.m | $(SBIN)
 	$(CC) $(CFLAGS) -fobjc-arc -o $@ $< -framework Foundation -framework IOBluetooth
 
-mt2_usb_enable: tools/mt2_usb_enable.c
+$(SBIN)/mt2_usb_enable: tools/mt2_usb_enable.c | $(SBIN)
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
 
 # Build the gesture kext (delegates to its own makefile).
@@ -42,7 +47,7 @@ kext-gesture:
 # manual tap). Here: unload -> wait for our nub + BNB to drain (bounded) -> load -> bounce whichever
 # transport is present (BT via mt2_bt_bounce, USB via mt2_reenumerate). The MT2 drives one transport at
 # a time, so bouncing both is safe — the absent one is a no-op. Tools are prereqs so they're built first.
-reload: mt2_bt_bounce mt2_reenumerate
+reload: $(SBIN)/mt2_bt_bounce $(SBIN)/mt2_reenumerate
 	$(MAKE) -C kext-gesture unload
 	@echo "reload: waiting for our nub + BNB to drain (async teardown)..."
 	@for i in $$(seq 1 50); do \
@@ -51,19 +56,19 @@ reload: mt2_bt_bounce mt2_reenumerate
 	done
 	$(MAKE) -C kext-gesture load
 	@echo "reload: bouncing present transport(s) for a clean re-establish..."
-	-./mt2_bt_bounce
-	-./mt2_reenumerate
+	-$(SBIN)/mt2_bt_bounce
+	-$(SBIN)/mt2_reenumerate
 
 # Assemble an installer. The unsigned kext goes under /usr/local/lib/mt2d (NOT
 # /Library/Extensions, which enforces signing); the launchd wrapper kextloads it
 # from there. Root-run binaries + wrapper -> /usr/local/sbin, LaunchDaemon -> /Library.
-pkg: mt2_reenumerate mt2_set_btname kext-gesture
+pkg: $(SBIN)/mt2_reenumerate $(SBIN)/mt2_set_btname kext-gesture
 	rm -rf build/pkgroot build/scripts
 	mkdir -p build/pkgroot/usr/local/lib/mt2d
 	mkdir -p build/pkgroot/usr/local/sbin
 	mkdir -p build/pkgroot/Library/LaunchDaemons
 	cp -R kext-gesture/MT2Gesture.kext build/pkgroot/usr/local/lib/mt2d/
-	cp mt2_reenumerate mt2_set_btname dist/mt2d-run build/pkgroot/usr/local/sbin/
+	cp $(SBIN)/mt2_reenumerate $(SBIN)/mt2_set_btname dist/mt2d-run build/pkgroot/usr/local/sbin/
 	chmod +x build/pkgroot/usr/local/sbin/mt2d-run
 	cp dist/com.schmonz.mt2d.plist build/pkgroot/Library/LaunchDaemons/
 	cp -R dist/scripts build/scripts
@@ -115,5 +120,6 @@ $(TESTDIR)/test_coordinator: tests/test_coordinator.c $(SRC)/mt2_coordinator.c |
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f vhid_probe mt2_reenumerate mt2_set_btname mt2_bt_bounce mt2_usb_enable test_gesture *.o
-	rm -rf build
+	rm -rf $(SBIN) build
+	# legacy root-built tool binaries (pre-sbin/ layout) — clean any stragglers
+	rm -f vhid_probe mt2_reenumerate mt2_set_btname mt2_bt_bounce mt2_usb_enable mt_listen test_gesture *.o
