@@ -5,11 +5,11 @@ SRC = src
 VERSION = 1.0.0
 PKG_ID  = com.schmonz.mt2d
 
-.PHONY: all test clean tools kext-gesture pkg
+.PHONY: all test clean tools kext-gesture pkg reload
 
 all: tools
 
-tools: vhid_probe mt2_reenumerate mt2_set_btname
+tools: vhid_probe mt2_reenumerate mt2_set_btname mt2_bt_bounce
 
 vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c
 	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
@@ -23,12 +23,36 @@ mt2_reenumerate: tools/mt2_reenumerate.c
 mt2_set_btname: tools/mt2_set_btname.m
 	$(CC) $(CFLAGS) -fobjc-arc -o $@ $< -framework Foundation -framework IOBluetooth
 
+# ObjC (IOBluetooth): force a clean BT re-establish of the paired MT2 (closeConnection->openConnection),
+# the Bluetooth twin of mt2_reenumerate. Used by `make reload` so a hot reload doesn't strand the device
+# on a stale link (the device never re-opens PSM 19 -> BNB manual-start fails until a manual tap).
+mt2_bt_bounce: tools/mt2_bt_bounce.m
+	$(CC) $(CFLAGS) -fobjc-arc -o $@ $< -framework Foundation -framework IOBluetooth
+
 mt2_usb_enable: tools/mt2_usb_enable.c
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
 
 # Build the gesture kext (delegates to its own makefile).
 kext-gesture:
 	$(MAKE) -C kext-gesture
+
+# reload: swap in a freshly built kext AND force the device to re-establish cleanly, so we never hit the
+# async-teardown collision. `make -C kext-gesture unload && load` alone leaves the BT link up, so the
+# device never re-opens PSM 19 and the manual-started BNBTrackpadDevice can't bind (dead pad until a
+# manual tap). Here: unload -> wait for our nub + BNB to drain (bounded) -> load -> bounce whichever
+# transport is present (BT via mt2_bt_bounce, USB via mt2_reenumerate). The MT2 drives one transport at
+# a time, so bouncing both is safe — the absent one is a no-op. Tools are prereqs so they're built first.
+reload: mt2_bt_bounce mt2_reenumerate
+	$(MAKE) -C kext-gesture unload
+	@echo "reload: waiting for our nub + BNB to drain (async teardown)..."
+	@for i in $$(seq 1 50); do \
+	  ioreg -lw0 | grep -q '"com_schmonz_MT2Gesture"=1\|"BNBTrackpadDevice"=1' || break; \
+	  sleep 0.1; \
+	done
+	$(MAKE) -C kext-gesture load
+	@echo "reload: bouncing present transport(s) for a clean re-establish..."
+	-./mt2_bt_bounce
+	-./mt2_reenumerate
 
 # Assemble an installer. The unsigned kext goes under /usr/local/lib/mt2d (NOT
 # /Library/Extensions, which enforces signing); the launchd wrapper kextloads it
@@ -87,5 +111,5 @@ $(TESTDIR)/test_usb_reframe: tests/test_usb_reframe.c $(SRC)/mt2_usb_reframe.c $
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f vhid_probe mt2_reenumerate mt2_set_btname mt2_usb_enable test_gesture *.o
+	rm -f vhid_probe mt2_reenumerate mt2_set_btname mt2_bt_bounce mt2_usb_enable test_gesture *.o
 	rm -rf build
