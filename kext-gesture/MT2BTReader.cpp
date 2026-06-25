@@ -22,8 +22,6 @@
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
 #include "MT2Gesture.h"
-#include "../src/mt2_to_mt1.h"
-#include "../src/mt1_encode.h"
 
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
  * with C++ linkage on both sides — no extern "C". */
@@ -33,7 +31,6 @@
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
-#include "amd_shim.h"          /* AppleMultitouchDevice::handleTouchFrame (full-BNB direct feed) */
 
 extern "C" {
 #include "mt2_geometry.h"      /* single source of the sensor-geometry D-report payloads */
@@ -208,38 +205,11 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
         return;
     }
 
-    /* HYBRID feed 1: drive OUR cursor-wired AppleMultitouchDevice through the shared session
-     * (cursor + gestures — the same path the normal driver uses). gInterruptReader matches the
-     * source connectionEstablished() armed, so the session accepts the frame. */
+    /* HYBRID feed (retired synthetic path, !kFullBnb): drove OUR own AppleMultitouchDevice through
+     * the shared session. kFullBnb is unconditional now (the branch above always returns), so this is
+     * unreachable; the flag collapse removes it. */
     if (gActiveMT2Gesture && gInterruptReader)
         gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
-
-    /* HYBRID feed 2: tee the MT1 0x28 to BNB to keep its restart-watchdog quiet. SKIPPED under B1-b:
-     * there BNB+0x1b0 points at our fDevice, so teeing would route postMultitouchFrame back into
-     * fDevice and double-feed it. (B1-b accepts the benign watchdog instead.) */
-    if (!kB1Spike && gOrigCb) {
-        uint8_t mt1[256];
-        mt1[0] = 0xA1;
-        int n = mt1_encode(&tf, mt1 + 1, sizeof(mt1) - 1, bt_uptime_ms());
-        if (n > 0) {
-            typedef void (*l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
-            ((l2cap_cb_t)gOrigCb)(gOrigTarget, channel, (unsigned short)(n + 1), mt1);
-        }
-    }
-}
-
-void com_schmonz_MT2BTReader::incomingData(IOService *target,
-                                           IOBluetoothL2CAPChannel *channel,
-                                           unsigned short length, void *data) {
-    (void)channel;
-    const uint8_t *b = (const uint8_t *)data;
-    if (!b || length < 2) return;
-    const uint8_t *report = b;
-    size_t rlen = length;
-    if (b[0] == 0xA1) { report = b + 1; rlen = length - 1; }   /* strip transport byte */
-    touch_frame_t tf;
-    if (mt2_bt_decode(report, rlen, &tf) != 0) return;
-    if (gActiveMT2Gesture) gActiveMT2Gesture->submitFrame(target, &tf);   /* target = this reader */
 }
 
 /* Runs in-gate (the channel's Bluetooth workloop): the only place IOBluetoothFamily
@@ -267,32 +237,17 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
             gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
     }
 
-    /* Listen on the INTERRUPT channel (PSM 19) — EXCEPT under Path A, where Apple's genuine
-     * BNBTrackpadDevice must own this delegate (its handleStart listenAt's it; if we hold it,
-     * BNB's listenAt returns 0xe00002bc -> forced teardown -> panic, findings §S2.5/§S2.6). */
-    if (psm == 0x13 && !kGenuinePathA)
-        self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
-
-    /* Enable multitouch streaming on the CONTROL channel only (PSM 17 = 0x11). The
-     * MT2's Bluetooth enable is feature report 0xF1 {0xF1,0x02,0x01} (confirmed via
-     * IOHIDDeviceSetReport). Over raw L2CAP a SET_REPORT(feature) is the HIDP
-     * transaction byte (SET_REPORT<<4)|FEATURE = 0x53 then the report. */
+    /* PSM 19 (interrupt): genuine BNBTrackpadDevice owns this channel's delegate (its handleStart
+     * listenAt's it). We do NOT listen on it ourselves — if we held it, BNB's listenAt would return
+     * 0xe00002bc -> forced teardown -> panic (findings §S2.5/§S2.6). We interpose BNB's delegate later
+     * (interposeInGate) instead of owning the channel. */
     self->fIsControl = (psm == 0x11);
-    if (psm == 0x11 && !kFullBnb) {
-        /* Keep sending the MT2's 0xF1 multitouch enable — a genuine BNBTrackpadDevice only knows
-         * the MT1 0xD7 enable, which the MT2 ignores, so WITHOUT this the pad never streams. */
-        static const uint8_t kEnable[] = { MT2_HIDP_SET_REPORT_FEATURE, MT2_ENABLE_REPORT_ID, 0x02, 0x01 };
-        IOLog("MT2BTReader: [diag] before 0xF1 sendTo isInactive=%d\n", self->fChannel->isInactive());
-        self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
-        IOLog("MT2BTReader: [diag] after 0xF1 send, PSM17 isInactive=%d\n",
-              self->fChannel->isInactive());
-    }
-    /* B1-drive (root cause 2026-06-21): firing 0xF1 on PSM 17 BEFORE the channel reaches OPEN makes
-     * sendTo block ~14s; the device tears the link down meanwhile (it never got the genuine
-     * listenAt + waitForChannelState(OPEN) acceptance) -> channel inactive -> BNB attach fails -> flap.
-     * So DEFER 0xF1: let BNB's handleStart accept PSM 17 first; the phase-2 reEnable timer sends 0xF1
-     * after both channels are OPEN (RE §6). */
-    IOLog("MT2BTReader: setup on PSM=%u (enable sent=%d)\n", psm, psm == 0x11);
+    /* DEFER the 0xF1 multitouch enable (root cause 2026-06-21): firing 0xF1 on PSM 17 BEFORE the
+     * channel reaches OPEN makes sendTo block ~14s; the device tears the link down meanwhile (it never
+     * got the genuine listenAt + waitForChannelState(OPEN) acceptance) -> channel inactive -> BNB
+     * attach fails -> flap. So we let BNB's handleStart accept PSM 17 first; the phase-2 reEnable timer
+     * sends 0xF1 after both channels are OPEN (RE §6). */
+    IOLog("MT2BTReader: setup on PSM=%u\n", psm);
     /* A control channel coming up starts a new connection attempt — bump the id and mark CONTROL_UP. */
     if (psm == 0x11) { gConnId++; bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0); }
     return kIOReturnSuccess;

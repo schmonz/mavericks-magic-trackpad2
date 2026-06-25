@@ -8,11 +8,11 @@ class IOTimerEventSource;
 
 /* Matches the Magic Trackpad 2's Bluetooth L2CAP channel (its BT-SIG identity:
  * VendorID 76 / ProductID 613 / VendorIDSource 1) with a high IOProbeScore — the same
- * identity Apple's stock BNBTrackpadDevice matches. On start it enables multitouch
- * (0xF1) and registers an incoming-data listener; each interrupt frame is decoded
- * (mt2_bt_decode) and pushed to the active MT2Gesture nub via submitFrame
- * (MT2_EVENT_DRIVEN) — the shared session owns settle/lift-drop/decel/click. The BT
- * counterpart of the USB transport. */
+ * identity Apple's stock BNBTrackpadDevice matches. On the control channel it manual-starts a
+ * genuine BNBTrackpadDevice on the real L2CAP channel, then interposes a MT2->MT1 translation shim
+ * on BNB's interrupt-channel delegate, injects sensor geometry, and defers the 0xF1 multitouch
+ * enable — so Apple's own BNB drives the cursor/gestures/prefpane and we only condition the
+ * stream. The BT counterpart of the USB transport. */
 class com_schmonz_MT2BTReader : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2BTReader)
     IOBluetoothL2CAPChannel *fChannel;
@@ -60,9 +60,5 @@ public:
      * create trigger; removeBnbGeometry() restores the original vtable on stop. */
     void installBnbGeometry(void *transport);
     void removeBnbGeometry(void *transport);
-
-    /* IOBluetoothL2CAPChannel::listenAt callback: (target, channel, length, data). */
-    static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
-                             unsigned short length, void *data);
 };
 #endif
