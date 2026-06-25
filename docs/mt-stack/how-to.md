@@ -18,15 +18,15 @@ Recipes. For the model see `explanation.md`; for facts see `reference.md`.
 ## Dev-loop (reload without reboot)
 
 ```sh
-# 1. pad OFF first (unloading while it streams risks a UAF panic)
-sudo kextunload -b com.schmonz.MT2Gesture
-# 2. build + stage + load
-make -C kext-gesture load
-# 3. pad ON
+# Reloading while the pad is ON/streaming is fine — empirically clean across many reloads; teardown
+# restores the cloned vtable FIRST (no power-off dance needed; the old "pad OFF first" rule was dropped).
+make -C kext-gesture unload   # drop the running/boot copy
+make -C kext-gesture load     # build + stage + load
 ```
 
-- **Full-BNB needs ABM loaded**, or `allocClassWithName("BNBTrackpadDevice")` returns NULL:
-  `sudo kextload /System/Library/Extensions/AppleBluetoothMultitouch.kext`
+- **`make load` now also `kextload`s `AppleUSBMultitouch.kext` + `AppleBluetoothMultitouch.kext`** first
+  (the genuine paths `allocClassWithName` `AppleUSBMultitouchDriver` / `BNBTrackpadDevice` from those —
+  NULL class otherwise). The booted deploy does the same in `dist/mt2d-run`.
 - **Always verify the loaded binary contains your edit** before trusting a test (stale `.o` has
   burned us): `strings kext-gesture/MT2Gesture.kext/Contents/MacOS/MT2Gesture | grep '<your string>'`
 - **`dmesg` accumulates across reloads** — mark the line count (`sudo dmesg | grep -c CONNTRACE`)
@@ -83,3 +83,31 @@ tools/re vtable AppleBluetoothMultitouch BNBTrackpadDevice 0xcd8   # expect getM
 ```
 Do RE only through the in-tree `re/` wrappers (readable, allowlist-friendly), never raw otool/nm/ioreg
 ad hoc. A future `re/verify-facts` could read the header and check every constant at once.
+
+## Verify the post-merge polish (on-device, pending as of 2026-06-25)
+
+Three deploy/identity changes shipped to `main` need on-device confirmation. Preconditions: a USB
+backup pointer is live; the updated package is deployed (`make pkg` + `sudo installer -pkg
+build/mt2d-1.0.0.pkg -target /`, already done once).
+
+1. **Two-boot boot-load test** (the genuine paths need Apple's kexts loaded at boot — `0109c9d`).
+   First `sudo /usr/local/sbin/mt2d-run --reset` (sentinel → `ok`).
+   - **USB boot:** cable the MT2, reboot. After boot (no manual `kextload`): cursor / 2-finger scroll /
+     4-finger swipe / tap / physical click / 2-finger physical+tap right-click / Trackpad prefpane all
+     work. Bonus: unplug → it should fall to BT and work (hot-swap).
+   - **BT boot:** uncable (BT), reboot. Same checklist over BT. Glance at `/var/log/mt2d.log` for
+     `full-gesture mode confirmed healthy` vs a `recover_full` cycle (BT boot match-race backstop).
+   - Pass ⇒ the boot-load + sentinel fixes (`0109c9d`,`5bd650b`) are confirmed.
+
+2. **Does the `Product` seed populate the node?** (`484e229`). Reload the kext, reconnect the MT2, then:
+   `tools/re ioreg-props BNBTrackpadDevice "Product"` (BT) / `... AppleUSBMultitouchDriver "Product"`
+   (USB) — expect `"Magic Trackpad 2"`. If still empty, the genuine driver overrides `Product` from the
+   device and init-dict seeding doesn't stick for that key (revert the two seeds).
+
+3. **Does `mt2_set_btname` work from root@launchd at boot?** First clear the override:
+   `sudo /usr/libexec/PlistBuddy -c "Delete :DeviceCache:<addr>:displayName" /Library/Preferences/com.apple.Bluetooth.plist`
+   (or rename the device to junk), reboot, then check the Bluetooth pane shows "Magic Trackpad 2" and
+   `defaults read /Library/Preferences/com.apple.Bluetooth DeviceCache | grep -iA22 <addr> | grep displayName`.
+   If it did NOT get set, IOBluetooth `setDisplayName:` needs a user session → move the invocation from
+   `dist/mt2d-run` (root LaunchDaemon) to a per-user LaunchAgent. (Running the tool by hand in a user
+   shell is known to work + live-update the pane.)

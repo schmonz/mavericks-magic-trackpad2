@@ -249,6 +249,8 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
                                                            /* + 2-finger click dead while taps worked. (RE'd 2026-06-24.) */
         initp->setObject("Driver is Ready", kOSBooleanTrue);
         initp->setObject("MTHIDDevice", kOSBooleanTrue);
+        mt2_dict_str(initp, "Product", "Magic Trackpad 2");  /* accurate IOKit identity (manual-start
+                                                              * leaves it empty); matches the BT path */
 
         /* hidd-engagement properties the IOKit personality merge would have supplied — but
          * allocClassWithName manual-start skips that merge. WITHOUT these, hidd never opens an

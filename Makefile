@@ -9,13 +9,19 @@ PKG_ID  = com.schmonz.mt2d
 
 all: tools
 
-tools: vhid_probe mt2_reenumerate
+tools: vhid_probe mt2_reenumerate mt2_set_btname
 
 vhid_probe: tools/vhid_probe.c $(SRC)/vhid_mt1.c
 	$(CC) $(CFLAGS) -o $@ $^ $(FRAMEWORKS)
 
 mt2_reenumerate: tools/mt2_reenumerate.c
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
+
+# ObjC (IOBluetooth): give the paired MT2 a proper Bluetooth-prefpane name via setDisplayName:.
+# 10.9 mis-fetches the device name (stores garbage 0x02 0x01); displayName is the user-override key
+# blued keeps. Picture stays generic (a 10.9 limitation; see docs/mt-stack).
+mt2_set_btname: tools/mt2_set_btname.m
+	$(CC) $(CFLAGS) -fobjc-arc -o $@ $< -framework Foundation -framework IOBluetooth
 
 mt2_usb_enable: tools/mt2_usb_enable.c
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
@@ -27,13 +33,13 @@ kext-gesture:
 # Assemble an installer. The unsigned kext goes under /usr/local/lib/mt2d (NOT
 # /Library/Extensions, which enforces signing); the launchd wrapper kextloads it
 # from there. Root-run binaries + wrapper -> /usr/local/sbin, LaunchDaemon -> /Library.
-pkg: mt2_reenumerate kext-gesture
+pkg: mt2_reenumerate mt2_set_btname kext-gesture
 	rm -rf build/pkgroot build/scripts
 	mkdir -p build/pkgroot/usr/local/lib/mt2d
 	mkdir -p build/pkgroot/usr/local/sbin
 	mkdir -p build/pkgroot/Library/LaunchDaemons
 	cp -R kext-gesture/MT2Gesture.kext build/pkgroot/usr/local/lib/mt2d/
-	cp mt2_reenumerate dist/mt2d-run build/pkgroot/usr/local/sbin/
+	cp mt2_reenumerate mt2_set_btname dist/mt2d-run build/pkgroot/usr/local/sbin/
 	chmod +x build/pkgroot/usr/local/sbin/mt2d-run
 	cp dist/com.schmonz.mt2d.plist build/pkgroot/Library/LaunchDaemons/
 	cp -R dist/scripts build/scripts
@@ -83,5 +89,5 @@ $(TESTDIR)/test_usb_reframe: tests/test_usb_reframe.c $(SRC)/mt2_usb_reframe.c $
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -f vhid_probe mt2_reenumerate mt2_usb_enable test_gesture *.o
+	rm -f vhid_probe mt2_reenumerate mt2_set_btname mt2_usb_enable test_gesture *.o
 	rm -rf build

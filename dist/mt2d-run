@@ -123,6 +123,14 @@ log "attempting full-gesture mode"
 # BT + USB reader personalities bind the device on their own.
 "$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 
+# Give the paired Bluetooth MT2 a real name in the Bluetooth prefpane. 10.9 mis-fetches the device's
+# BT name (stores garbage), but the user-override "displayName" key persists; -[IOBluetoothDevice
+# setDisplayName:] is the only way to set it (userspace IOBluetooth API — the kext can't). Best-effort,
+# idempotent, persistent once set; matches the MT2 by Class-of-Device among paired devices. (The device
+# PICTURE stays the generic Bluetooth logo — a 10.9 limitation; see docs/mt-stack.) NOTE: runs as root
+# from launchd here; if setDisplayName needs a user session, move this to a per-user LaunchAgent.
+"$SBIN/mt2_set_btname" "Magic Trackpad 2" >/dev/null 2>&1 || true
+
 # Conditional re-enumerate. Let IOKit matching settle, then check whether our USB
 # reader won interface 1. At cold boot the cabled MT2 is claimed by IOUSBHIDDriver
 # before this kext loads, and kextload does NOT preempt an already-matched nub, so we

@@ -332,6 +332,11 @@ static OSDictionary *bt_build_bnb_props(void) {
      * (MT2Gesture.cpp setProperty before start). */
     mt->setObject(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
     top->setObject("DefaultMultitouchProperties", mt);
+    /* Accurate IOKit identity: manual-start leaves the BNB node's "Product" empty (a real MT2 reports
+     * it over BT). Seed it so System Report / any Product reader shows the genuine name. (Distinct from
+     * the Bluetooth-pane name, which is blued's displayName — set by mt2_set_btname.) */
+    OSString *prod = OSString::withCString("Magic Trackpad 2");
+    if (prod) { top->setObject("Product", prod); prod->release(); }
     plpath->release(); ptype->release(); popts->release();
     plugin->release(); mt->release();
     return top;
