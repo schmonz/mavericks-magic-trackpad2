@@ -21,6 +21,7 @@
 #include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
 #include "mt2_usb_reframe.h"           /* mt2_usb_to_compactv4 (host-tested reframe) */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
+#include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
 
 /* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
 #define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
@@ -199,57 +200,33 @@ static OSDictionary *usb_build_init_props(void) {
     return initp;
 }
 
-/* ---- genuine_host adapter: host AppleUSBMultitouchDriver + handleReport vtable interpose ---- */
-void *com_schmonz_MT2USBReader::gh_alloc(void *ctx, const char *cls) {
-    (void)ctx;
-    OSObject *o = OSMetaClass::allocClassWithName(cls);
-    IOService *s = OSDynamicCast(IOService, o);
-    if (!s && o) o->release();
-    return s;
-}
-bool com_schmonz_MT2USBReader::gh_class_ok(void *ctx, void *obj, const char *e) {
-    (void)ctx;
-    const char *cls = ((IOService *)obj)->getMetaClass()->getClassName();
-    return cls && strcmp(cls, e) == 0;
-}
-bool com_schmonz_MT2USBReader::gh_init_attach(void *ctx, void *obj) {
-    com_schmonz_MT2USBReader *self = (com_schmonz_MT2USBReader *)ctx;
+/* ---- genuine_host adapter: the six generic ops are the shared gh_default_* (gh_default_adapter.h);
+ * USB supplies only init_attach (seed dict + attach), interpose (handleReport vtable clone), restore.
+ * These three read only h->obj/h->provider (+ file-static clone state), so they need no reader ctx. ---- */
+static bool usb_gh_init_attach(gh_host_t *h) {
     OSDictionary *initp = usb_build_init_props();
-    bool ok = initp && ((IOService *)obj)->init(initp) && ((IOService *)obj)->attach(self->fIntf);
+    bool ok = initp && ((IOService *)h->obj)->init(initp)
+                    && ((IOService *)h->obj)->attach((IOService *)h->provider);
     if (initp) initp->release();
     return ok;
 }
-int com_schmonz_MT2USBReader::gh_interpose(void *ctx, void *obj) {
-    (void)ctx;
-    if (vtc_clone_override(obj, USB_VTABLE_SPAN, USB_HANDLEREPORT_SLOT_INDEX,
+static int usb_gh_interpose(gh_host_t *h) {
+    if (vtc_clone_override(h->obj, USB_VTABLE_SPAN, USB_HANDLEREPORT_SLOT_INDEX,
                            (void *)&mt2_usb_handle_report, &gUsbVtableClone) != 0) return -1;
     gOrigUsbHandleReport = (usb_handle_report_fn)
         (((void **)gUsbVtableClone.orig_vptr)[USB_HANDLEREPORT_SLOT_INDEX]);
     gUsbVtableCloned = true;
     return 0;
 }
-bool com_schmonz_MT2USBReader::gh_start_drv(void *ctx, void *obj) {
-    com_schmonz_MT2USBReader *self = (com_schmonz_MT2USBReader *)ctx;
-    return ((IOService *)obj)->start(self->fIntf);
-}
-void com_schmonz_MT2USBReader::gh_restore(void *ctx, void *obj) {
-    (void)ctx;
+static void usb_gh_restore(gh_host_t *h) {
     if (gUsbVtableCloned) {
-        vtc_restore(obj, &gUsbVtableClone);
+        vtc_restore(h->obj, &gUsbVtableClone);
         gUsbVtableCloned = false; gOrigUsbHandleReport = 0;
     }
 }
-void com_schmonz_MT2USBReader::gh_detach(void *ctx, void *obj) {
-    com_schmonz_MT2USBReader *self = (com_schmonz_MT2USBReader *)ctx;
-    ((IOService *)obj)->detach(self->fIntf);
-}
-void com_schmonz_MT2USBReader::gh_terminate(void *ctx, void *obj) { (void)ctx; ((IOService *)obj)->terminate(); }
-void com_schmonz_MT2USBReader::gh_release(void *ctx, void *obj)   { (void)ctx; ((IOService *)obj)->release(); }
-
-/* Out-of-class definition (runs in class scope, so it may reference the private gh_* callbacks). */
-const gh_adapter_t com_schmonz_MT2USBReader::kUsbAdapter = {
-    gh_alloc, gh_class_ok, gh_init_attach, gh_interpose, gh_start_drv,
-    gh_restore, gh_detach, gh_terminate, gh_release
+static const gh_adapter_t kUsbAdapter = {
+    gh_default_alloc, gh_default_class_ok, usb_gh_init_attach, usb_gh_interpose,
+    gh_default_start, usb_gh_restore, gh_default_detach, gh_default_terminate, gh_default_release
 };
 
 /* Genuine-USB path: host a genuine AppleUSBMultitouchDriver on our interface via the shared
@@ -262,7 +239,7 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     gLastUsbButton = 0;               /* fresh physical-button edge state for this stream */
 
     static const gh_config_t cfg = { "AppleUSBMultitouchDriver", "AppleUSBMultitouchDriver" };
-    if (gh_start(&fHost, &cfg, &kUsbAdapter, this) != 0) {
+    if (gh_start(&fHost, &cfg, &kUsbAdapter, this, fIntf) != 0) {
         IOLog("MT2USBReader: genuine host start failed\n");
         return false;
     }
@@ -317,7 +294,7 @@ void com_schmonz_MT2USBReader::releaseInterface(void) {
     /* genuine_host ordered, idempotent teardown: restore the vtable FIRST (avoids the in-flight
      * handleReport use-after-free), then terminate + release the genuine driver. State-aware + safe to
      * call twice (willTerminate then stop). */
-    gh_stop(&fHost, &kUsbAdapter, this);
+    gh_stop(&fHost, &kUsbAdapter);
     fGenuine = 0;
     fIntf = 0;                       /* we never opened it; don't close */
 }

@@ -22,18 +22,6 @@ class com_schmonz_MT2USBReader : public IOService {
     gh_host_t fHost;               /* genuine_host lifecycle handle for fGenuine */
     void releaseInterface(void);   /* reverse startGenuine; idempotent */
     bool startGenuine(IOService *provider);   /* manual-start + interpose Apple's driver */
-
-    /* genuine_host adapter callbacks (ctx = this reader, obj = the genuine driver). */
-    static void *gh_alloc(void *ctx, const char *cls);
-    static bool  gh_class_ok(void *ctx, void *obj, const char *e);
-    static bool  gh_init_attach(void *ctx, void *obj);
-    static int   gh_interpose(void *ctx, void *obj);
-    static bool  gh_start_drv(void *ctx, void *obj);
-    static void  gh_restore(void *ctx, void *obj);
-    static void  gh_detach(void *ctx, void *obj);
-    static void  gh_terminate(void *ctx, void *obj);
-    static void  gh_release(void *ctx, void *obj);
-    static const gh_adapter_t kUsbAdapter;   /* the nine callbacks above, as a gh_adapter_t */
 public:
     virtual bool start(IOService *provider) override;
     /* Release the interface here, NOT just in stop(): on device unplug/re-enumerate

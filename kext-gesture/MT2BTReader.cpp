@@ -31,6 +31,7 @@
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mt2_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
+#include "gh_default_adapter.h"      /* shared generic alloc/class_ok/start/detach/terminate/release */
 
 extern "C" {
 #include "mt2_geometry.h"      /* single source of the sensor-geometry D-report payloads */
@@ -269,52 +270,28 @@ static OSDictionary *bt_build_bnb_props(void) {
     return top;
 }
 
-/* ---- genuine_host adapter: host BNBTrackpadDevice + geometry vtable interpose ----
+/* ---- genuine_host adapter: the six generic ops are the shared gh_default_* (gh_default_adapter.h);
+ * BT supplies init_attach (bt_build_bnb_props + attach), interpose (the geometry vtable clone), restore.
  * The L2CAP delegate poke (the input seam) is NOT here — it is installed async by interposeTimerFired
- * after BNB's interrupt channel appears. The host's "interpose" is the geometry clone, which (as before)
- * must be live before start() and is restored before terminate(). */
-void *com_schmonz_MT2BTReader::gh_alloc(void *ctx, const char *cls) {
-    (void)ctx;
-    OSObject *o = OSMetaClass::allocClassWithName(cls);
-    IOService *s = OSDynamicCast(IOService, o);
-    if (!s && o) o->release();
-    return s;
-}
-bool com_schmonz_MT2BTReader::gh_class_ok(void *ctx, void *obj, const char *e) {
-    (void)ctx;
-    const char *cls = ((IOService *)obj)->getMetaClass()->getClassName();
-    return cls && strcmp(cls, e) == 0;
-}
-bool com_schmonz_MT2BTReader::gh_init_attach(void *ctx, void *obj) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
+ * after BNB's interrupt channel appears. interpose/restore call the reader's installBnbGeometry/
+ * removeBnbGeometry, so they read h->ctx; init_attach reads only h->obj/h->provider. ---- */
+static bool bt_gh_init_attach(gh_host_t *h) {
     OSDictionary *props = bt_build_bnb_props();
-    bool ok = props && ((IOService *)obj)->init(props) && ((IOService *)obj)->attach(self->fChannel);
+    bool ok = props && ((IOService *)h->obj)->init(props)
+                    && ((IOService *)h->obj)->attach((IOService *)h->provider);
     if (props) props->release();
     return ok;
 }
-int com_schmonz_MT2BTReader::gh_interpose(void *ctx, void *obj) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
-    self->installBnbGeometry(obj);          /* geometry vtable clone (class-gated internally too) */
+static int bt_gh_interpose(gh_host_t *h) {
+    ((com_schmonz_MT2BTReader *)h->ctx)->installBnbGeometry(h->obj);  /* geometry vtable clone (class-gated) */
     return gBnbVtableCloned ? 0 : -1;       /* all-or-nothing: a failed clone is an interpose failure */
 }
-bool com_schmonz_MT2BTReader::gh_start_drv(void *ctx, void *obj) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
-    return ((IOService *)obj)->start(self->fChannel);
+static void bt_gh_restore(gh_host_t *h) {
+    ((com_schmonz_MT2BTReader *)h->ctx)->removeBnbGeometry(h->obj);   /* vtc_restore of the geometry clone */
 }
-void com_schmonz_MT2BTReader::gh_restore(void *ctx, void *obj) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
-    self->removeBnbGeometry(obj);           /* vtc_restore of the geometry clone */
-}
-void com_schmonz_MT2BTReader::gh_detach(void *ctx, void *obj) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)ctx;
-    ((IOService *)obj)->detach(self->fChannel);
-}
-void com_schmonz_MT2BTReader::gh_terminate(void *ctx, void *obj) { (void)ctx; ((IOService *)obj)->terminate(); }
-void com_schmonz_MT2BTReader::gh_release(void *ctx, void *obj)   { (void)ctx; ((IOService *)obj)->release(); }
-
-const gh_adapter_t com_schmonz_MT2BTReader::kBtAdapter = {
-    gh_alloc, gh_class_ok, gh_init_attach, gh_interpose, gh_start_drv,
-    gh_restore, gh_detach, gh_terminate, gh_release
+static const gh_adapter_t kBtAdapter = {
+    gh_default_alloc, gh_default_class_ok, bt_gh_init_attach, bt_gh_interpose,
+    gh_default_start, bt_gh_restore, gh_default_detach, gh_default_terminate, gh_default_release
 };
 
 bool com_schmonz_MT2BTReader::start(IOService *provider) {
@@ -358,7 +335,7 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
          * geometry vtable interpose (live BEFORE start, so the AMD bring-up's first cacheDeviceProperties
          * sees real geometry) + start. gh_start fully unwinds on any failure (restore-before-terminate). */
         static const gh_config_t cfg = { "BNBTrackpadDevice", "BNBTrackpadDevice" };
-        if (gh_start(&fHost, &cfg, &kBtAdapter, this) == 0) {
+        if (gh_start(&fHost, &cfg, &kBtAdapter, this, fChannel) == 0) {
             fManualBnb = (IOService *)fHost.obj;
             gGenuineBnb = fManualBnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
             (void)mt2_coordinator_activate(MT2_XPORT_BT, 0);   /* no-op seam (MT2 single-transport) */
@@ -613,7 +590,7 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
         /* genuine_host ordered teardown: removeBnbGeometry (vtc_restore the geometry clone) BEFORE
          * terminate — so BNB tears down through Apple's own code, not our override — then release. */
-        gh_stop(&fHost, &kBtAdapter, this);
+        gh_stop(&fHost, &kBtAdapter);
         fManualBnb = 0;
         IOLog("MT2BTReader: manual BNBTrackpadDevice terminate+release\n");
     }
