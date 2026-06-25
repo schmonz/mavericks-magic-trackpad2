@@ -523,3 +523,41 @@ cold-boot/sleep-wake, we won't know which sub-step we're getting wrong without s
 **The one justified live capture:** an `hcidump`/L2CAP trace of a genuine-driver connect vs. our
 reader's connect, diffed on the control-channel exchange right before the device opens PSM 19. Only
 needed if reproducing the order doesn't fix the flap — not up front.
+
+---
+
+## Trackpad prefpane live-update misses our manually-started driver (open, RE'd 2026-06-25)
+
+**Symptom:** an ALREADY-OPEN Trackpad pane doesn't update when a device appears / disappears / switches
+transport (BT↔USB). A fresh System Prefs launch always shows the right state; only the live update is
+missed. (Functionally cosmetic — relaunch is the workaround — but we want live updates both directions.)
+
+**Mechanism (RE'd, solid):** the pane's live update is an `IOServiceObserver` (in
+`PreferencePanesSupport.framework`), stored in `MTTrackpadController.mMagicTrackpadServiceObserver`.
+`-[IOServiceObserver initForService:target:selector:]` (PreferencePanesSupport @0xde8f) registers TWO
+notifications via `IOServiceAddMatchingNotification` on the MT matching dict:
+`kIOFirstMatchNotification` ("IOServiceFirstMatch") → `__ioServiceConnectCallback`, and
+`kIOTerminatedNotification` ("IOServiceTerminate") → `__ioServiceTerminateCallback`; each invokes the
+pane's target/selector to reload. So the pane IS wired for live appear+terminate. The fresh-launch path
+works because the notification's iterator is pre-drained for already-present services (and the pane also
+does a one-shot `IOServiceGetMatchingService` presence check) — that's why relaunch always lights it.
+
+**The gap:** the live `kIOFirstMatchNotification` doesn't reach the open pane when our **manual-started**
+genuine driver (`AppleUSBMultitouchDriver` / `BNBTrackpadDevice`) appears. Likely because the instance
+enters the registry via our `allocClassWithName`+`attach`+`start`+`registerService()` rather than via
+normal IOKit driver matching, so the first-match delivery differs. The *matching dict* clearly matches
+us (the one-shot query finds us), so it's the notification DELIVERY on appear (and possibly a non-clean
+terminate on transport-switch-away) that's missing.
+
+**Decisive next step (on-device evidence):** a tiny CF tool that registers the SAME two notifications —
+`IOServiceAddMatchingNotification(kIOFirstMatchNotification / kIOTerminatedNotification,
+IOServiceMatching("AppleUSBMultitouchDriver"))` (and `"BNBTrackpadDevice"`) — and logs each callback.
+Then power the MT2 off→on / hot-swap BT↔USB. This shows directly whether our `registerService()` fires
+first-match and whether `terminate()` fires terminated. (`tools/re calls` is unreliable on these dylibs —
+file-offset≠vmaddr — so use runtime evidence, not static caller analysis.)
+
+**Fix candidates (pick after evidence):** (a) if `registerService()` doesn't deliver first-match for a
+manual-start, make our instance complete enough matching that it does (or re-register so the notification
+fires); (b) ensure teardown calls a clean `terminate()` so `kIOTerminatedNotification` fires on
+switch-away; (c) last resort — drive the pane another way. Goal: pane updates live on appear/disappear
+and BOTH transport directions.
