@@ -38,9 +38,12 @@ static const bool kEdgeNoBtTransport = false;
  * prefpane). manual-start it on our interface, seed IOUserClientClass + sensor geometry via its init
  * dict (its setProperty override drops keys; manual-start skips personality merge), and interpose
  * handleReport (vtable slot 0x117) to reframe each MT2 0x02 report into a CompactV4 PATH frame
- * (mt2_usb_to_compactv4: type byte 0x28 + 4-byte hdr + 9-byte contacts + checksum). DATA PATH PROVEN
- * end-to-end 2026-06-24 (frames reach MultitouchSupport, coords track the finger). NOT yet
- * cursor/pane-complete: still needs WindowServer to open+drive the instance (auto-discovery TBD), so
- * synthetic-USB remains the working default. Default false; flip true to continue genuine-USB work. */
+ * (the reframe now reuses the proven pipeline: mt2_usb_decode -> drop_lifted -> lifecycle -> mt1_encode
+ * which already emits the 0x28 CompactV4 PATH frame, + Apple checksum). CURSOR/SCROLL/SWIPE/TAP WORK
+ * on-device (committed 8041e8d, 2026-06-24). UNTESTED gaps pending one device test: (a) physical +
+ * 2-finger right CLICK via parser-options=39 (the "clicky hardware" bit 0x2; committed f1652c2), and
+ * (b) Trackpad PREFPANE appearance (manual-start vs IOKit-matching presence check). Synthetic-USB stays
+ * the DEFAULT (flag false = ship-safe) until those two are device-validated + this branch merges to main.
+ * Flip true to run the click+prefpane test (see memory mt2-genuine-usb-resume-here for the sequence). */
 static const bool kGenuineUsb = false;
 #endif
