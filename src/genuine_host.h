@@ -38,8 +38,9 @@ typedef struct {
     void  (*release)(void *ctx, void *obj);               /* release() */
 } gh_adapter_t;
 
-/* alloc -> init_attach -> class_ok -> interpose -> start. On any failure, fully unwinds (state==GH_IDLE)
- * and returns nonzero; on success returns 0 and state==GH_STARTED. */
+/* alloc -> class_ok -> init_attach -> interpose -> start (class gate runs BEFORE init/attach, so a
+ * misidentified service is never init'd/attached). On any failure, fully unwinds (state==GH_IDLE) and
+ * returns nonzero; on success returns 0 and state==GH_STARTED. */
 int  gh_start(gh_host_t *h, const gh_config_t *cfg, const gh_adapter_t *a, void *ctx);
 
 /* Idempotent, state-aware unwind (safe to call twice):

@@ -23,32 +23,34 @@ static void reset(void){ g_n=0; g_log[0]=0; g_force.class_ok=true; g_force.init_
                          g_force.start=true; g_force.interpose=0; }
 #define CHECK(c) do{ if(!(c)){ printf("FAIL %s:%d %s\n",__FILE__,__LINE__,#c); return 1; } }while(0)
 
+/* Order is alloc -> class_ok -> init_attach -> interpose -> start (class gate BEFORE init/attach:
+ * a misidentified service is never init'd/attached). Letters: a i c p s / R D T L (see above). */
 static int test_happy(void){
     reset(); gh_host_t h={GH_IDLE,0};
     CHECK(gh_start(&h,&CFG,&MOCK,0)==0); CHECK(h.state==GH_STARTED);
-    CHECK(strcmp(g_log,"aicps")==0);
+    CHECK(strcmp(g_log,"acips")==0);
     reset(); gh_stop(&h,&MOCK,0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"RTL")==0);
     reset(); gh_stop(&h,&MOCK,0); CHECK(strcmp(g_log,"")==0);          /* idempotent */
     return 0;
 }
-static int test_init_fail(void){
-    reset(); g_force.init_attach=false; gh_host_t h={GH_IDLE,0};
-    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"aiL")==0);
+static int test_class_fail(void){   /* gate fails before init/attach -> release only, never attached */
+    reset(); g_force.class_ok=false; gh_host_t h={GH_IDLE,0};
+    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"acL")==0);
     return 0;
 }
-static int test_class_fail(void){
-    reset(); g_force.class_ok=false; gh_host_t h={GH_IDLE,0};
-    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"aicDL")==0);
+static int test_init_fail(void){
+    reset(); g_force.init_attach=false; gh_host_t h={GH_IDLE,0};
+    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"aciL")==0);
     return 0;
 }
 static int test_interpose_fail(void){
     reset(); g_force.interpose=-1; gh_host_t h={GH_IDLE,0};
-    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"aicpDL")==0);
+    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"acipDL")==0);
     return 0;
 }
 static int test_start_fail(void){
     reset(); g_force.start=false; gh_host_t h={GH_IDLE,0};
-    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"aicpsRDL")==0);
+    CHECK(gh_start(&h,&CFG,&MOCK,0)!=0); CHECK(h.state==GH_IDLE); CHECK(strcmp(g_log,"acipsRDL")==0);
     return 0;
 }
 int main(void){
