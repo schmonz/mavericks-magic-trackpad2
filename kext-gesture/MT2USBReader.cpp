@@ -1,12 +1,11 @@
-/* MT2USBReader — in-kernel USB interrupt transport for the Magic Trackpad 2.
+/* MT2USBReader — in-kernel USB transport for the Magic Trackpad 2.
  *
- * A thin decoder, the USB sibling of MT2BTReader. Matches interface 1 of the
- * cabled MT2 at a high probe score (beating IOUSBHIDDriver), opens the
- * interrupt-IN pipe, sends the SET_REPORT enable-multitouch control request
- * (the same {0x02,0x01} payload the old userspace mt2_usb_read.c used), and
- * async-reads frames. Each frame is decoded (mt2_usb_decode) and pushed to the
- * MT2Gesture nub via submitFrame(MT2_STREAMING). The shared mt2_session owns the
- * settle gate and all post-decode logic — there is no decision logic here.
+ * Matches interface 1 of the cabled MT2 at a high probe score (beating IOUSBHIDDriver),
+ * then manual-starts Apple's genuine AppleUSBMultitouchDriver on the interface and
+ * interposes its handleReport via an instance-scoped vtable clone, so each MT2 0x02
+ * report is reframed into the CompactV4 packet Apple's recognizer accepts
+ * (mt2_usb_to_compactv4). The genuine driver owns the interface + interrupt pipe and
+ * does all the contact/gesture/cursor work; we only translate the stream at its seam.
  *
  * Replaces the inert MT2USBClaim kext plus the userspace feeder loop.
  */
@@ -17,17 +16,10 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
-#include "MT2Gesture.h"
-#include "mt2_pipeline.h"
-#include "mt2_usb_decode.h"
 #define VTC_ALLOC(sz)  IOMalloc(sz)
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
 #include "mt2_usb_reframe.h"           /* mt2_usb_to_compactv4 (host-tested reframe) */
-#include "mt2_build_flags.h"           /* kGenuineUsb */
-
-/* Set by com_schmonz_MT2Gesture::start (same kext). */
-extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
 
 /* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
 #define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
@@ -132,68 +124,12 @@ bool com_schmonz_MT2USBReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
     fIntf = OSDynamicCast(IOUSBInterface, provider);
     if (!fIntf) { IOLog("MT2USBReader: provider not IOUSBInterface\n"); return false; }
-    fStopping = false; fPipe = 0; fMaxPacket = 0; fBuf = 0; fGenuine = 0;
+    fGenuine = 0;
 
-    /* Genuine-USB path (flag-gated, default false): let Apple's AppleUSBMultitouchDriver own the
-     * interface and interpose its handleReport. The synthetic body below does NOT run in this mode. */
-    if (kGenuineUsb) return startGenuine(provider);
-
-    if (!fIntf->open(this)) { IOLog("MT2USBReader: open failed\n"); return false; }
-
-    IOUSBFindEndpointRequest req;
-    req.type = kUSBInterrupt; req.direction = kUSBIn;
-    req.maxPacketSize = 0; req.interval = 0;
-    fPipe = fIntf->FindNextPipe(0, &req);
-    if (!fPipe) { IOLog("MT2USBReader: no interrupt-IN pipe\n"); fIntf->close(this); return false; }
-    fMaxPacket = fPipe->GetMaxPacketSize();
-
-    /* enable multitouch: SET_REPORT feature, report id 0x02, payload {0x02,0x01}
-       (identical to mt2_usb_read.c). */
-    IOUSBDevRequest en;
-    uint8_t payload[2] = {0x02, 0x01};
-    en.bmRequestType = 0x21; en.bRequest = 0x09;
-    en.wValue = 0x0302; en.wIndex = 1; en.wLength = sizeof(payload); en.pData = payload;
-    fIntf->DeviceRequest(&en);
-
-    fBuf = IOBufferMemoryDescriptor::withCapacity(256, kIODirectionIn);
-    if (!fBuf) { fIntf->close(this); return false; }
-
-    if (gActiveMT2Gesture) gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING);
-    IOLog("MT2USBReader: interface open, multitouch enabled, reading (mps=%u)\n",
-          (unsigned)fMaxPacket);
-    registerService();
-    armRead();
-    return true;
-}
-
-void com_schmonz_MT2USBReader::armRead(void) {
-    if (fStopping || !fPipe || !fBuf) return;
-    IOUSBCompletion c;
-    c.target = this; c.action = &com_schmonz_MT2USBReader::readComplete; c.parameter = 0;
-    fBuf->setLength(fMaxPacket ? fMaxPacket : 64);
-    IOReturn r = fPipe->Read(fBuf, 0, 0, &c);
-    if (r != kIOReturnSuccess) IOLog("MT2USBReader: Read arm failed 0x%x\n", r);
-}
-
-void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
-                                            IOReturn status, UInt32 remaining) {
-    com_schmonz_MT2USBReader *self = (com_schmonz_MT2USBReader *)target;
-    if (!self || self->fStopping) return;
-    if (status == kIOReturnSuccess) {
-        UInt32 cap = self->fMaxPacket ? self->fMaxPacket : 64;
-        UInt32 n = cap - remaining;
-        if (n > 0) {
-            uint8_t buf[256];
-            if (n > sizeof(buf)) n = sizeof(buf);
-            self->fBuf->readBytes(0, buf, n);
-            touch_frame_t tf;
-            if (mt2_usb_decode(buf, n, &tf) == 0 && gActiveMT2Gesture)
-                gActiveMT2Gesture->submitFrame(self, &tf);   /* self = this reader */
-        }
-        self->armRead();
-    } else if (status != kIOReturnAborted) {
-        IOLog("MT2USBReader: read ended 0x%x\n", status);
-    }
+    /* Manual-start Apple's AppleUSBMultitouchDriver on our interface and interpose its handleReport
+     * (the CompactV4 reframe seam, see startGenuine). The genuine driver owns the interface + the
+     * interrupt pipe; we never open them ourselves. */
+    return startGenuine(provider);
 }
 
 /* Set a 32-bit integer property in an init dictionary (released after init copies it). */
@@ -370,20 +306,14 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     return true;
 }
 
-/* Relinquish our exclusive hold on the interface so the provider subtree can
- * finalize. MUST run during the willTerminate handshake (device unplug / re-
- * enumerate): IOKit does not call stop() until our open() is released, so closing
- * only in stop() deadlocks teardown — the reader stays inactive/busy and pins the
- * whole dead device subtree (leaked, never freed; one per unplug). Idempotent.
- * We drop fPipe WITHOUT Abort(): it is unowned and may already be torn down with
- * the device; close() lets the interface abort+close its own pipes. */
+/* Relinquish our hold on the interface so the provider subtree can finalize. MUST run during the
+ * willTerminate handshake (device unplug / re-enumerate): IOKit does not call stop() until the
+ * interface is released, so deferring teardown to stop() deadlocks it — the reader stays
+ * inactive/busy and pins the whole dead device subtree (leaked, never freed; one per unplug).
+ * Idempotent. Reverses startGenuine: the genuine driver owns the interface + interrupt pipe, so we
+ * never opened fIntf ourselves and must NOT close it (an unmatched close would unbalance the open
+ * count) — we only null it. */
 void com_schmonz_MT2USBReader::releaseInterface(void) {
-    fStopping = true;
-
-    /* Genuine-USB path teardown (reverse startGenuine). Restore the vtable FIRST (vtable_clone.h
-     * contract; avoids the in-flight handleReport use-after-free), then terminate + release the
-     * genuine driver. In this mode we never opened fIntf/fPipe ourselves, so the synthetic close
-     * below is skipped (an unmatched close(this) would unbalance the interface's open count). */
     /* Stop the absence pump FIRST: cancel + remove from the workloop so no pumped frame can race the
      * teardown below (it touches gGenuineSelf / gOrigUsbHandleReport). Then drop the workloop. */
     if (gPumpTimer) {
@@ -394,6 +324,8 @@ void com_schmonz_MT2USBReader::releaseInterface(void) {
     if (gUsbWorkLoop) { gUsbWorkLoop->release(); gUsbWorkLoop = 0; }
     gPumpBudget = 0; gGenuineSelf = 0;
 
+    /* Restore the vtable FIRST (vtable_clone.h contract; avoids the in-flight handleReport
+     * use-after-free), then terminate + release the genuine driver. */
     if (gUsbVtableCloned && fGenuine) {
         vtc_restore(fGenuine, &gUsbVtableClone);
         gUsbVtableCloned = false; gOrigUsbHandleReport = 0;
@@ -402,12 +334,8 @@ void com_schmonz_MT2USBReader::releaseInterface(void) {
         fGenuine->terminate();
         fGenuine->release();
         fGenuine = 0;
-        fIntf = 0;                       /* we never opened it; don't close */
-        return;
     }
-
-    fPipe = 0;
-    if (fIntf) { fIntf->close(this); fIntf = 0; }
+    fIntf = 0;                       /* we never opened it; don't close */
 }
 
 bool com_schmonz_MT2USBReader::willTerminate(IOService *provider, IOOptionBits options) {
@@ -417,7 +345,6 @@ bool com_schmonz_MT2USBReader::willTerminate(IOService *provider, IOOptionBits o
 
 void com_schmonz_MT2USBReader::stop(IOService *provider) {
     releaseInterface();                          /* no-op if willTerminate already did it */
-    if (fBuf) { fBuf->release(); fBuf = 0; }     /* safe now: interface closed, no I/O in flight */
     IOLog("MT2USBReader: stopped\n");
     IOService::stop(provider);
 }
