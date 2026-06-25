@@ -108,6 +108,17 @@ fi
 
 log "attempting full-gesture mode"
 
+# The genuine BT/USB paths manual-start Apple's own drivers — BNBTrackpadDevice (from
+# AppleBluetoothMultitouch.kext) and AppleUSBMultitouchDriver (from AppleUSBMultitouch.kext) — via
+# allocClassWithName. Those kexts load on demand and are NOT guaranteed present at boot, so load them
+# first (best-effort) or the readers get a NULL class and the genuine path is dead with no fallback.
+# Their on-disk personalities do NOT steal our device (USB lacks PID 613; BT loses the L2CAP channel
+# probe to our reader), so loading them is safe — they only register the classes we manual-start.
+# (Why script-load and not OSBundleLibraries: AppleBluetoothMultitouch has no OSBundleCompatibleVersion
+# so it can't be a library dep; we keep one uniform, soft mechanism. See docs/mt-stack/decisions.md.)
+"$KEXTLOAD" /System/Library/Extensions/AppleUSBMultitouch.kext 2>/dev/null || true
+"$KEXTLOAD" /System/Library/Extensions/AppleBluetoothMultitouch.kext 2>/dev/null || true
+
 # Load the one gesture kext (the IOResources-matching one the guard covers). Its
 # BT + USB reader personalities bind the device on their own.
 "$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true

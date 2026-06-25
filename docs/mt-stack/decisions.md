@@ -69,6 +69,26 @@ half-restored object → the `ultimate-hat.panic`. Motivated the move to full-BN
 poke (BNB's node *is* the input *is* the pane target). **Note:** the *hybrid architecture itself*
 remains a live alternative for a livability comparison; only this *mechanism* is graveyarded.
 
+### `OSBundleLibraries` to force-load the Apple driver kexts — *not functioning for BT → uniform script-load*
+The genuine paths manual-start `BNBTrackpadDevice` (BT) and `AppleUSBMultitouchDriver` (USB) via
+`allocClassWithName`, which needs the owning Apple kext (`AppleBluetoothMultitouch.kext` /
+`AppleUSBMultitouch.kext`) loaded so the class is registered. On a clean boot they are NOT loaded in
+time → `allocClassWithName` returns NULL → the genuine path is dead with **no fallback** (proven
+2026-06-24: BT had no cursor / no BT prefpane bits until `kextload AppleBluetoothMultitouch.kext` +
+reconnect). The IOKit-idiomatic fix is to declare those kexts in our `OSBundleLibraries` so `kextload`
+pulls them in as dependencies — which is exactly how we already force-load
+`com.apple.driver.AppleMultitouchDriver`. **It does NOT work for BT:** `AppleBluetoothMultitouch.kext`
+exports **no `OSBundleCompatibleVersion`**, and a bundle with no compatible version cannot be an
+`OSBundleLibraries` dependency (nothing to link/version-match against). `AppleUSBMultitouch.kext` *does*
+export `OSBundleCompatibleVersion=1.0.0`, so USB *alone* could use it — but we deliberately **don't**,
+to avoid splitting mechanisms (Info.plist dep for USB, script for BT). Instead BOTH are loaded
+best-effort by `kextload` in the boot wrapper (`dist/mt2d-run`) and dev `make load`, before our kext.
+Two reasons beyond uniformity: (1) **soft** (`|| true`) — our kext still loads and the other transport
+still works if an Apple kext is absent, whereas a hard `OSBundleLibraries` dep would block our *entire*
+kext (losing BOTH transports) on a missing/incompatible Apple dep; (2) one mechanism is simpler.
+**Reopening criterion:** move USB to `OSBundleLibraries` only if a deploy path loads our kext outside
+the wrapper/Makefile (it has the compatible version); BT can't until Apple's kext gains one.
+
 ### Run VoodooInput on 10.9 / become a VoodooInput plugin — *not functioning / wrong direction*
 (Researched 2026-06-24, web.) The obvious "why not just use the Hackintosh kext?" question, answered
 so we don't re-tread it. **First, the landscape:** there is **no public Apple API for the valuable

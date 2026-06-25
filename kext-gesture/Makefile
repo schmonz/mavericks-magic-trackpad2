@@ -58,6 +58,10 @@ load: $(KEXT_NAME).kext
 	sudo rm -rf /tmp/$(KEXT_NAME).kext
 	sudo cp -R $(KEXT_NAME).kext /tmp/
 	sudo chown -R root:wheel /tmp/$(KEXT_NAME).kext
+	# Genuine BT/USB paths manual-start Apple's drivers (BNBTrackpadDevice / AppleUSBMultitouchDriver);
+	# load the Apple kexts that register those classes first (best-effort; no-op if already loaded).
+	-sudo kextload /System/Library/Extensions/AppleUSBMultitouch.kext
+	-sudo kextload /System/Library/Extensions/AppleBluetoothMultitouch.kext
 	sudo kextload /tmp/$(KEXT_NAME).kext
 
 unload:
