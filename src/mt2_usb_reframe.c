@@ -29,6 +29,21 @@ int mt2_usb_button_edge(const uint8_t *mt2, size_t mt2_len, uint8_t *last, uint8
     return 1;
 }
 
+/* Zero-contact absence frame (post-liftoff pump). See header. */
+int mt2_usb_make_absence_frame(uint32_t ts, uint8_t *out, size_t out_cap, size_t *outlen) {
+    touch_frame_t empty;
+    empty.ntouches = 0;
+    empty.button = 0;
+    empty.timestamp = 0;
+    if (out_cap < 2) return -1;
+    int n = mt1_encode(&empty, out, out_cap - 2, ts);   /* 0x28 CompactV4 frame, no contacts */
+    if (n < 0) return -1;
+    out[n] = out[n + 1] = 0;
+    mt2_apple_checksum(out, (size_t)n + 2);
+    if (outlen) *outlen = (size_t)n + 2;
+    return 0;
+}
+
 /* Genuine-USB feed = the SAME pipeline the working synthetic/BT paths use, then Apple's checksum.
  * mt1_encode already emits report 0x28 — the CompactV4 PATH frame type MultitouchSupport parses — with
  * the 4-byte CompactV4 timestamp header and the contact byte layout the recognizer drives the cursor

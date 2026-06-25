@@ -43,8 +43,10 @@ static const bool kEdgeNoBtTransport = false;
  * PHYSICAL CLICK/2-FINGER PHYSICAL RIGHT-CLICK and the Trackpad PREFPANE all WORK on-device
  * (2026-06-24). Physical click: the genuine driver's handleButton is normally fed by a button-provider
  * service our manual-start lacks, so we detect the button edge in the report and call handleButton
- * (vtable slot 0xb28) ourselves; parser-options=39 opens its capability gate. Remaining refinement:
- * two-finger TAP-to-right-click is flaky (a recognizer gesture, not the physical button). Synthetic-USB
+ * (vtable slot 0xb28) ourselves; parser-options=39 opens its capability gate. Two-finger TAP-to-right-
+ * click also works now: the recognizer's deferred secondary-tap commit runs per-frame, but our device
+ * goes silent at liftoff, so we pump zero-contact absence frames (IOTimerEventSource) for ~450ms after
+ * silence to carry the commit across the double-tap window. ALL features now work on-device. Synthetic-USB
  * stays the DEFAULT (flag false = ship-safe) until genuine-USB is signed off + this branch merges to main.
  * Flip true to run on-device (see memory mt2-genuine-usb-resume-here for the sequence). */
 static const bool kGenuineUsb = false;

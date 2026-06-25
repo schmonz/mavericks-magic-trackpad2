@@ -118,6 +118,17 @@ static void test_button_edge_masks_bit0_only(void) {
     CHECK_EQ(rep[15], 0x00);
 }
 
+/* --- absence (no-contact) pump frame for the post-liftoff secondary-tap commit ----------------- */
+static void test_absence_frame_is_empty_0x28_with_checksum(void) {
+    uint8_t out[64]; size_t outlen = 0;
+    CHECK_EQ(mt2_usb_make_absence_frame(0x12345, out, sizeof(out), &outlen), 0);
+    CHECK_EQ(out[0], 0x28);                          /* CompactV4 PATH frame type */
+    CHECK_EQ(outlen, (size_t)(4 + 2));               /* 4-byte hdr + zero contacts + 2 checksum */
+    CHECK(checksum_ok(out, outlen));
+    uint32_t ts_back = ((uint32_t)out[1] >> 2) | ((uint32_t)out[2] << 6) | ((uint32_t)out[3] << 14);
+    CHECK_EQ(ts_back, 0x12345u & 0x3FFFFF);          /* timestamp round-trips */
+}
+
 static void run_tests(void) {
     test_checksum_trivial();
     test_checksum_live_vector();
@@ -128,5 +139,6 @@ static void run_tests(void) {
     test_button_edge_no_change_no_dispatch();
     test_button_edge_release_dispatches();
     test_button_edge_masks_bit0_only();
+    test_absence_frame_is_empty_0x28_with_checksum();
 }
 TEST_MAIN()

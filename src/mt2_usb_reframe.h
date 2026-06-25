@@ -38,6 +38,13 @@ void mt2_usb_reframe_reset(void);
  * else 0 (out_report untouched). mt2_len < 2 is treated as no change. */
 int mt2_usb_button_edge(const uint8_t *mt2, size_t mt2_len, uint8_t *last, uint8_t *out_report);
 
+/* Build a zero-contact CompactV4 absence frame (out[0]=0x28, 4-byte header, no contacts, 2-byte
+ * Apple checksum) carrying timestamp ts. The genuine-USB path pumps these after a liftoff so the
+ * recognizer's per-frame deferred-commit checks (e.g. MTTapDragManager::sendPendingSecondaryTap)
+ * keep running through the double-tap window once the device has gone silent. Writes to out (needs
+ * 6 bytes); sets *outlen. Returns 0, or -1 if out too small. */
+int mt2_usb_make_absence_frame(uint32_t ts, uint8_t *out, size_t out_cap, size_t *outlen);
+
 #ifdef __cplusplus
 }
 #endif

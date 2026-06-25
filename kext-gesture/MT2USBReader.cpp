@@ -12,6 +12,9 @@
  */
 #include <IOKit/IOLib.h>
 #include <IOKit/hid/IOHIDDevice.h>     /* IOHIDReportType */
+#include <IOKit/IOWorkLoop.h>
+#include <IOKit/IOTimerEventSource.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
 #include "MT2Gesture.h"
@@ -41,6 +44,21 @@ typedef IOReturn (*usb_handle_report_fn)(void *self, IOMemoryDescriptor *report,
 static usb_handle_report_fn gOrigUsbHandleReport = 0;
 typedef void (*usb_handle_button_fn)(void *self, uint8_t *report);
 static uint8_t gLastUsbButton = 0;             /* last physical-button state seen (edge-gated) */
+
+/* Post-liftoff absence-frame pump. The genuine recognizer's deferred tap commits (e.g.
+ * MTTapDragManager::sendPendingSecondaryTap, the 2-finger TAP secondary click) run once PER FRAME and
+ * key off the frame timestamp; our device goes silent at liftoff, so an isolated tap's commit window
+ * starves. After the device falls silent we pump zero-contact frames (advancing wall-clock ts) for a
+ * window long enough to cover the double-tap commit window. A new real report re-arms the silence
+ * timer, so we never pump while a gesture is active. (RE'd 2026-06-24; mirrors the synthetic path's
+ * emit_with_liftoff absence pump, extended for the longer secondary-tap window.) */
+#define USB_PUMP_SILENCE_MS   20               /* fire this long after the last real report */
+#define USB_PUMP_INTERVAL_MS  15               /* spacing between pumped absence frames */
+#define USB_PUMP_FRAMES       30               /* ~30 * 15ms = ~450ms window */
+static IOWorkLoop          *gUsbWorkLoop = 0;
+static IOTimerEventSource  *gPumpTimer   = 0;
+static void                *gGenuineSelf = 0;  /* the genuine driver instance (handleReport target) */
+static volatile int         gPumpBudget  = 0;  /* absence frames left to pump after silence */
 
 static uint32_t usb_ts_22bit(void) {
     clock_sec_t s; clock_usec_t u;
@@ -82,7 +100,30 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     md->writeBytes(0, out, outlen);
     IOReturn rc = gOrigUsbHandleReport(self, md, type, options);
     md->release();
+
+    /* A real report just arrived: refill the pump budget and (re)arm the silence timer, so the
+     * post-liftoff absence pump fires only after the device falls quiet — never during a gesture. */
+    gPumpBudget = USB_PUMP_FRAMES;
+    if (gPumpTimer) gPumpTimer->setTimeoutMS(USB_PUMP_SILENCE_MS);
     return rc;
+}
+
+/* Timer callback (workloop): the device has been silent for USB_PUMP_SILENCE_MS. Emit one zero-contact
+ * absence frame into the genuine driver's handleReport so the recognizer's deferred per-frame commit
+ * checks keep running through the double-tap window, then re-arm until the budget is spent. */
+static void mt2_usb_pump_action(OSObject * /*owner*/, IOTimerEventSource *ts) {
+    if (gPumpBudget <= 0 || !gOrigUsbHandleReport || !gGenuineSelf) return;
+    uint8_t out[64]; size_t outlen = 0;
+    if (mt2_usb_make_absence_frame(usb_ts_22bit(), out, sizeof(out), &outlen) == 0) {
+        IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);
+        if (md) {
+            md->setLength(outlen);
+            md->writeBytes(0, out, outlen);
+            gOrigUsbHandleReport(gGenuineSelf, md, kIOHIDReportTypeInput, 0);
+            md->release();
+        }
+    }
+    if (--gPumpBudget > 0 && ts) ts->setTimeoutMS(USB_PUMP_INTERVAL_MS);
 }
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2USBReader, IOService)
@@ -308,6 +349,19 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
      * which kicks registerUserClient->addFramesClient->configureDataMode->streaming. (RE'd 2026-06-24;
      * seeded via the init dict above because the driver's setProperty override drops it.) */
 
+    /* Post-liftoff absence-frame pump (see the gPumpTimer block above): a workloop timer that keeps a
+     * brief frame heartbeat alive after the device falls silent, so deferred tap commits (2-finger TAP
+     * secondary click) fire instead of starving. Best-effort — if setup fails, the rest still works. */
+    gGenuineSelf = fGenuine;
+    gPumpBudget  = 0;
+    gUsbWorkLoop = IOWorkLoop::workLoop();
+    if (gUsbWorkLoop) {
+        gPumpTimer = IOTimerEventSource::timerEventSource(this, &mt2_usb_pump_action);
+        if (gPumpTimer && gUsbWorkLoop->addEventSource(gPumpTimer) != kIOReturnSuccess) {
+            gPumpTimer->release(); gPumpTimer = 0;
+        }
+    }
+
     IOLog("MT2USBReader: genuine AppleUSBMultitouchDriver started + handleReport interposed (slot %lu)\n",
           (unsigned long)USB_HANDLEREPORT_SLOT_INDEX);
     registerService();
@@ -328,6 +382,16 @@ void com_schmonz_MT2USBReader::releaseInterface(void) {
      * contract; avoids the in-flight handleReport use-after-free), then terminate + release the
      * genuine driver. In this mode we never opened fIntf/fPipe ourselves, so the synthetic close
      * below is skipped (an unmatched close(this) would unbalance the interface's open count). */
+    /* Stop the absence pump FIRST: cancel + remove from the workloop so no pumped frame can race the
+     * teardown below (it touches gGenuineSelf / gOrigUsbHandleReport). Then drop the workloop. */
+    if (gPumpTimer) {
+        gPumpTimer->cancelTimeout();
+        if (gUsbWorkLoop) gUsbWorkLoop->removeEventSource(gPumpTimer);
+        gPumpTimer->release(); gPumpTimer = 0;
+    }
+    if (gUsbWorkLoop) { gUsbWorkLoop->release(); gUsbWorkLoop = 0; }
+    gPumpBudget = 0; gGenuineSelf = 0;
+
     if (gUsbVtableCloned && fGenuine) {
         vtc_restore(fGenuine, &gUsbVtableClone);
         gUsbVtableCloned = false; gOrigUsbHandleReport = 0;
