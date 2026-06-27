@@ -261,11 +261,9 @@ static void *bt_build_bnb_props(void) {
      * (MT2Gesture.cpp setProperty before start). */
     mt->setObject(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
     top->setObject("DefaultMultitouchProperties", mt);
-    /* Accurate IOKit identity: manual-start leaves the BNB node's "Product" empty (a real MT2 reports
-     * it over BT). Seed it so System Report / any Product reader shows the genuine name. (Distinct from
-     * the Bluetooth-pane name, which is blued's displayName — set by mt2_set_btname.) */
-    OSString *prod = OSString::withCString("Magic Trackpad 2");
-    if (prod) { top->setObject("Product", prod); prod->release(); }
+    /* NB: do NOT seed "Product" in the init dict — IOHIDDevice::start (BNB's superclass) overwrites it
+     * from the empty HID product string AFTER this dict is applied (verified live: node Product="" despite
+     * the seed). We set Product post-start instead, in start() once fManualBnb exists. */
     plpath->release(); ptype->release(); popts->release();
     plugin->release(); mt->release();
     return top;
@@ -334,6 +332,12 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
             gGenuineBnb = fManualBnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
             (void)mt2_coordinator_activate(MT2_XPORT_BT, 0);   /* no-op seam (MT2 single-transport) */
             IOLog("MT2BTReader: manual BNBTrackpadDevice start OK\n");
+            /* IOHIDDevice::start clobbered Product to the empty HID product string; re-set it now so
+             * System Report / any Product reader shows the genuine name. (Distinct from the BT-pane
+             * displayName, which blued owns — set by mt2_set_btname.) USB needs no equivalent: there the
+             * genuine AMD copies the device's real USB iProduct descriptor ("Magic Trackpad"). */
+            OSString *prod = OSString::withCString("Magic Trackpad 2");
+            if (prod) { fManualBnb->setProperty("Product", prod); prod->release(); }
             bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, fManualBnb, 0, 0);
         } else {
             IOLog("MT2BTReader: manual BNBTrackpadDevice host start FAILED\n");

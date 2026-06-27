@@ -190,7 +190,9 @@ static void *usb_build_init_props(void) {
     mt2_dict_num(initp, "parser-options", 39);
     initp->setObject("Driver is Ready", kOSBooleanTrue);
     initp->setObject("MTHIDDevice", kOSBooleanTrue);
-    mt2_dict_str(initp, "Product", "Magic Trackpad 2");
+    /* No "Product" seed: the genuine AppleUSBMultitouchDriver::start copies the device's real USB iProduct
+     * descriptor ("Magic Trackpad") onto the node, overriding any seed (verified live). That value is the
+     * device-accurate one, so we let it stand. (BT differs — see MT2BTReader, post-start set.) */
     initp->setObject("HIDServiceSupport", kOSBooleanTrue);
     mt2_dict_str(initp, "HIDDefaultBehavior", "Trackpad");
     initp->setObject("TrackpadMomentumScroll", kOSBooleanTrue);
