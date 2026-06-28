@@ -7,12 +7,13 @@
 # STATIC BINARY (Mach-O):                      LIVE SYSTEM / DOMAIN ORACLES:
 #   disasm   function/range machine code         ioreg-class   class presence + count
 #   syms     symbols by name                      ioreg-props   class node(s) + properties
-#   calls    who calls an addr or symbol          kexts         loaded kexts (kextstat)
-#   str-xref string ref -> enclosing function     klog          kernel log (system.log)
-#   xref-offset struct-field accesses             amd-actuation cursor-wiring verdict
-#   vtable   slot offset <-> method               conn-trace    BT connect timeline verdict
-#   strings  printable strings                     mt-contacts   stream recognizer contacts
-#   consts   dump a Mach-O section                 mt-devices    MultitouchSupport device list
+#   objc-methods ObjC selector -> IMP (meta)      kexts         loaded kexts (kextstat)
+#   calls    who calls an addr or symbol          klog          kernel log (system.log)
+#   str-xref string ref -> enclosing function     amd-actuation cursor-wiring verdict
+#   xref-offset struct-field accesses             conn-trace    BT connect timeline verdict
+#   vtable   slot offset <-> method               mt-contacts   stream recognizer contacts
+#   strings  printable strings                     mt-devices    MultitouchSupport device list
+#   consts   dump a Mach-O section
 #   hex      hex+ASCII dump of a file
 #   bcmp     compare a byte window of two files
 #   plist    read a kext/bundle Info.plist
@@ -413,6 +414,36 @@ sub_mt_devices() {  # list MultitouchSupport devices (builds tools/mt_transport)
   sudo "$bin"
 }
 
+sub_objc_methods() {  # <target> [filter] | <target> --at <addr-hex>
+  bin=$(re_resolve "$1")
+  [ -n "$1" ] || { echo "usage: $me objc-methods <target> [filter] | <target> --at <addr-hex>" >&2; return 2; }
+  shift
+  at=""
+  if [ "$1" = "--at" ]; then at=$(printf '%s' "$2" | sed 's/^0[xX]//' | tr 'A-F' 'a-f'); fi
+  filter=$1
+  # ObjC runtime metadata carries selector -> IMP even when the symtab is stripped
+  # (otool -oV). Pair each method 'name' (the one followed by 'types') with its 'imp'.
+  parse() {
+    otool -oV -arch "$arch" "$bin" 2>/dev/null | awk '
+      /_OBJC_METACLASS_\$_/ { c=$0; sub(/.*_OBJC_METACLASS_\$_/,"",c); sub(/[ \t].*/,"",c); cls=c; kind="+"; next }
+      /_OBJC_CLASS_\$_/     { c=$0; sub(/.*_OBJC_CLASS_\$_/,"",c);     sub(/[ \t].*/,"",c); cls=c; kind="-"; next }
+      $1=="name"  { s=$0; sub(/^[ \t]*name[ \t]+0x[0-9a-f]+[ \t]*/,"",s); pend=s; next }
+      $1=="types" { meth=pend; next }
+      $1=="imp"   { if (meth!="") { printf "%s\t%s[%s %s]\n", $2, kind, cls, meth; meth="" } }'
+  }
+  if [ -n "$at" ]; then
+    echo "# ObjC method containing 0x$at in $bin ($arch)"
+    parse | awk -v a="$at" '
+      function h2i(x,  n,i,c){ sub(/^0x/,"",x); x=tolower(x); n=0; for(i=1;i<=length(x);i++){c=index("0123456789abcdef",substr(x,i,1))-1; n=n*16+c} return n }
+      { ia=h2i($1); aa=h2i(a); if (ia<=aa && ia>best) { best=ia; line=$0 } }
+      END { if (line!="") printf "%s   (+0x%x into the method)\n", line, aa-best; else print "# (no method at/before 0x" a ")" }'
+  else
+    echo "# ObjC methods in $bin ($arch)${filter:+   (filter: $filter)}"
+    echo "# columns: imp-address  -[Class selector]"
+    if [ -n "$filter" ]; then parse | sort | grep -iE "$filter"; else parse | sort; fi
+  fi
+}
+
 # --- dispatch ----------------------------------------------------------------
 # When sourced as a library (RE_LIB=1), stop here so the helpers above can be
 # unit-tested without running a subcommand.
@@ -422,6 +453,7 @@ cmd=$1; [ $# -gt 0 ] && shift
 case "$cmd" in
   disasm)        sub_disasm "$@" ;;
   syms)          sub_syms "$@" ;;
+  objc-methods)  sub_objc_methods "$@" ;;
   calls)         sub_calls "$@" ;;
   str-xref)      sub_str_xref "$@" ;;
   xref-offset)   sub_xref_offset "$@" ;;

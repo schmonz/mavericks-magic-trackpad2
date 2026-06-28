@@ -85,6 +85,22 @@ load_re() { RE_LIB=1 source "$RE"; }
   printf '%s\n' "$output" | grep -q 'MTDeviceCreateListForDriverType'
 }
 
+# --- objc-methods: ObjC selector -> IMP from runtime metadata (not the symtab) ---
+# The Trackpad pane's ObjC methods are NOT in nm's symtab; otool -oV exposes them.
+
+@test "objc-methods resolves a selector to its class + IMP" {
+  run "$RE" objc-methods Trackpad awakeFromNib
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qE '0x[0-9a-f]+\s+[-+]\[BaseTrackPadController awakeFromNib\]'
+}
+
+@test "objc-methods --at finds the method containing an address" {
+  # loadMainView's IMP is 0x225d; 0x2300 is inside it (the detection routine).
+  run "$RE" objc-methods Trackpad --at 0x2300
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -q 'loadMainView'
+}
+
 # --- hex characterization (re_hexnum normalization, post-refactor) ------------
 
 @test "hex honors hex-or-decimal offset/length and reports the window" {
