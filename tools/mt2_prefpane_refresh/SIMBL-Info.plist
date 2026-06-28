@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>MT2PaneRefresh</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.schmonz.MT2PaneRefresh</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>MT2PaneRefresh</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleVersion</key>
+	<string>1.0</string>
+	<!-- SIMBLAgent injects this into System Preferences at launch. No version gate
+	     (omitting Min/MaxBundleVersion = load for any version), matching the working
+	     GreenFullscreen plugin on this box. -->
+	<key>SIMBLTargetApplications</key>
+	<array>
+		<dict>
+			<key>BundleIdentifier</key>
+			<string>com.apple.systempreferences</string>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -7,7 +7,7 @@ SBIN = sbin
 VERSION = 1.0.0
 PKG_ID  = com.schmonz.mt2d
 
-.PHONY: all test clean tools kext-gesture pkg reload
+.PHONY: all test clean tools kext-gesture pkg reload prefpane-refresh prefpane-refresh-install prefpane-refresh-uninstall prefpane-refresh-simbl prefpane-refresh-simbl-install prefpane-refresh-simbl-uninstall
 
 all: tools
 
@@ -36,6 +36,69 @@ $(SBIN)/mt2_bt_bounce: tools/mt2_bt_bounce.m | $(SBIN)
 
 $(SBIN)/mt2_usb_enable: tools/mt2_usb_enable.c | $(SBIN)
 	$(CC) $(CFLAGS) -o $@ $< $(FRAMEWORKS)
+
+# Trackpad prefpane live USB-observer: a pure-C GC-neutral .osax injected into
+# System Preferences (gives the open pane the AppleUSBMultitouchDriver observer it
+# lacks) + mt2_pane_arm (sends the 'MT2x'/'load' Apple event to trigger it).
+# See tools/mt2_prefpane_refresh/ and docs/mt-stack/open-questions.md.
+OSAX_DIR    = tools/mt2_prefpane_refresh
+OSAX_BUNDLE = build/MT2PaneRefresh.osax
+OSAX_DYLIB  = build/MT2PaneRefresh.dylib
+prefpane-refresh: $(OSAX_BUNDLE) $(OSAX_DYLIB) $(SBIN)/mt2_pane_arm
+
+# Same payload as a DYLD_INSERT_LIBRARIES dylib — a loader we control at launch
+# (the .osax/AppleEvent path does not reliably load into Cocoa System Preferences).
+$(OSAX_DYLIB): $(OSAX_DIR)/mt2_prefpane_refresh.c
+	@mkdir -p build
+	$(CC) -dynamiclib -mmacosx-version-min=10.9 -Wall -framework IOKit -framework CoreFoundation -lobjc \
+	  -o $(OSAX_DYLIB) $(OSAX_DIR)/mt2_prefpane_refresh.c
+	@echo "Built $(OSAX_DYLIB)"
+
+$(OSAX_BUNDLE): $(OSAX_DIR)/mt2_prefpane_refresh.c $(OSAX_DIR)/Info.plist
+	@mkdir -p $(OSAX_BUNDLE)/Contents/MacOS
+	$(CC) -bundle -mmacosx-version-min=10.9 -Wall -framework IOKit -framework CoreFoundation -lobjc \
+	  -o $(OSAX_BUNDLE)/Contents/MacOS/MT2PaneRefresh $(OSAX_DIR)/mt2_prefpane_refresh.c
+	cp $(OSAX_DIR)/Info.plist $(OSAX_BUNDLE)/Contents/Info.plist
+	@echo "Built $(OSAX_BUNDLE)"
+
+$(SBIN)/mt2_pane_arm: $(OSAX_DIR)/mt2_pane_arm.c | $(SBIN)
+	$(CC) $(CFLAGS) -o $@ $< -framework ApplicationServices -framework CoreFoundation
+
+# Install/uninstall the osax (system-wide scripting addition). Fully reversible:
+# uninstall removes the one bundle, modifying no Apple file. Privilege handled here.
+prefpane-refresh-install: $(OSAX_BUNDLE)
+	sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
+	sudo cp -R $(OSAX_BUNDLE) /Library/ScriptingAdditions/
+	@echo "Installed /Library/ScriptingAdditions/MT2PaneRefresh.osax"
+
+prefpane-refresh-uninstall:
+	sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
+	@echo "Removed /Library/ScriptingAdditions/MT2PaneRefresh.osax"
+
+# Package the SAME pure-C payload as a SIMBL plugin bundle. SIMBLAgent (already
+# running on this box) injects it into System Preferences at launch — the reliable
+# loader, reusing observably-working machinery (the osax/AppleEvent path does not
+# load into Cocoa System Preferences). The payload's constructor does the work on
+# [bundle load], so no Apple event is needed.
+SIMBL_PLUGINS = /Library/Application Support/SIMBL/Plugins
+OSAX_SIMBL    = build/MT2PaneRefresh.bundle
+prefpane-refresh-simbl: $(OSAX_SIMBL)
+
+$(OSAX_SIMBL): $(OSAX_DIR)/mt2_prefpane_refresh.c $(OSAX_DIR)/SIMBL-Info.plist
+	@mkdir -p $(OSAX_SIMBL)/Contents/MacOS
+	$(CC) -bundle -mmacosx-version-min=10.9 -Wall -framework IOKit -framework CoreFoundation -lobjc \
+	  -o $(OSAX_SIMBL)/Contents/MacOS/MT2PaneRefresh $(OSAX_DIR)/mt2_prefpane_refresh.c
+	cp $(OSAX_DIR)/SIMBL-Info.plist $(OSAX_SIMBL)/Contents/Info.plist
+	@echo "Built $(OSAX_SIMBL)"
+
+prefpane-refresh-simbl-install: $(OSAX_SIMBL)
+	sudo rm -rf "$(SIMBL_PLUGINS)/MT2PaneRefresh.bundle"
+	sudo cp -R $(OSAX_SIMBL) "$(SIMBL_PLUGINS)/"
+	@echo "Installed into $(SIMBL_PLUGINS) — relaunch System Preferences to inject"
+
+prefpane-refresh-simbl-uninstall:
+	sudo rm -rf "$(SIMBL_PLUGINS)/MT2PaneRefresh.bundle"
+	@echo "Removed MT2PaneRefresh.bundle from $(SIMBL_PLUGINS)"
 
 # Build the gesture kext (delegates to its own makefile).
 kext-gesture:

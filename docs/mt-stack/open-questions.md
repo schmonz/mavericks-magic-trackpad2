@@ -526,11 +526,12 @@ needed if reproducing the order doesn't fix the flap — not up front.
 
 ---
 
-## Trackpad prefpane live-update misses our manually-started driver (open, RE'd 2026-06-25)
+## Trackpad prefpane live-update misses our manually-started driver (open, RE'd 2026-06-25, systematized 2026-06-28)
 
-**Symptom:** an ALREADY-OPEN Trackpad pane doesn't update when a device appears / disappears / switches
-transport (BT↔USB). A fresh System Prefs launch always shows the right state; only the live update is
-missed. (Functionally cosmetic — relaunch is the workaround — but we want live updates both directions.)
+**Symptom (refined by the 2026-06-28 systematic run):** an open Trackpad pane fails to settle on a USB
+trackpad live ONLY when System Prefs was launched while on BT; launched on USB it tracks both transports
+live, and USB→BT always live-updates. A fresh launch always shows the right state. (Cosmetic — relaunch
+is the workaround — but we want live updates both directions.) See the clean-room characterization below.
 
 **Mechanism (RE'd, solid):** the pane's live update is an `IOServiceObserver` (in
 `PreferencePanesSupport.framework`), stored in `MTTrackpadController.mMagicTrackpadServiceObserver`.
@@ -551,15 +552,42 @@ EVERY expected notification with fresh registry IDs each time (clean teardown + 
 the notifications the pane's `IOServiceObserver` listens for — `registerService()`/`terminate()` are not
 the gap.
 
-**Therefore the earlier "open pane didn't light" was NOT a notification-delivery failure.** Most likely
-transient pane-side state (the pane's observer wasn't armed at that instant — e.g. System Prefs
-backgrounded / on another pane / opened during the BT-dead window), cleared by a relaunch. Possible
-remaining (narrower) cause: the pane receives the notification but its reload doesn't re-light under some
-condition — a pane-side issue, not ours.
+**Therefore the earlier "open pane didn't light" was NOT a notification-delivery failure.** (The IOKit
+layer is healthy; `tools/mt_svc_observe` is the standing oracle for "are the notifications firing?".)
 
-**Decisive next step (cheap):** re-test the PANE directly — open Trackpad, leave it open, do off→on +
-hot-swap both ways, watch whether the pane updates live. Given the notifications provably fire, it most
-likely DOES update live now and there's nothing to fix (earlier symptom transient). Only if the pane
-still fails to update *while its observer is demonstrably armed* is there a real pane-side gap to chase —
-and that's in Apple's pane, not our driver, so options would be limited (e.g. nudge System Prefs).
-`tools/mt_svc_observe` is the standing oracle for "are the notifications firing?".
+**SYSTEMATIC CHARACTERIZATION 2026-06-28 (supersedes the prior "probably transient / nothing to fix"
+guess — that was unsystematic and is WRONG).** Ran the decisive open-pane retest physically, clean-room
+(Cmd-Q System Prefs between every trial to clear accumulated process state), capturing device-truth
+(`re mt-devices`/`re ioreg-class`) alongside the pane appearance. Full event log:
+`docs/superpowers/prefpane-transport-matrix.md`. Reproducible result:
+- **Launch System Prefs while on USB → the open pane tracks BOTH transports live** (BT↔USB both ways, repeatably OK).
+- **Launch while on BT → on a USB appear the open pane shows USB UI for a MOMENT, then reverts to "No
+  trackpad found"** — every time, no "learning" from a prior USB exposure. (An earlier "OK on 2nd plug"
+  reading was a contamination artifact: System Prefs process kept alive across a window-reopen-on-USB.)
+- **USB→BT (fall back to BT) with the pane open ALWAYS live-updates correctly**, regardless of launch transport.
+- A **fresh** launch always shows the right state (one-shot presence check + pre-drained iterator).
+
+**ROOT CAUSE (reconciled, now precise) — it's a pane REDRAW/VIEW-SELECTION gap, not notification delivery
+and not total USB blindness.** The brief USB-UI flash proves the pane DOES receive the USB FirstMatch
+notification; it then can't *establish* the USB trackpad view live. USB display is set up from the
+fresh-launch detection path (nib state `mBaseNibName` / cached `mFoundBTTrackpad`); the live reload can
+toggle BT-found vs NoTrackpad but has no live path to render a USB trackpad unless the process was
+launched on USB. So: notification arrives (flash) → reload finds no live USB-render path → NoTrackpad.
+
+**DISCREPANCY RESOLVED 2026-06-28 (disasm `tools/re`, systematic finding wins): the live observer is
+BT-ONLY.** In the pane's arm/detect routine (Trackpad @~0x2300–0x2440): `IOServiceMatching("BNBTrackpadDevice")`
+-> `observerForService:target:selector:` (0x232e) is the ONLY live `IOServiceAddMatchingNotification`-class
+observer (a 2nd `observerForService` at 0x38af is ALSO BNBTrackpadDevice). USB is handled by a ONE-SHOT
+`IOServiceGetMatchingService("AppleUSBMultitouchDriver")` presence check (0x23be), as is the IOPropertyMatch
+on `com.apple.AppleMultitouchTrackpad` (0x2414) and BT itself (0x2397). So USB has NO live observer.
+=> The flash on BT->USB is the BT TERMINATE callback (MT2 drives one transport at a time, so cabling USB
+drops BT) reloading + transiently re-detecting USB, before the terminate path forces mFoundBTTrackpad=0 ->
+NoTrackpad. A USB change that doesn't move BT fires nothing.
+
+**FIX TARGET (maps to the two goals).** MAIN (reliable live detection): give USB a live observer
+(kIOFirstMatch + kIOTerminated on AppleUSBMultitouchDriver) that drives the SAME reload/availability path the
+BT observer does — symmetric with BT. SECONDARY (no intermediate flash): make the reload pick the final view
+in one pass (re-detect BT+USB+property-match, choose the winner) instead of letting the BT-terminate branch
+force NoTrackpad before USB is honored. Delivery = the proven osax injection
+([[mt2-prefpane-osax-injection-mechanism]]); we add the missing USB observer rather than poking a single
+callback. Re-running the clean-room matrix (`docs/superpowers/prefpane-transport-matrix.md`) is the done-bar.
