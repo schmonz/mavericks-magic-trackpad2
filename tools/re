@@ -7,7 +7,7 @@
 # STATIC BINARY (Mach-O):                      LIVE SYSTEM / DOMAIN ORACLES:
 #   disasm   function/range machine code         ioreg-class   class presence + count
 #   syms     symbols by name                      ioreg-props   class node(s) + properties
-#   calls    who calls a code address             kexts         loaded kexts (kextstat)
+#   calls    who calls an addr or symbol          kexts         loaded kexts (kextstat)
 #   str-xref string ref -> enclosing function     klog          kernel log (system.log)
 #   xref-offset struct-field accesses             amd-actuation cursor-wiring verdict
 #   vtable   slot offset <-> method               conn-trace    BT connect timeline verdict
@@ -56,6 +56,21 @@ re_resolve_plist() {
   esac
 }
 
+# Normalize a hex (0x..) or decimal number to decimal; empty/absent -> 0.
+re_hexnum() { case "$1" in 0x*|0X*) printf '%d' "$1" ;; *) printf '%d' "${1:-0}" ;; esac; }
+
+# Disassembly text for a Mach-O (vmaddr space), demangled. The shared otool
+# pipeline behind disasm/calls/str-xref/xref-offset.
+re_otool() { otool -tV -arch "$arch" "$1" 2>/dev/null | c++filt; }
+
+# Name of the text symbol defined at exactly <addr> (hex, any form), or empty.
+re_sym_at_addr() {
+  _bin=$1; _a=$(printf '%s' "$2" | sed 's/^0[xX]//' | tr 'A-F' 'a-f')
+  nm -n -arch "$arch" "$_bin" 2>/dev/null | awk -v a="$_a" '
+    function h2i(x,  n,i,c){ n=0; x=tolower(x); for(i=1;i<=length(x);i++){c=index("0123456789abcdef",substr(x,i,1))-1; n=n*16+c} return n }
+    ($2=="T"||$2=="t") && h2i($1)==h2i(a) { print $3; exit }'
+}
+
 usage() {
   sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
@@ -86,7 +101,7 @@ sub_disasm() {  # <target> "<fn>" ["filter"] | <start-hex> [end-hex] ["filter"]
   echo "# binary:   $bin ($arch)   range 0x$(printf %x "$si")$([ -n "$ei" ] && printf '..0x%x' "$ei")"
   echo "# columns:  offset  address  instruction${filter:+   (filtered: $filter)}"
   emit() {
-    otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v si="$si" -v ei="$ei" -v max=400 '
+    re_otool "$bin" | awk -v si="$si" -v ei="$ei" -v max=400 '
       function h2i(x,  n,i,c){ sub(/^0x/,"",x); x=tolower(x); n=0
         for(i=1;i<=length(x);i++){ c=index("0123456789abcdef",substr(x,i,1))-1; n=n*16+c } return n }
       $1 ~ /^[0-9a-f]{5,16}$/ {
@@ -120,16 +135,29 @@ sub_syms() {  # <target> ["name filter"]
     }'
 }
 
-sub_calls() {  # <target> <addr-hex>
-  bin=$(re_resolve "$1"); addr=$2
-  [ -n "$bin" ] && [ -n "$addr" ] || { echo "usage: $me calls <target> <addr-hex>" >&2; return 2; }
-  addr=$(printf '%s' "$addr" | sed 's/^0x//' | tr 'A-F' 'a-f')
-  echo "# call sites targeting 0x$addr in $bin ($arch)  — enclosing function + the call line"
-  otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v a="$addr" '
+sub_calls() {  # <target> <addr-hex-or-symbol>
+  bin=$(re_resolve "$1"); tgt=$2
+  [ -n "$bin" ] && [ -n "$tgt" ] || { echo "usage: $me calls <target> <addr-hex-or-symbol>" >&2; return 2; }
+  # Accept an address (resolve to its defining symbol) or a symbol name directly.
+  # otool disassembles intra-binary calls as `callq _symbol`, NOT the numeric
+  # target — so matching the name is what actually finds call sites on dylibs.
+  if printf '%s' "$tgt" | grep -qiE '^(0x)?[0-9a-f]+$'; then
+    addr=$(printf '%s' "$tgt" | sed 's/^0[xX]//' | tr 'A-F' 'a-f')
+    name=$(re_sym_at_addr "$bin" "$addr")
+  else
+    addr=""; name=$tgt
+  fi
+  hdr=${name:-0x$addr}; [ -n "$name" ] && [ -n "$addr" ] && hdr="$name (0x$addr)"
+  echo "# call sites targeting $hdr in $bin ($arch)  — enclosing function + the call line"
+  re_otool "$bin" | awk -v a="$addr" -v nm="$name" '
+    function bare(s){ sub(/^_+/,"",s); return s }
     /:$/ && $1 !~ /^[0-9a-f]{5,16}/ { fn=$0; sub(/:$/,"",fn) }
-    /[ \t]callq[ \t]/ && (index($0,"0x" a)>0 || $0 ~ ("\\<" a "\\>")) {
-      instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
-      printf "%s  in %s\n    %s\n", $1, (fn==""?"?":fn), instr
+    /[ \t]callq[ \t]/ {
+      t=$0; sub(/.*callq[ \t]+/,"",t); sub(/[ \t]*##.*/,"",t); sub(/[ \t].*/,"",t)
+      if ((nm!="" && bare(t)==bare(nm)) || (a!="" && (t=="0x" a || index(t,a)>0))) {
+        instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
+        printf "%s  in %s\n    %s\n", $1, (fn==""?"?":fn), instr
+      }
     }'
 }
 
@@ -137,7 +165,7 @@ sub_str_xref() {  # <target> "<substring>" [context-lines]
   bin=$(re_resolve "$1"); q=$2; ctx=${3:-8}
   [ -n "$2" ] || { echo "usage: $me str-xref <target> \"<substring>\" [context-lines]" >&2; return 2; }
   echo "# code referencing \"$q\" in $bin ($arch)  — enclosing function + window (ctx ${ctx}/3)"
-  otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v q="$q" -v ctx="$ctx" '
+  re_otool "$bin" | awk -v q="$q" -v ctx="$ctx" '
     /:$/ && $1 !~ /^[0-9a-f]{5,16}/ { fn=$0; sub(/:$/,"",fn) }
     { L[NR]=$0; F[NR]=fn }
     index($0,q)>0 { hit[++h]=NR }
@@ -158,7 +186,7 @@ sub_xref_offset() {  # <target> <offset-hex> [R|W]
   case "$off" in 0x*) ;; *) off="0x$off" ;; esac
   echo "# offset $off accesses in $bin ($arch)"
   echo "# columns: rw  address  function  instruction"
-  otool -tV -arch "$arch" "$bin" 2>/dev/null | c++filt | awk -v off="$off" -v rwf="$rwf" '
+  re_otool "$bin" | awk -v off="$off" -v rwf="$rwf" '
     /:$/ && $1 !~ /^[0-9a-f]{5,16}\t?/ { fn=$0; sub(/:$/,"",fn); next }
     $1 ~ /^[0-9a-f]{5,16}$/ {
       addr=$1; instr=$0; sub(/^[0-9a-f]+[ \t]+/,"",instr); gsub(/\t/," ",instr)
@@ -257,11 +285,10 @@ sub_consts() {  # <target> [seg] [sec]
 }
 
 sub_hex() {  # <file-or-alias> [offset] [length]  (offset is a FILE offset; for these Mach-O plugins vaddr==fileoff in __TEXT)
-  n() { case "$1" in 0x*|0X*) printf '%d' "$1" ;; *) printf '%d' "${1:-0}" ;; esac; }
   f=$(re_resolve "$1")
   [ -n "$f" ] || { echo "usage: $me hex <file> [offset] [length]" >&2; return 2; }
   [ -f "$f" ] || { echo "# hex: $f (NOT FOUND)" >&2; return 1; }
-  off=$(n "${2:-0}"); len=$(n "${3:-256}")
+  off=$(re_hexnum "${2:-0}"); len=$(re_hexnum "${3:-256}")
   echo "# hex: $f"
   if [ "$len" -eq 0 ]; then
     echo "# window: offset $off .. EOF"
@@ -273,13 +300,12 @@ sub_hex() {  # <file-or-alias> [offset] [length]  (offset is a FILE offset; for 
 }
 
 sub_bcmp() {  # <fileA> <fileB> [offset] [length]
-  n() { case "$1" in 0x*|0X*) printf '%d' "$1" ;; *) printf '%d' "${1:-0}" ;; esac; }
   a=$1; b=$2
   [ -f "$a" ] && [ -f "$b" ] || { echo "usage: $me bcmp <fileA> <fileB> [offset] [length]" >&2; return 2; }
-  off=$(n "${3:-0}"); lenarg=$4
+  off=$(re_hexnum "${3:-0}"); lenarg=$4
   echo "# bcmp: A=$a"; echo "#       B=$b"
   if [ -n "$lenarg" ]; then
-    len=$(n "$lenarg"); echo "# window: offset $off length $len"
+    len=$(re_hexnum "$lenarg"); echo "# window: offset $off length $len"
     da=$(dd if="$a" bs=1 skip="$off" count="$len" 2>/dev/null | od -An -tx1)
     db=$(dd if="$b" bs=1 skip="$off" count="$len" 2>/dev/null | od -An -tx1)
   else
@@ -388,6 +414,10 @@ sub_mt_devices() {  # list MultitouchSupport devices (builds tools/mt_transport)
 }
 
 # --- dispatch ----------------------------------------------------------------
+# When sourced as a library (RE_LIB=1), stop here so the helpers above can be
+# unit-tested without running a subcommand.
+[ "${RE_LIB:-}" = 1 ] && return 0 2>/dev/null
+
 cmd=$1; [ $# -gt 0 ] && shift
 case "$cmd" in
   disasm)        sub_disasm "$@" ;;

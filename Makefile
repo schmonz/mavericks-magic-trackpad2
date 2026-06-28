@@ -85,6 +85,9 @@ test: $(TESTS)
 	@fail=0; for t in $(TESTS); do echo "== $$(basename $$t) =="; "$$t" || fail=1; done; \
 	 echo "== test_mt2d_run.sh =="; sh tests/test_mt2d_run.sh || fail=1; \
 	 echo "== test_conn_trace_parser.sh =="; sh tests/test_conn_trace_parser.sh || fail=1; \
+	 if command -v bats >/dev/null 2>&1; then \
+	   echo "== test_re.bats =="; bats tests/test_re.bats || fail=1; \
+	 else echo "== test_re.bats == SKIPPED (bats not installed)"; fi; \
 	 [ $$fail -eq 0 ] && echo "ALL TESTS PASS"
 
 $(TESTDIR):
