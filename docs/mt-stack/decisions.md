@@ -210,3 +210,17 @@ trigger contract is now KNOWN EMPIRICALLY (`MT2x`/`load` to the System Prefs pid
 **Task 0.4 (RE SIMBLAgent for the trigger) is UNNECESSARY** — skip it. Branch A reduces to: a per-user
 LaunchAgent that, on System Prefs launch (prefer `isFinishedLaunching`), sends `MT2x`/`load` to the pid — i.e.
 `mt2_pane_arm` wrapped in a watcher. No SIMBL, no SIMBLAgent.
+
+### osax ↔ SIMBL coexistence — both load → DOUBLE-swizzle (installer must make them exclusive) (2026-06-29)
+Tested on-device whether the standalone osax still loads from its ship location (`/Library/ScriptingAdditions`)
+while SIMBL is active. Result: **YES it loads** — SIMBL does not block or preempt the osax path. BUT with BOTH
+the SIMBL plugin (`/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle`) AND the osax installed,
+the SAME payload loads TWICE in one System Prefs process: SIMBLAgent auto-injects the `.bundle` at launch
+(`image loaded → swizzled didSelect`), then our `MT2x`/`load` loads the `.osax` (`image loaded → swizzled
+didSelect → inject handler invoked`). The two are independent images, so `-[NSPreferencePane didSelect]` gets
+**swizzled twice** + two transport observers — a real double-injection hazard.
+
+⇒ The osax and the SIMBL plugin MUST be mutually exclusive. The installer's `postinstall` already removes the
+SIMBL plugin when installing the osax (plan Task C.1 Step 3) — this finding is WHY that step is load-bearing,
+not just tidy. (The dev box keeps SIMBL for now; the shipped pkg drops it.) No payload change needed; the
+constructor isn't idempotent across two images and shouldn't have to be — exclusivity is the contract.
