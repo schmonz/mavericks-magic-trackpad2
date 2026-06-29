@@ -179,3 +179,34 @@ be re-sent on each System Prefs launch ⇒ a persistent watcher (Branch A) is st
 shipped product; true zero-trigger Branch B only wins if System Prefs can be made to load additions itself
 (unlikely). Sources: developer.apple.com/library/archive/qa/qa1070, .../technotes/tn1164,
 github.com/norio-nomura/EasySIMBL SIMBLAgent.m.
+
+### Phase 0 ON-DEVICE result — the standalone osax mechanism WORKS (no SIMBL); Branch A (2026-06-29)
+Ran Task 0.2/0.3 on the 10.9 box (SIMBLAgent stopped to remove it as a confound; our SIMBL plugin removed;
+other users' SIMBL plugins + SIMBLAgent left for restore). Findings, each from live syslog + `lsof`:
+
+- **Step 2 — agentless zero-trigger auto-load is DEAD (confirmed on-device).** Install osax, no agent/trigger,
+  fresh System Prefs launch → our osax NOT mapped, no constructor log. Matches QA1070 (additions load on demand
+  only).
+- **`gdut` is a RED HERRING for us.** Sending `ascr`/`gdut` to System Prefs DID initialize the OSA machinery and
+  eagerly loaded `/System/Library/ScriptingAdditions/SIMBL.osax` (which carries an `OSAScriptingDefinition`
+  .sdef), but loaded NONE of the three `/Library/ScriptingAdditions` osaxen and NOT ours. `gdut` only eagerly
+  loads *terminology-bearing* additions; ours declares only `OSAXHandlers` (event `MT2x`/`load`), so `gdut`
+  never loads it.
+- **Our OWN event `MT2x`/`load` loads it, reliably, ALONE (no gdut needed).** `mt2_pane_arm <pid>` → osax mapped
+  + `[MT2PaneRefresh] image loaded → swizzled -[NSPreferencePane didSelect] → inject handler invoked`. The OSA
+  dispatcher finds our `OSAXHandlers` registration and loads the osax to invoke `MT2InjectHandler`; the payload's
+  constructor runs on load.
+- **Location does NOT matter for event-dispatch loading: `/Library` works as well as `/System/Library`.** Proven
+  by loading our osax from each (fresh process, `MT2x`/`load` only). Both ScriptingAdditions dirs are scanned for
+  `OSAXHandlers` registration. ⇒ install to **`/Library/ScriptingAdditions`** (less invasive; don't touch
+  Apple's `/System/Library`; clean uninstall). The plan's original `/Library` install location was RIGHT.
+- **Explains the prior spike's "the .osax/AppleEvent path does not reliably load" note:** NOT a location problem
+  (location is fine) and NOT a force-load-event problem (`gdut` unneeded). The residual variable is TIMING /
+  targeting — sending `MT2x`/`load` to the running pid at the right moment (here: app already launched, sent by
+  pid) works every time across 3 fresh launches. SIMBLAgent times injection on `isFinishedLaunching`.
+
+**DECISION GATE (Task 0.3): AGENTLESS DEAD → Branch A** (a launch-watcher that sends `MT2x`/`load`). BUT the
+trigger contract is now KNOWN EMPIRICALLY (`MT2x`/`load` to the System Prefs pid, osax in `/Library`), so
+**Task 0.4 (RE SIMBLAgent for the trigger) is UNNECESSARY** — skip it. Branch A reduces to: a per-user
+LaunchAgent that, on System Prefs launch (prefer `isFinishedLaunching`), sends `MT2x`/`load` to the pid — i.e.
+`mt2_pane_arm` wrapped in a watcher. No SIMBL, no SIMBLAgent.
