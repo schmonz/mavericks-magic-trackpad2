@@ -27,6 +27,16 @@ add_test(NAME test_vtable_clone COMMAND test_vtable_clone)
 add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.sh)
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)
 
+# Branch A watcher inject-decision (first ObjC ctest). Links the watcher source for
+# mt2_should_inject; -DMT2_PANE_WATCH_TEST excludes the watcher's main (no duplicate main).
+add_executable(test_pane_watch test_pane_watch.m
+  ${CMAKE_SOURCE_DIR}/tools/mt2_prefpane_refresh/mt2_pane_watch.m)
+target_compile_options(test_pane_watch PRIVATE -fobjc-arc -DMT2_PANE_WATCH_TEST)
+target_include_directories(test_pane_watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_pane_watch
+  "-framework Foundation" "-framework AppKit" "-framework ApplicationServices")
+add_test(NAME test_pane_watch COMMAND test_pane_watch)
+
 find_program(BATS_EXE bats)
 if(BATS_EXE)
   add_test(NAME test_re_bats COMMAND ${BATS_EXE} ${CMAKE_SOURCE_DIR}/tests/test_re.bats)
