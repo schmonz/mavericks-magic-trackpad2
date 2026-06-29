@@ -17,6 +17,13 @@ foreach(t mt2_set_btname mt2_bt_bounce)
   target_link_libraries(${t} "-framework Foundation" "-framework IOBluetooth")
 endforeach()
 
+# mt2_pane_watch — Branch A launch-watcher (own process, normal ObjC/ARC + AppKit):
+# sends MT2x/load to System Preferences on launch so our osax loads (no SIMBL).
+add_executable(mt2_pane_watch mt2_prefpane_refresh/mt2_pane_watch.m)
+target_compile_options(mt2_pane_watch PRIVATE -fobjc-arc)
+target_link_libraries(mt2_pane_watch
+  "-framework Foundation" "-framework AppKit" "-framework ApplicationServices")
+
 # The prefpane-refresh osax: a pure-C GC-neutral payload injected into System
 # Preferences. MODULE = -bundle; objc is used via the runtime only (no GC image info).
 set(OSAX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mt2_prefpane_refresh)
