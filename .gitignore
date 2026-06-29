@@ -6,6 +6,8 @@ spike_bind
 
 # build outputs: unit tests -> build/tests/, pkg staging -> build/, the kext bundle
 build/
+# CMake out-of-tree build dir (Task 1+; kept separate from the Makefile's build/)
+cmake-build/
 kext-gesture/MT2Gesture.kext/
 kext-gesture/*.o
 
