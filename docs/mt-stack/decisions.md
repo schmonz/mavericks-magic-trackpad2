@@ -224,3 +224,20 @@ didSelect → inject handler invoked`). The two are independent images, so `-[NS
 SIMBL plugin when installing the osax (plan Task C.1 Step 3) — this finding is WHY that step is load-bearing,
 not just tidy. (The dev box keeps SIMBL for now; the shipped pkg drops it.) No payload change needed; the
 constructor isn't idempotent across two images and shouldn't have to be — exclusivity is the contract.
+
+### CORRECTION — no transition; coexist with unrelated SIMBL; never ship/remove a SIMBL plugin (2026-06-29)
+Reframing the prior "double-swizzle / installer removes SIMBL plugin" note (it assumed a SIMBL→osax
+transition — wrong). Reality (user): nobody uses this yet, so there is NO transition; but **people run SIMBL
+for OTHER, unrelated plugins**, and our osax+watcher must **coexist** with that and never disturb it.
+
+The shipped product installs the **osax + watcher ONLY — it does NOT ship a SIMBL plugin** (`MT2PaneRefresh.bundle`
+is a dev-only loader). So the double-load I saw earlier was a DEV artifact (dev box had both our SIMBL plugin
+AND the osax). Proven on-device (shipped simulation: SIMBL active for the 7 other plugins, our osax in
+`/Library`, NO MT2PaneRefresh SIMBL plugin): at System Prefs launch our payload does NOT load (0 markers —
+SIMBL.osax maps but doesn't touch our osax, different event), and our `MT2x`/`load` then loads it **exactly
+once** (single `swizzled didSelect`). The 7 other plugins + SIMBLAgent are untouched.
+
+⇒ Installer rules: install osax + watcher; **do NOT install a SIMBL plugin; do NOT remove or modify SIMBL,
+SIMBLAgent, or any other SIMBL plugin.** (Supersedes the earlier "postinstall removes the SIMBL plugin"
+guidance for the SHIPPED pkg — that removal is only meaningful on a DEV box that installed our own dev SIMBL
+plugin, and even then must be scoped to OUR `MT2PaneRefresh.bundle` and nothing else.)
