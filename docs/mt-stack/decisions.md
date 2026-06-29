@@ -127,3 +127,13 @@ for the name). **Reopening criterion:** none via the cache — the only ways to 
 hooking/patching `IOBluetoothUI` in the BT-UI processes (System Prefs / `BluetoothUIServer` / menu
 extra) or a binary patch of the framework (feasible only because 10.9 has no SIP). Cosmetic; deferred.
 Contrast: the **name** has the `displayName` user-override key → clean, persistent fix (do that).
+
+### CMake-built MT2Gesture.kext validated on-device — parity with the Makefile build (2026-06-29)
+Project A (CMake/ctest migration) replaced the Makefile build alongside the existing one in `cmake-build/`.
+Before retiring the Makefiles we proved parity of the load-bearing artifact: the CMake kext binary has the
+**same 594 symbols (identical type+name set)** as the Makefile kext (`nm` name+type diff empty; only
+addresses differ from link order), both `MH_KEXTBUNDLE` x86_64 `NOUNDEFS`. Then the real gate: unloaded the
+running kext, staged the CMake kext root-owned in `/tmp`, `kextload`ed it (resolved deps `<120 88 37 30 5 4
+3 1>`, nub `com_schmonz_MT2Gesture` registered/matched/active/busy 0), and the user exercised the full
+gesture set — **confirmed working on both USB and BT**. The CMake kext is behavior-equivalent to the
+Makefile build. (The installed boot copy under `/usr/local/lib/mt2d` was untouched; this was a runtime swap.)
