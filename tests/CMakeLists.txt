@@ -1,1 +1,36 @@
-# ctest registrations added in Task 7
+# Unit tests. Each test compiles its own .c and links mt2core (the static lib carries
+# every shared src/*.c; the linker pulls only the members each test references — same
+# result as the Makefile's per-test source lists, but DRY). No test #includes a .c.
+function(mt2_ctest name)
+  add_executable(${name} ${name}.c)
+  target_link_libraries(${name} mt2core)
+  add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+foreach(t test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle
+          test_session test_connect_sm test_conn_trace test_usb_reframe test_genuine_host test_coordinator)
+  mt2_ctest(${t})
+endforeach()
+
+# test_geometry needs the src/ include dir (Makefile: -Isrc).
+add_executable(test_geometry test_geometry.c)
+target_link_libraries(test_geometry mt2core)
+target_include_directories(test_geometry PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME test_geometry COMMAND test_geometry)
+
+# test_vtable_clone needs the kext-gesture include dir; no src deps (Makefile: -Ikext-gesture).
+add_executable(test_vtable_clone test_vtable_clone.c)
+target_include_directories(test_vtable_clone PRIVATE ${CMAKE_SOURCE_DIR}/kext-gesture)
+add_test(NAME test_vtable_clone COMMAND test_vtable_clone)
+
+# Shell + bats suites (run from the source tree).
+add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.sh)
+add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)
+
+find_program(BATS_EXE bats)
+if(BATS_EXE)
+  add_test(NAME test_re_bats COMMAND ${BATS_EXE} ${CMAKE_SOURCE_DIR}/tests/test_re.bats)
+else()
+  add_test(NAME test_re_bats COMMAND ${CMAKE_COMMAND} -E echo "bats not installed")
+  set_tests_properties(test_re_bats PROPERTIES SKIP_RETURN_CODE 0)
+endif()
