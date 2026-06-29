@@ -55,17 +55,28 @@ add_custom_target(prefpane-refresh DEPENDS MT2PaneRefresh MT2PaneRefresh_dylib m
 add_custom_target(prefpane-refresh-simbl DEPENDS MT2PaneRefresh_simbl)
 
 # Operational install/uninstall (privilege handled here; fully reversible).
+# NOTE: each step is its own COMMAND with NATIVE args (CMake quotes each arg, incl.
+# the space-containing SIMBL path). Do NOT wrap in `sh -c "a && b"` — CMake space-
+# escapes that single string and breaks the && / quoting (Phase-0 found this bug).
+# The standalone osax ships in /Library/ScriptingAdditions (Phase 0: loads there via
+# our MT2x/load event, same as /System/Library; /Library is the less-invasive choice).
 add_custom_target(prefpane-refresh-install
-  COMMAND sh -c "sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax && sudo cp -R '${OSAX_OUT}' /Library/ScriptingAdditions/ && echo 'Installed /Library/ScriptingAdditions/MT2PaneRefresh.osax'"
+  COMMAND sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
+  COMMAND sudo cp -R ${OSAX_OUT} /Library/ScriptingAdditions/
+  COMMAND ${CMAKE_COMMAND} -E echo "Installed /Library/ScriptingAdditions/MT2PaneRefresh.osax"
   COMMENT "Installing MT2PaneRefresh.osax")
 add_dependencies(prefpane-refresh-install MT2PaneRefresh)
 add_custom_target(prefpane-refresh-uninstall
-  COMMAND sh -c "sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax && echo 'Removed /Library/ScriptingAdditions/MT2PaneRefresh.osax'"
+  COMMAND sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
+  COMMAND ${CMAKE_COMMAND} -E echo "Removed /Library/ScriptingAdditions/MT2PaneRefresh.osax"
   COMMENT "Removing MT2PaneRefresh.osax")
 add_custom_target(prefpane-refresh-simbl-install
-  COMMAND sh -c "sudo rm -rf '/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle' && sudo cp -R '${SIMBL_OUT}' '/Library/Application Support/SIMBL/Plugins/' && echo 'Installed into SIMBL Plugins — relaunch System Preferences to inject'"
+  COMMAND sudo rm -rf "/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle"
+  COMMAND sudo cp -R ${SIMBL_OUT} "/Library/Application Support/SIMBL/Plugins/"
+  COMMAND ${CMAKE_COMMAND} -E echo "Installed into SIMBL Plugins - relaunch System Preferences to inject"
   COMMENT "Installing MT2PaneRefresh.bundle (SIMBL)")
 add_dependencies(prefpane-refresh-simbl-install MT2PaneRefresh_simbl)
 add_custom_target(prefpane-refresh-simbl-uninstall
-  COMMAND sh -c "sudo rm -rf '/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle' && echo 'Removed MT2PaneRefresh.bundle from SIMBL Plugins'"
+  COMMAND sudo rm -rf "/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle"
+  COMMAND ${CMAKE_COMMAND} -E echo "Removed MT2PaneRefresh.bundle from SIMBL Plugins"
   COMMENT "Removing MT2PaneRefresh.bundle (SIMBL)")
