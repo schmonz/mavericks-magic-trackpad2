@@ -137,3 +137,45 @@ running kext, staged the CMake kext root-owned in `/tmp`, `kextload`ed it (resol
 3 1>`, nub `com_schmonz_MT2Gesture` registered/matched/active/busy 0), and the user exercised the full
 gesture set — **confirmed working on both USB and BT**. The CMake kext is behavior-equivalent to the
 Makefile build. (The installed boot copy under `/usr/local/lib/mt2d` was untouched; this was a runtime swap.)
+
+### Scripting Addition loading on 10.9 — how a .osax gets into System Preferences (Phase 0 research, 2026-06-29)
+Research for the standalone-osax delivery (replace SIMBL). Authoritative sources: Apple **QA1070** "Loading
+Scripting Additions in Mac OS X", Apple **TN1164**, and the EasySIMBL `SIMBLAgent.m` source.
+
+**Finding 1 — additions load ON DEMAND, never automatically at launch.** On OS X each app has its OWN system
+handler table (not shared); "for performance reasons, this isn't done automatically as a normal part of the
+application initialization sequence — it is only done if an application uses AppleScript or initializes the
+table itself" (QA1070/TN1164). The AppleScript scripting component, when it first comes into existence in a
+process, loads every `.osax` from `/System/Library/ScriptingAdditions` + `/Library/...` + `~/Library/...`.
+⇒ A plain osax install with **no trigger will NOT auto-load** into System Preferences (it doesn't use
+AppleScript at launch). This is the Task 0.2-Step-2 expectation, now backed by Apple docs (still verify on-box).
+
+**Finding 2 — the documented force-load event is `ascr`/`gdut`** (`kASAppleScriptSuite`/`kGetAEUT`,
+"get dynamic user terminology"). QA1070 gives the exact recipe: `AEBuildAppleEvent(kASAppleScriptSuite,
+kGetAEUT, …); AESend(&e,&r,kAEWaitReply,…)`. On 10.2+ (so 10.9) the system installs the receiving handler
+automatically, so an EXTERNAL process can send `ascr`/`gdut` to a target pid to make it load ALL scripting
+additions. This is the sanctioned, reliable trigger.
+
+**Finding 3 — our payload does its work in a CONSTRUCTOR, so LOADING is sufficient.**
+`tools/mt2_prefpane_refresh/mt2_prefpane_refresh.c:245` has `__attribute__((constructor))` (plus a belt-and-
+suspenders `MT2InjectHandler` for `MT2x`/`load`). The SIMBL bundle already works precisely because its
+constructor fires on `[bundle load]`. ⇒ Once the **.osax is loaded** (by `ascr`/`gdut`), the constructor runs
+and does the work — we do NOT need our custom `MT2x`/`load` event to be received.
+
+**Finding 4 — explains the prior spike failure.** The earlier note "the .osax/AppleEvent path does not
+reliably load into Cocoa System Preferences" used `mt2_pane_arm` sending our CUSTOM `MT2x`/`load`. That is
+NOT a force-load event — if the osax isn't loaded yet, System Prefs has no handler for it and (unlike
+`ascr`/`gdut`) an arbitrary custom event is not guaranteed to instantiate the AppleScript component. So the
+fix to try is: send **`ascr`/`gdut`** (force-load) instead of/before `MT2x`/`load`.
+
+**Finding 5 — timing.** EasySIMBL's `SIMBLAgent` injects on the app's **`isFinishedLaunching`** (KVO), not on
+the raw `NSWorkspaceDidLaunchApplicationNotification`. Branch A's watcher should prefer `isFinishedLaunching`
+(or retry) so it doesn't fire before the AE machinery is ready.
+
+**⇒ Single most-likely agentless trigger to try in Task 0.2 Step 3:** send **`ascr`/`gdut`** to the running
+System Preferences pid (one-shot: a tiny AESend sender, or adjust `mt2_pane_arm` to this event class/id) and
+check whether `MT2PaneRefresh` maps + its constructor logs. NOTE even if this loads the osax, the event must
+be re-sent on each System Prefs launch ⇒ a persistent watcher (Branch A) is still likely required for the
+shipped product; true zero-trigger Branch B only wins if System Prefs can be made to load additions itself
+(unlikely). Sources: developer.apple.com/library/archive/qa/qa1070, .../technotes/tn1164,
+github.com/norio-nomura/EasySIMBL SIMBLAgent.m.
