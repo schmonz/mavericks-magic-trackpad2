@@ -9,3 +9,10 @@ target_link_libraries(vhid_probe mt2core)
 # mt2_pane_arm lives under the prefpane dir; ApplicationServices + CoreFoundation.
 add_executable(mt2_pane_arm mt2_prefpane_refresh/mt2_pane_arm.c)
 target_link_libraries(mt2_pane_arm "-framework ApplicationServices" "-framework CoreFoundation")
+
+# ObjC tools (ARC, Foundation + IOBluetooth).
+foreach(t mt2_set_btname mt2_bt_bounce)
+  add_executable(${t} ${t}.m)
+  target_compile_options(${t} PRIVATE -fobjc-arc)
+  target_link_libraries(${t} "-framework Foundation" "-framework IOBluetooth")
+endforeach()
