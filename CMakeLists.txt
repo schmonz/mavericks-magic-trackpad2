@@ -19,3 +19,4 @@ add_subdirectory(kext-gesture)
 add_subdirectory(tests)
 
 include(cmake/mt2_pkg.cmake)
+include(cmake/mt2_dev.cmake)

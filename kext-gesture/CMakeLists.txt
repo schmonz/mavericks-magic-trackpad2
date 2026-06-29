@@ -55,3 +55,21 @@ add_custom_command(OUTPUT ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist ${KEXT_BUNDLE}/Contents/Info.plist
   COMMENT "Assembling MT2Gesture.kext")
 add_custom_target(kext ALL DEPENDS ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture)
+
+# Operational load/unload (ports kext-gesture/Makefile load/unload). kextload refuses
+# any non-root-owned kext, so stage a root:wheel copy in /tmp; load Apple's multitouch
+# kexts first (best-effort) since the genuine paths manual-start their classes.
+add_custom_target(kext-load
+  COMMAND sh -c "set -e; \
+    sudo rm -rf /tmp/MT2Gesture.kext; \
+    sudo cp -R '${KEXT_BUNDLE}' /tmp/; \
+    sudo chown -R root:wheel /tmp/MT2Gesture.kext; \
+    sudo kextload /System/Library/Extensions/AppleUSBMultitouch.kext || true; \
+    sudo kextload /System/Library/Extensions/AppleBluetoothMultitouch.kext || true; \
+    sudo kextload /tmp/MT2Gesture.kext"
+  COMMENT "Staging (root:wheel /tmp) + loading MT2Gesture.kext")
+add_dependencies(kext-load kext)
+
+add_custom_target(kext-unload
+  COMMAND sh -c "sudo kextunload -b com.schmonz.MT2Gesture || true"
+  COMMENT "Unloading MT2Gesture.kext")

@@ -20,15 +20,17 @@ Recipes. For the model see `explanation.md`; for facts see `reference.md`.
 ```sh
 # Reloading while the pad is ON/streaming is fine — empirically clean across many reloads; teardown
 # restores the cloned vtable FIRST (no power-off dance needed; the old "pad OFF first" rule was dropped).
-make -C kext-gesture unload   # drop the running/boot copy
-make -C kext-gesture load     # build + stage + load
+cmake --build cmake-build --target kext-unload   # drop the running/boot copy
+cmake --build cmake-build --target kext-load     # build + stage + load
+# Or the one-shot dev loop (unload -> drain -> load -> bounce present transport):
+cmake --build cmake-build --target reload
 ```
 
-- **`make load` now also `kextload`s `AppleUSBMultitouch.kext` + `AppleBluetoothMultitouch.kext`** first
+- **`kext-load` (and `reload`) also `kextload`s `AppleUSBMultitouch.kext` + `AppleBluetoothMultitouch.kext`** first
   (the genuine paths `allocClassWithName` `AppleUSBMultitouchDriver` / `BNBTrackpadDevice` from those —
   NULL class otherwise). The booted deploy does the same in `dist/mt2d-run`.
-- **Always verify the loaded binary contains your edit** before trusting a test (stale `.o` has
-  burned us): `strings kext-gesture/MT2Gesture.kext/Contents/MacOS/MT2Gesture | grep '<your string>'`
+- **Always verify the loaded binary contains your edit** before trusting a test (stale object has
+  burned us): `strings cmake-build/MT2Gesture.kext/Contents/MacOS/MT2Gesture | grep '<your string>'`
 - **`dmesg` accumulates across reloads** — mark the line count (`sudo dmesg | grep -c CONNTRACE`)
   before a run so you read only new lines.
 - If a load fails with **kextload error 71**, it's usually an unresolved symbol / missing
@@ -87,8 +89,8 @@ ad hoc. A future `re/verify-facts` could read the header and check every constan
 ## Verify the post-merge polish (on-device, pending as of 2026-06-25)
 
 Three deploy/identity changes shipped to `main` need on-device confirmation. Preconditions: a USB
-backup pointer is live; the updated package is deployed (`make pkg` + `sudo installer -pkg
-build/mt2d-1.0.0.pkg -target /`, already done once).
+backup pointer is live; the updated package is deployed (`cmake --build cmake-build --target pkg` +
+`sudo installer -pkg cmake-build/mt2d-1.0.0.pkg -target /`, already done once).
 
 1. **Two-boot boot-load test** (the genuine paths need Apple's kexts loaded at boot — `0109c9d`).
    First `sudo /usr/local/sbin/mt2d-run --reset` (sentinel → `ok`).

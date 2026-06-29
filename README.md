@@ -29,12 +29,13 @@ loaded, we reenumerate the device if needed and attach.
 ## Requirements
 
 - Mac OS X 10.9
-- Command Line Tools (clang, make).
+- Command Line Tools (clang) + CMake (≥3.10).
 
 ## Build & install
 
-    make pkg
-    sudo installer -pkg build/mt2d-1.0.0.pkg -target /
+    cmake -S . -B cmake-build
+    cmake --build cmake-build --target pkg
+    sudo installer -pkg cmake-build/mt2d-1.0.0.pkg -target /
 
 Installs the kext under `/usr/local/lib/mt2d`, userland helpers
 under `/usr/local/sbin`, and a LaunchDaemon for when you reboot
@@ -50,9 +51,11 @@ under `/usr/local/sbin`, and a LaunchDaemon for when you reboot
 
 ## Develop
 
-    make                 # build the dev/diagnostic tools
-    make kext-gesture    # build the kernel extension
-    make test            # run unit tests
+    cmake -S . -B cmake-build                      # configure (once)
+    cmake --build cmake-build                      # build everything (tools + kext)
+    cmake --build cmake-build --target kext        # just the kernel extension
+    ctest --test-dir cmake-build --output-on-failure   # run unit + shell + bats tests
+    cmake --build cmake-build --target reload      # hot-reload the running kext
 
 ## Layout
 
