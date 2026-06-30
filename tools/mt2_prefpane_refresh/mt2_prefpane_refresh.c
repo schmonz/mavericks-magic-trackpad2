@@ -40,6 +40,17 @@ static io_iterator_t   gIterUSBdn  = 0;   /* AppleUSBMultitouchDriver terminated
 static io_iterator_t   gIterBTup   = 0;   /* BNBTrackpadDevice first-match         */
 static io_iterator_t   gIterBTdn   = 0;   /* BNBTrackpadDevice terminated          */
 static int             gArmed      = 0;
+static int             gRemovalPending = 0;   /* set while a removal-check is in flight: hold the
+                                                 current view by no-opping Apple's in-place battery-
+                                                 hide (_magicTrackpadAction:) so a genuine power-off
+                                                 doesn't transit a "USB look" before NoTrackpad. */
+/* Saved state for the hold-during-removal swizzle (see my_magicAction); declared up here because
+ * do_recompute + schedule_update (below, but earlier in the file) read them. */
+static void (*gOrigMagicAction)(id, SEL, id, signed char) = NULL;
+static id           gMagicSelf = NULL;
+static id           gMagicArg  = NULL;
+static signed char  gMagicConn = 0;
+static int          gMagicSuppressed = 0;
 
 typedef void (*didSelect_t)(id, SEL);
 static didSelect_t     gOrigDidSelect = NULL;
@@ -81,11 +92,25 @@ static int current_view_is_trackpad(void) {
  * rebuild only on a real view-type change (<->NoTrackpad). This makes BT<->USB seamless. */
 static void do_recompute(void) {
     if (!gPane) return;
+    gRemovalPending = 0;   /* any recompute ends the hold */
     if ((service_present("BNBTrackpadDevice") || service_present("AppleUSBMultitouchDriver"))
         && current_view_is_trackpad()) {
         LOG("transport changed, trackpad view unchanged -> skip rebuild (no movie reload)");
+        /* If we held this view through a removal window we suppressed Apple's in-place battery/
+         * gesture update. Now that we're KEEPING the view, replay it so the battery is correct
+         * for the resolved transport — the common handoff resolves HERE (an APPEAR supersedes the
+         * removal), so this is the path that snaps a BT->USB handoff's battery hidden. (No hold ->
+         * gMagicSuppressed==0 -> no-op, preserving today's plain BT<->USB skip-rebuild.) */
+        if (gMagicSuppressed && gOrigMagicAction) {
+            gOrigMagicAction(gMagicSelf, sel_registerName("_magicTrackpadAction:deviceConnected:"),
+                             gMagicArg, gMagicConn);
+            LOG("skip rebuild -> replayed suppressed _magicTrackpadAction connected=%d", gMagicConn);
+            gMagicSuppressed = 0;
+        }
         return;
     }
+    gMagicSuppressed = 0;   /* full rebuild (loadMainView) starts from scratch: the suppressed
+                               in-place update is moot — drop it, don't replay. */
     SEL lmv = sel_registerName("loadMainView");
     if (responds(gPane, lmv)) {
         ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
@@ -109,16 +134,26 @@ static int gGen = 0;
                                   a removal and flashes NoTrackpad. This is the device's floor. */
 static void schedule_update(int delay_ms, int removal) {
     int my = ++gGen;
+    /* Begin the hold immediately (before Apple's ~200ms in-place battery-hide), so a genuine
+     * power-off never transits the "USB look" while we wait out the removal window. */
+    if (removal) gRemovalPending = 1;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delay_ms * NSEC_PER_MSEC),
                    dispatch_get_main_queue(), ^{
-        if (my != gGen) return;   /* a later event superseded this one */
+        if (my != gGen) return;   /* a later event superseded this one (it clears the hold) */
         /* For a removal, re-check at FIRE time (after settle): if the USB device has
          * since enumerated, this was a BT->USB handoff — hold and let the USB appear
          * show it (no NoTrackpad). Otherwise it's a genuine removal -> recompute. */
         if (removal && usb_device_present()) {
-            LOG("removal settled with USB present -> hold for USB appear");
+            /* HANDOFF (USB cabled within the window, and no APPEAR superseded this block first):
+             * resolve via do_recompute, which keeps the trackpad view and replays the suppressed
+             * in-place update so the battery snaps correct for USB. Same blink-free result as the
+             * APPEAR-resolved path; both funnel through do_recompute's one replay. */
+            LOG("removal settled with USB present -> handoff (keep view, snap battery to USB)");
+            do_recompute();
             return;
         }
+        /* GENUINE removal: end the hold and rebuild to No Trackpad (no USB look en route).
+         * do_recompute clears the hold + drops the suppressed update (full rebuild). */
         do_recompute();
     });
 }
@@ -202,6 +237,24 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
     (void)self; (void)_cmd; (void)obs; (void)connected;
 }
 
+/* The CONTROLLER (BaseTrackPadController) runs its OWN IOService observer, separate from the
+ * pane's suppressed one, and reacts to a BT drop by hiding the battery in place via
+ * -[BaseTrackPadController _magicTrackpadAction:deviceConnected:] (@0x4c57). On a genuine
+ * power-off that in-place hide is what flashes the "USB look" for the ~1.3s removal window.
+ * While a removal is pending we no-op it (holding the current BT view) and SAVE the call's
+ * args so a handoff can replay it (re-firing the original IMP re-hides the battery = correct
+ * USB look; RE: docs/mt-stack/decisions.md "Prefpane power-off 'linger'"). Signature confirmed
+ * (id self, SEL, id arg1, signed char connected). The saved-state globals are declared near the
+ * top (do_recompute/schedule_update read them). */
+static void my_magicAction(id self, SEL _cmd, id arg, signed char connected) {
+    if (gRemovalPending) {
+        gMagicSelf = self; gMagicArg = arg; gMagicConn = connected; gMagicSuppressed = 1;
+        LOG("removal pending -> hold view (suppressed _magicTrackpadAction connected=%d)", connected);
+        return;
+    }
+    if (gOrigMagicAction) gOrigMagicAction(self, _cmd, arg, connected);
+}
+
 /* Capture the live Trackpad pane: arm the USB observer + swizzle the pane class's
  * deviceConnected: for NoTrackpad suppression (the class is loaded by now). */
 static void capture_pane(id self) {
@@ -216,6 +269,18 @@ static void capture_pane(id self) {
             gOrigDeviceConnected = (void (*)(id, SEL, id, signed char))method_getImplementation(m);
             method_setImplementation(m, (IMP)my_deviceConnected);
             LOG("swizzled _ioServiceObserver:deviceConnected: (NoTrackpad suppression)");
+        }
+    }
+    if (!gOrigMagicAction) {
+        Class c = objc_getClass("BaseTrackPadController");
+        SEL sel = sel_registerName("_magicTrackpadAction:deviceConnected:");
+        Method m = c ? class_getInstanceMethod(c, sel) : NULL;
+        if (m) {
+            gOrigMagicAction = (void (*)(id, SEL, id, signed char))method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_magicAction);
+            LOG("swizzled _magicTrackpadAction:deviceConnected: (hold-during-removal)");
+        } else {
+            LOG("BaseTrackPadController _magicTrackpadAction: not found (hold disabled)");
         }
     }
     arm_observer();
