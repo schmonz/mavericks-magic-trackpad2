@@ -45,7 +45,6 @@ static psm_state_t     gPsm = PSM_NONE;   /* the SM state; the adapter's only de
 /* The original MTTrackpadController _magicTrackpadAction: IMP (we own the selector; see
  * my_magicAction). perform() calls it via gOrigMagicAction_call() to set battery state. */
 static void (*gOrigMagicAction)(id, SEL, id, signed char) = NULL;
-static id           gMagicCtrl = NULL;   /* the live MTTrackpadController captured in my_magicAction */
 
 typedef void (*didSelect_t)(id, SEL);
 static didSelect_t     gOrigDidSelect = NULL;
@@ -111,7 +110,12 @@ static void perform(psm_action_t a) {
 static int gGen = 0;
 #define REMOVE_CHECK_MS 1300
 
-/* Run one event through the SM and perform its action on the main thread. */
+/* Run one event through the SM and perform its action on the main thread. gGen serializes the
+ * pending HOLD timer: entering HOLD arms a window timer tagged with `my`; any LATER resolving
+ * event bumps gGen so the in-flight timer's `my != gGen` guard fires and it no-ops (superseded).
+ * A no-op event (PSM_ACT_NONE — a duplicate/stale edge) must NOT bump gGen: doing so would cancel
+ * a live HOLD timer without rescheduling, stranding the SM in PSM_HOLD (reconcile won't resolve
+ * HOLD->NONE by design). So only HOLD arms, and only a real resolution supersedes. */
 static void sm_event(psm_event_t e) {
     psm_result_t r = psm_step(gPsm, e);
     gPsm = r.next;
@@ -124,8 +128,8 @@ static void sm_event(psm_event_t e) {
             psm_result_t rr = psm_step(gPsm, PSM_EV_REMOVAL_ELAPSED);
             gPsm = rr.next; perform(rr.action);
         });
-    } else {
-        ++gGen;
+    } else if (r.action != PSM_ACT_NONE) {
+        ++gGen;   /* a real resolution supersedes a pending hold timer; a no-op leaves it alone */
     }
 }
 
@@ -145,8 +149,8 @@ static void drain(io_iterator_t it) {
 }
 
 /* One callback for every appear/disappear of either transport. The pane's own
- * updates are suppressed (see my_deviceConnected), so WE are the sole driver: any
- * change schedules a single coalesced recompute. refcon labels the event for logs. */
+ * updates are suppressed (see my_deviceConnected), so WE are the sole driver: each edge becomes
+ * one SM event (sm_event), and the SM decides what to render. refcon labels the event for logs. */
 static void dev_changed(void *ref, io_iterator_t it) {
     drain(it);
     const char *tag = ref ? (const char *)ref : "?";
@@ -189,8 +193,8 @@ static void arm_observer(void) {
 /* Suppress the pane's OWN observer-driven update ENTIRELY — we take ownership of
  * when the display updates. Without this the pane redraws on every BT edge (e.g.
  * blanks to NoTrackpad the instant BT drops during a BT->USB handoff, before USB is
- * recognized). Our observers (dev_changed) + a single coalesced loadMainView are the
- * sole driver, so the pane holds its prior state through a switch, then updates once. */
+ * recognized). Our observers (dev_changed) drive the SM, which owns every render, so the pane
+ * holds its prior state through a switch, then updates once. */
 static void (*gOrigDeviceConnected)(id, SEL, id, signed char) = NULL;  /* saved, intentionally never called */
 static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected) {
     (void)self; (void)_cmd; (void)obs; (void)connected;
@@ -200,8 +204,7 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
  * own _ioServiceObserver). The SM decides battery state; perform() calls the original via
  * gOrigMagicAction_call(). This removes the power-off battery-hide race entirely. */
 static void my_magicAction(id self, SEL _cmd, id arg, signed char connected) {
-    (void)_cmd; (void)arg; (void)connected;
-    gMagicCtrl = self;   /* capture; self IS the MTTrackpadController. Then suppress. */
+    (void)self; (void)_cmd; (void)arg; (void)connected;   /* suppress the autonomous call entirely */
 }
 
 /* Find the LIVE MTTrackpadController. Primary: mCurrentController.mController (the current view's
@@ -260,9 +263,9 @@ static void capture_pane(id self) {
         if (m) {
             gOrigMagicAction = (void (*)(id, SEL, id, signed char))method_getImplementation(m);
             method_setImplementation(m, (IMP)my_magicAction);
-            LOG("swizzled MTTrackpadController _magicTrackpadAction:deviceConnected: (hold-during-removal)");
+            LOG("swizzled MTTrackpadController _magicTrackpadAction:deviceConnected: (own selector; suppress autonomous)");
         } else {
-            LOG("MTTrackpadController _magicTrackpadAction: not found (hold disabled) getClass=%p", c);
+            LOG("MTTrackpadController _magicTrackpadAction: not found (suppression disabled) getClass=%p", c);
         }
     }
     arm_observer();
