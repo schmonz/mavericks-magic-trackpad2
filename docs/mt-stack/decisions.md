@@ -241,3 +241,21 @@ once** (single `swizzled didSelect`). The 7 other plugins + SIMBLAgent are untou
 SIMBLAgent, or any other SIMBL plugin.** (Supersedes the earlier "postinstall removes the SIMBL plugin"
 guidance for the SHIPPED pkg — that removal is only meaningful on a DEV box that installed our own dev SIMBL
 plugin, and even then must be scoped to OUR `MT2PaneRefresh.bundle` and nothing else.)
+
+### Task C.2 acceptance — live BT→USB refresh works through the standalone watcher loader (2026-06-29)
+The headline case validated end-to-end through the NEW loader (watcher LaunchAgent + osax, no SIMBL), user
+driving the physical transport switch + reporting the screen, agent reading syslog + device truth:
+
+**Sequence:** MT2 on BT (unplugged USB; cursor + gestures confirmed) → opened System Preferences → Trackpad
+(normal BT UI) → plugged USB. **Result (user-observed): the pane settles on USB, NO "No Trackpad"** (one extra
+USB flash — the known cosmetic double-render, SECONDARY/non-blocking). Syslog corroborates the full chain:
+`[mt2panewatch] injected pid 47119 (try 1)` → `captured Trackpad pane` → `armed live observers (USB + BT)` →
+`device change: BT- → removal-check in 1300ms` → `device change: USB+ → show in 250ms` →
+`recompute: loadMainView (coalesced)`. Device truth after: BNBTrackpadDevice 0 / AppleUSBMultitouchDriver 1
+(USB), matching the settled pane. The USB-appear superseded the BT-removal → ONE coalesced loadMainView → no
+NoTrackpad — exactly the designed behavior, now proven to load via our `MT2x`/`load` watcher instead of SIMBL.
+
+⇒ The standalone-osax delivery (Phase 0 + Branch A + packaging) is functionally COMPLETE and accepted for the
+headline case. Remaining: the cosmetic single-flash polish (SECONDARY, tracked in
+[[mt2-prefpane-osax-injection-mechanism]]) and the proactive capture-race path (open directly on Trackpad) if
+not yet re-confirmed under the watcher.
