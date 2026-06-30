@@ -381,3 +381,16 @@ suppression missed a hide path (re-instrument); if the handoff loses battery-cor
 replay is wrong. Falsification attempted: disassembled both battery-timer paths to rule out a second hide;
 residual risk = a hide path reachable only at runtime (e.g. a KVO/notification observer not visible in static
 disasm) — Phase 2 is the oracle.
+
+### Prefpane MTTrackpadController handle — find_mt_controller (RE 2026-06-30, on-device PROBE)
+For the transport-state-machine refactor the osax must call `_magicTrackpadAction` on the live
+`MTTrackpadController` (to set battery deterministically), but `mCurrentController` is the generic
+`InputDeviceNibController` (PROBE: `isMT=0`) and does NOT respond to `_allControllers`. Two deterministic
+accessors confirmed live (PROBE on USB):
+- `mCurrentController.mController` ivar = the `MTTrackpadController` (the nib controller retains its content
+  controller). This is the CURRENT view's controller — preferred (no singleton-staleness risk).
+- `+[MTTrackpadController sharedController]` returns the `MTTrackpadController` singleton (isMT=1). Good
+  fallback. (`+[BaseTrackPadController sharedController]` does NOT respond — the accessor is on the subclass.)
+`find_mt_controller()` = read `mCurrentController.mController` (verify isKindOfClass:MTTrackpadController),
+fall back to `[MTTrackpadController sharedController]`. Other nib-controller ivars seen: `mContentView`(NSView),
+`mSetupBTButton`(NSButton), `mSetupBTBackButton`(nil).
