@@ -61,5 +61,36 @@ First: open System Preferences, click **Trackpad** → expect `captured Trackpad
 | 4a | On **USB cabled**, **power MT2 OFF** (cable still in) | `USB- removal-check` → `loadMainView` (AppleUSBMultitouchDriver terminates on power-off) | → **NoTrackpad** (NOT stale USB — corrects the old inference; no policy decision needed) | ✅ PASS |
 | — | Capture-race: open System Prefs **directly on Trackpad** (e.g. `osascript ... reveal pane id "com.apple.preference.trackpad"` after a full Cmd-Q) | `proactive capture via currentPrefPaneInstance (already on Trackpad)` → `captured Trackpad pane` | refresh still works | ✅ PASS (proactive path) |
 
-Record per-row PASS/FAIL + any new transient into `docs/mt-stack/decisions.md` (durable) — the gitignored
-`docs/superpowers/prefpane-transport-matrix.md` holds the raw clean-room event log.
+Record per-row PASS/FAIL + any new transient into `docs/mt-stack/decisions.md` (durable). The full
+post-fix acceptance is in `decisions.md` → "Task C.2 FULL matrix"; the pre-fix baseline is below.
+
+## Clean-room baseline (pre-fix, 2026-06-28) — what the BUG looked like
+Characterized physically (clean-room: Cmd-Q System Prefs between every trial to clear accumulated process
+state; device-truth via `re ioreg-class` alongside the user-reported pane). This is the "before" the fix
+was measured against — keep it to prove future changes don't regress. Pane states: OK / NOTFOUND
+("No trackpad found") / STALE (wrong-transport UI).
+
+| Start | Action | device-truth | OPEN pane (the bug) | FRESH-opened pane |
+|-------|--------|--------------|---------------------|-------------------|
+| BT | cable USB in | USB present | **NOTFOUND** ⚠️ (device IS present → display bug) | OK (USB) — fresh query works |
+| USB | unplug USB → BT | BT present | **OK** (live-updates to BT) — asymmetry vs above | n/a |
+| BT | power OFF | absent | FLASHES USB UI briefly → NOTFOUND | — |
+| USB | power OFF (cabled) | absent (driver) | STALE (USB UI persisted) — *note: post-fix this is now NoTrackpad* | — |
+
+**Clean-room data summary (the decisive finding):** launch System Prefs **on USB** → the open pane tracks
+BOTH transports live; launch **on BT** → a USB-appear shows USB UI for a MOMENT then reverts to NOTFOUND,
+**every time, no "learning"** (an earlier "OK on 2nd plug" was a contamination artifact — the process stayed
+alive across a window-reopen-on-USB which registered the USB observer). USB→BT always live-updates. A fresh
+launch is always correct (one-shot presence check of both classes).
+
+**Root cause (disasm-confirmed):** the pane's only LIVE observer is on `BNBTrackpadDevice` (BT, @0x232e/0x38af);
+USB is a one-shot `IOServiceGetMatchingService("AppleUSBMultitouchDriver")` presence check (@0x23be), so a USB
+change fires no callback — the brief flash is the BT-terminate path (cabling USB drops BT) transiently
+re-detecting USB before forcing NoTrackpad. Full disasm + fix-target in `open-questions.md` → "Trackpad
+prefpane live-update misses our manually-started driver". Our osax adds the missing USB observer + coalesced
+recompute; the post-fix matrix above passes every row.
+
+**Confounds to control when re-testing:** (C1) "close + reopen window" does NOT reset state — the System Prefs
+*process* persists, so IOKit notification ports persist; clean reset = full Cmd-Q. (C2) which transport the
+device is on at process-launch decides whether the USB observer ever registered (root of the bug). (C3)
+having both transports physically present at once changes behavior (USB cabled underneath while on BT).

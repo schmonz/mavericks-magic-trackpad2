@@ -558,8 +558,8 @@ layer is healthy; `tools/mt_svc_observe` is the standing oracle for "are the not
 **SYSTEMATIC CHARACTERIZATION 2026-06-28 (supersedes the prior "probably transient / nothing to fix"
 guess — that was unsystematic and is WRONG).** Ran the decisive open-pane retest physically, clean-room
 (Cmd-Q System Prefs between every trial to clear accumulated process state), capturing device-truth
-(`re mt-devices`/`re ioreg-class`) alongside the pane appearance. Full event log:
-`docs/superpowers/prefpane-transport-matrix.md`. Reproducible result:
+(`re mt-devices`/`re ioreg-class`) alongside the pane appearance. Baseline matrix + clean-room methodology:
+`docs/mt-stack/prefpane-test-runthrough.md` → "Clean-room baseline (pre-fix)". Reproducible result:
 - **Launch System Prefs while on USB → the open pane tracks BOTH transports live** (BT↔USB both ways, repeatably OK).
 - **Launch while on BT → on a USB appear the open pane shows USB UI for a MOMENT, then reverts to "No
   trackpad found"** — every time, no "learning" from a prior USB exposure. (An earlier "OK on 2nd plug"
@@ -590,4 +590,12 @@ BT observer does — symmetric with BT. SECONDARY (no intermediate flash): make 
 in one pass (re-detect BT+USB+property-match, choose the winner) instead of letting the BT-terminate branch
 force NoTrackpad before USB is honored. Delivery = the proven osax injection
 ([[mt2-prefpane-osax-injection-mechanism]]); we add the missing USB observer rather than poking a single
-callback. Re-running the clean-room matrix (`docs/superpowers/prefpane-transport-matrix.md`) is the done-bar.
+callback. Re-running the clean-room matrix (`docs/mt-stack/prefpane-test-runthrough.md`) is the done-bar.
+
+**✅ RESOLVED 2026-06-29 — done-bar MET (shipped via the standalone-osax watcher loader).** The fix (suppress
+the pane's own observer; observe BOTH transports ourselves; recompute via `[pane loadMainView]`; coalesce
+appear-250ms / removal-1300ms so a USB-appear supersedes the BT-removal) is delivered by the osax + launch-
+watcher (no SIMBL). The FULL clean-room matrix was re-run on-device through the loader and every row PASSES
+(Rows 1/2/1b/3a/3b/4a + the capture-race) — see `decisions.md` → "Task C.2 FULL matrix" and the
+runthrough/baseline in `prefpane-test-runthrough.md`. MAIN goal (reliable live USB detection) met; only-open
+= the cosmetic single-flash on a redraw (SECONDARY; Apple's `loadMainView` own rebuild, not our logic).
