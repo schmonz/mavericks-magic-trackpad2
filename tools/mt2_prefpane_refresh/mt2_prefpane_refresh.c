@@ -50,11 +50,42 @@ static int responds(id obj, SEL s) {
         obj, sel_registerName("respondsToSelector:"), s);
 }
 
-/* Re-run the pane's own full detection (Trackpad loadMainView @0x225d): resets
- * state, re-detects BT+USB+property+mouse, and updates the LIVE display. This is
- * what makes a BT-launched open pane track USB. */
+static int service_present(const char *cls) {
+    CFMutableDictionaryRef m = IOServiceMatching(cls);
+    if (!m) return 0;
+    io_service_t s = IOServiceGetMatchingService(kIOMasterPortDefault, m);  /* consumes m */
+    if (s) { IOObjectRelease(s); return 1; }
+    return 0;
+}
+
+/* Is the pane currently showing the trackpad view (vs the no-device "NoTrackpad" view)?
+ * The controller is a generic InputDeviceNibController for every view, so its class can't
+ * tell them apart; the reliable signal is nibFileName — the no-device controller answers
+ * "NoTrackpad", while the trackpad controller returns nil. So: trackpad iff != "NoTrackpad". */
+static int current_view_is_trackpad(void) {
+    Ivar iv = class_getInstanceVariable(object_getClass(gPane), "mCurrentController");
+    id ctrl = iv ? object_getIvar(gPane, iv) : NULL;
+    if (!ctrl) return 0;
+    id nib = ((id (*)(id, SEL))objc_msgSend)(ctrl, sel_registerName("nibFileName"));
+    if (!nib) return 1;
+    return !((signed char (*)(id, SEL, id))objc_msgSend)(
+        nib, sel_registerName("isEqualToString:"), (id)CFSTR("NoTrackpad"));
+}
+
+/* Update the pane on a transport change. loadMainView (Trackpad @0x225d) re-detects
+ * BT+USB+property+mouse and rebuilds the view — but it ALWAYS tears down and rebuilds,
+ * which reloads the gesture-demo movie (a visible "video blink"). BT and USB BOTH use the
+ * MTTrackpadController view, so a BT<->USB change needs NO rebuild: the pane's controller
+ * updates the transport-specific bits (battery, gestures) in place on its own. GUARD it:
+ * skip the rebuild when a device is present AND the trackpad view is already up; full
+ * rebuild only on a real view-type change (<->NoTrackpad). This makes BT<->USB seamless. */
 static void do_recompute(void) {
     if (!gPane) return;
+    if ((service_present("BNBTrackpadDevice") || service_present("AppleUSBMultitouchDriver"))
+        && current_view_is_trackpad()) {
+        LOG("transport changed, trackpad view unchanged -> skip rebuild (no movie reload)");
+        return;
+    }
     SEL lmv = sel_registerName("loadMainView");
     if (responds(gPane, lmv)) {
         ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
@@ -121,8 +152,12 @@ static void dev_changed(void *ref, io_iterator_t it) {
     drain(it);
     const char *tag = ref ? (const char *)ref : "?";
     int appear = (tag[0] && tag[strlen(tag) - 1] == '+');
-    /* APPEAR: show the new transport promptly. REMOVAL: defer a short settle, then
-     * decide — if USB has enumerated by then it's a handoff (hold), else NoTrackpad. */
+    /* APPEAR: show the new transport promptly. REMOVAL: defer the handoff window, then
+     * decide — if USB has enumerated by then it's a handoff (hold), else NoTrackpad. We
+     * CANNOT shorten this for a genuine power-off: at removal time the incoming USB device
+     * isn't yet enumerable (the ~1.1s device floor), so a fast check can't tell a power-off
+     * from a BT->USB handoff. (Cost: a genuine BT power-off briefly shows Apple's
+     * battery-hidden "looks like USB" in-place state until the window elapses.) */
     LOG("device change: %s -> %s in %dms", tag, appear ? "show" : "removal-check",
         appear ? APPEAR_DELAY_MS : REMOVE_CHECK_MS);
     schedule_update(appear ? APPEAR_DELAY_MS : REMOVE_CHECK_MS, !appear);
