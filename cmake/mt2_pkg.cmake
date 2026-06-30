@@ -14,7 +14,16 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/mt2d-run        ${PKGROOT}/usr/local/sbin/
   COMMAND chmod +x ${PKGROOT}/usr/local/sbin/mt2d-run
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2d.plist ${PKGROOT}/Library/LaunchDaemons/
+  # Prefpane live-refresh: the GC-neutral osax + the per-user launch-watcher + its
+  # LaunchAgent (Branch A of the standalone-osax delivery; replaces SIMBL — no SIMBL
+  # plugin is shipped, and the installer does NOT touch SIMBL).
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/ScriptingAdditions
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/MT2PaneRefresh.osax ${PKGROOT}/Library/ScriptingAdditions/MT2PaneRefresh.osax
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/libexec
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_pane_watch ${PKGROOT}/usr/local/libexec/
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2panewatch.plist ${PKGROOT}/Library/LaunchAgents/
   COMMAND pkgbuild --root ${PKGROOT} --scripts ${CMAKE_SOURCE_DIR}/dist/scripts
           --identifier com.schmonz.mt2d --version ${PROJECT_VERSION} --install-location / ${PKG_OUT}
-  DEPENDS kext mt2_reenumerate mt2_set_btname
+  DEPENDS kext mt2_reenumerate mt2_set_btname MT2PaneRefresh mt2_pane_watch
   COMMENT "Building ${PKG_OUT}")
