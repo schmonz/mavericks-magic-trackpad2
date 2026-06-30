@@ -310,3 +310,40 @@ no-device → `NoTrackpad.nib` / `TrackpadPicture.png` (the half-MT1/half-MT2 ta
 `.xml`, not hardcoded) → shipping our own `.mov`/`.xml` that keeps the referenced shot names (Shots
 3/4/6/7/8/15/16/17) needs no change to the existing gesture XMLs. **Not pursued** (cosmetic; deferred) —
 recorded so the RE isn't lost.
+
+### Prefpane BT<->USB "video blink" — root cause + fix (RE 2026-06-30, commit 0f68531)
+The remaining SECONDARY flicker (a blink in the gesture-demo video area on a BT<->USB switch) was NOT a
+cross-fade or a render glitch — it's loadMainView reloading the movie. Findings (tools/re disasm of
+`/System/Library/PreferencePanes/Trackpad.prefPane`, + an instrumented osax spike):
+- **`-[Trackpad loadMainView]` (@0x225d) ALWAYS rebuilds**: detect (synchronous IOServiceGetMatchingService
+  for BNBTrackpadDevice/AppleUSBMultitouchDriver + an IOPropertyMatch on com.apple.AppleMultitouchTrackpad) →
+  `_controlerForNIBName:` → `_loadControler:` → `setMainView:`. It has NO "view unchanged" guard.
+- **BT and USB BOTH use the `MTTrackpadController` view** (BT just adds the battery UI). So a BT<->USB change
+  rebuilds the SAME view type, and the new view's gesture movie re-initializes → the blink.
+- `_loadControler:` (@0x2b90) does a cross-fade (`NSPrefCrossFadeView` + `setFrame:display:animate:YES`, gated
+  on the old view having a window) AND its own `setMainView:`, and loadMainView calls `setMainView:` again at
+  its tail — so each loadMainView = TWO installs. **Both the cross-fade and the double-install were RULED OUT
+  as the blink** (suppressing the fade did nothing; de-duping to one install didn't help). The blink is the
+  single rebuild's movie reload.
+- **The pane's controller updates in place on its own:** `-[BaseTrackPadController _magicTrackpadAction:
+  deviceConnected:]` (@0x4c57) does `setHidden:` (battery), `setGesturesArray:`, and **`setAVAsset:`** (the
+  movie) — independent of loadMainView. It reacts to BT-DISCONNECT in ~200ms (hides the battery). So driving
+  loadMainView on a BT<->USB change was pure waste (rebuild + movie reload) on top of the controller's clean
+  in-place update.
+- **FIX (the guard):** skip loadMainView when a device is present AND the trackpad view is already up; full
+  rebuild only on a real view-type change (<->NoTrackpad). "Trackpad view up" = current controller's
+  `nibFileName != "NoTrackpad"` — the controller is a generic `InputDeviceNibController` (class can't tell
+  views apart), `nibFileName` returns nil for the trackpad nib and "NoTrackpad" only for the no-device view.
+  On-device: BT<->USB now blink-free, battery/UI still correct.
+
+### USB enumeration timing — measured (2026-06-30); the removal window can't be shortened
+Measured on a BT->USB handoff (cmake-build/usb_appear_timer poller, t=0 at BT-drop): AppleUSBMultitouchDriver
+matchable at **~958ms**, raw IOUSBDevice (VID 1452/PID 613) at **~978ms** — the raw device is NOT faster than
+the driver (the earlier guess that it would be is FALSE). So the ~1s is a genuine hardware enumeration floor
+(extends the prior "IOUSBDevice busy 1107ms"). The prefpane removal-settle window (REMOVE_CHECK_MS=1300ms)
+can't be meaningfully shortened: at removal time the incoming USB device isn't yet enumerable, so no fast
+check can tell a genuine BT power-off from a BT->USB handoff. **Open cosmetic:** a genuine BT power-off
+briefly shows Apple's battery-hidden "looks like USB" in-place state (the controller hides the battery ~200ms
+after BT drops) until the 1.3s window elapses → NoTrackpad. The only fix would be to suppress that in-place
+battery-hide DURING the removal window and re-apply it if it resolves to USB (invasive; risks reintroducing
+the blink) — deferred. Apple's own pane has no live USB observer at all, so this is already past Apple.
