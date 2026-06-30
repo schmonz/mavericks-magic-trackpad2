@@ -120,5 +120,29 @@ static void run_tests(void) {
             }
         }
     }
+
+    /* --- regression sequences: each on-device bug, as a deterministic test --- */
+
+    /* (a) power-off ON BT: BT view -> NoTrackpad, NEVER a USB-look in between. */
+    { devm_t d = { 1, 0 }; reset_to(d); int saw_usb = 0;
+      d = do_move(d, M_POWER, &saw_usb, 0);                  /* power off */
+      CHECK_EQ(g_disp, PSM_NONE); CHECK_EQ(saw_usb, 0); }
+
+    /* (b) handoff BT->USB (plug cable while on): snap to USB, NEVER NoTrackpad in between. */
+    { devm_t d = { 1, 0 }; reset_to(d); int saw_none = 0;
+      d = do_move(d, M_CABLE, 0, &saw_none);                 /* cable in */
+      CHECK_EQ(g_disp, PSM_USB); CHECK_EQ(saw_none, 0); }
+
+    /* (c) power-on while cabled -> USB with battery hidden (the stale-BT bug). */
+    { devm_t d = { 0, 1 }; reset_to(d); int saw_none = 0;
+      d = do_move(d, M_POWER, 0, &saw_none);                 /* power on, cable already in */
+      CHECK_EQ(g_disp, PSM_USB); }
+
+    /* (d) dropped USB appear (manually-started driver, no FirstMatch) -> reconcile self-heals.
+     *     Simulate: device is on USB (truth), but the SM never saw the appear (stuck NONE). */
+    { g_state = PSM_NONE; g_disp = PSM_NONE;                 /* stuck on NoTrackpad */
+      psm_result_t r = psm_reconcile(g_state, 0, 1);         /* poll reads truth = USB */
+      g_state = r.next; apply_action(r.action);
+      CHECK_EQ(g_disp, PSM_USB); }
 }
 TEST_MAIN()
