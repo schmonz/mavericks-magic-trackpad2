@@ -347,3 +347,37 @@ briefly shows Apple's battery-hidden "looks like USB" in-place state (the contro
 after BT drops) until the 1.3s window elapses → NoTrackpad. The only fix would be to suppress that in-place
 battery-hide DURING the removal window and re-apply it if it resolves to USB (invasive; risks reintroducing
 the blink) — deferred. Apple's own pane has no live USB observer at all, so this is already past Apple.
+
+### Prefpane power-off "linger" — RE the in-place battery-hide + re-apply path (2026-06-30, Phase 0; GO)
+RE'ing the deferred fix above (suppress Apple's in-place battery-hide during the removal window, re-apply on a
+handoff). Read-only disasm of `/System/Library/PreferencePanes/Trackpad.prefPane/Contents/MacOS/Trackpad` via
+`tools/re`. **GO/NO-GO gate: GO** — all three questions resolve cleanly.
+- **Trigger + signature (0.1).** `-[BaseTrackPadController _magicTrackpadAction:deviceConnected:]` (@0x4c57) is
+  the ONLY thing that hides the battery *control* (the "USB look"). Signature confirmed `(id self, SEL _cmd,
+  id arg1, signed char connected)`: `connected` arrives in `%rcx`/`%r15b` (sign-extended `movsbl` at +0x3c =
+  BOOL/`signed char`); `arg1` in `%rdx`/`%r14` (receives `armIterators`). At 0x4d13 it does `setHidden:` with
+  `al = sete(connected==0)` on `mBTBatteryControl`/`mBTBatteryControlLabel`/`mBTBatteryLabel` (+ `mChangeBattery
+  Button`), then the full in-place rebuild (`setAVAsset:nil`, `setGesturesArray:nil`, `_buildGestureArrayAndSel
+  ectGestureWithName:`, two availability notifications). So suppressing the whole method holds battery + gestures
+  + movie together. **Subtlety:** on `connected:NO` it hides the battery ONLY if no `BNBTrackpadDevice` still
+  matches in IORegistry (+0x6d..+0x9c); if one is still present it just calls `_checkBatteryTimer:` and returns.
+  `calls 0x4c57` shows NO static call site → it's `objc_msgSend`-dispatched from the controller's OWN IOService
+  observer (re-arms via `armIterators` at the top), independent of our recompute — matches the on-device finding.
+  Implementing class is `BaseTrackPadController` (runtime `self` is the `MTTrackpadController` subclass via its
+  ivars) → swizzle `BaseTrackPadController`; `class_getInstanceMethod` finds the inherited IMP.
+- **Re-apply path = REPLAY the suppressed call (0.2; the crux).** Save `(self, arg1, connected)` from the
+  no-op'd call; at handoff resolution re-invoke the original IMP with them. At that point BT is gone, so the
+  `connected:NO` path finds no `BNBTrackpadDevice` → falls to 0x4d13 → `setHidden:YES` (battery gone = correct
+  USB look). This is byte-for-byte today's working handoff, just deferred — no extra RE, candidate #1 holds.
+- **No second hide path (0.3).** `_checkBatteryTimer:` (@0x4988) never hides the battery *control* — only
+  `setFloatValue:`/`setStringValue:` (battery value) + `setHidden:` on `mChangeBatteryButton`; it early-returns
+  if `mMagicTrackpadFound==0`, and otherwise no-ops when `IOBluetoothDevice pairedDevices` has no connected
+  classMinor==0x25 device (true while BT is off). `_updateBTDevice:` (@0x4918) only schedules the repeating
+  `mBatteryCheckTimer` that fires that same harmless `_checkBatteryTimer:`. So gating `_magicTrackpadAction`
+  alone fully holds the view; the battery timers can't disturb it mid-window.
+
+**How we'd know if this RE is wrong:** Phase 2 on-device — if power-off still flashes the USB look, the
+suppression missed a hide path (re-instrument); if the handoff loses battery-correctness or re-blinks, the
+replay is wrong. Falsification attempted: disassembled both battery-timer paths to rule out a second hide;
+residual risk = a hide path reachable only at runtime (e.g. a KVO/notification observer not visible in static
+disasm) — Phase 2 is the oracle.
