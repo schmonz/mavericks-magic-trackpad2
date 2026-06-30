@@ -63,6 +63,8 @@ cmake --build cmake-build --target prefpane-uninstall
   `grep -a "mt2panewatch\|MT2PaneRefresh\]" /var/log/system.log | tail` — expect
   `[mt2panewatch] injected pid N` then `[MT2PaneRefresh] image loaded -> swizzled didSelect -> inject handler invoked`.
 - The pkg ships all three; its postinstall loads the agent for the console user (next login otherwise).
+- **Validate the live refresh** with the repeatable matrix in `prefpane-test-runthrough.md` (human switches
+  transports, agent reads the markers + device truth).
 
 ## Watch the live stack (runtime diagnostics)
 

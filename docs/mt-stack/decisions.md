@@ -259,3 +259,29 @@ NoTrackpad — exactly the designed behavior, now proven to load via our `MT2x`/
 headline case. Remaining: the cosmetic single-flash polish (SECONDARY, tracked in
 [[mt2-prefpane-osax-injection-mechanism]]) and the proactive capture-race path (open directly on Trackpad) if
 not yet re-confirmed under the watcher.
+
+### Task C.2 FULL matrix — every row validated through the standalone watcher loader (2026-06-29)
+Re-ran the whole prefpane transport matrix on-device through the watcher+osax loader (no SIMBL), human driving
+the physical transport actions, agent corroborating via syslog markers + `tools/re ioreg-class` device truth.
+Procedure captured durably in `docs/mt-stack/prefpane-test-runthrough.md`. All rows PASS:
+- **Row 1 (BT→USB, launched-on-BT):** settles USB, no NoTrackpad. `BT- removal-check` superseded by `USB+
+  show` → one coalesced `loadMainView`. (one cosmetic USB flash)
+- **Row 2 (USB→BT):** `USB- → loadMainView` (brief NoTrackpad while BT idle) → tap → `BT+ → loadMainView` → BT.
+- **Row 1b (2nd+ BT→USB same session):** still ONE coalesced `loadMainView` per event after 5+ this session —
+  the feared observer-accumulation leak does NOT manifest (our coalescing dedups). Flicker not worsening.
+- **Rows 3a/3b (BT power-cycle, previously only INFERRED):** OFF → `BT- → loadMainView` → NoTrackpad; ON →
+  `BT+ → loadMainView` → BT. Our logic clean (no USB event from us). NEW: the OFF transition cosmetically
+  transits the USB nib en route to NoTrackpad — Apple's `loadMainView` rebuild, not our observer (same family
+  as the known SECONDARY flicker).
+- **Row 4a (power-off while cabled USB) — CORRECTS the old inference:** the matrix guessed "stays USB (stale)";
+  actual = `USB- → loadMainView` → **NoTrackpad**. The `AppleUSBMultitouchDriver` terminates on power-off even
+  with the cable in, so our observer fires and the pane is correct. No policy decision needed.
+- **Capture-race (open directly on Trackpad):** reproduced via `osascript reveal pane id
+  com.apple.preference.trackpad` after a full Cmd-Q; the `didSelect` swizzle is missed but the **proactive
+  `currentPrefPaneInstance` path captures it** (`proactive capture via currentPrefPaneInstance (already on
+  Trackpad)`). Works through the watcher.
+
+⇒ The standalone-osax prefpane delivery (Phase 0 + Branch A + packaging + acceptance) is COMPLETE and accepted
+across the full matrix. Only-open item is the cosmetic single-flash on a redraw (SECONDARY; loadMainView's own
+rebuild; tracked in [[mt2-prefpane-osax-injection-mechanism]]). The Project-A/CMake commits + this prefpane
+work are all on `main` (unpushed).
