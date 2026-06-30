@@ -23,12 +23,25 @@ psm_result_t psm_step(psm_state_t state, psm_event_t event) {
 }
 
 psm_state_t psm_view_for(int bt_present, int usb_present) {
-    (void)bt_present; (void)usb_present;
+    if (bt_present)  return PSM_BT;
+    if (usb_present) return PSM_USB;
     return PSM_NONE;
 }
 
+static psm_action_t render_for(psm_state_t target) {
+    switch (target) {
+    case PSM_BT:   return PSM_ACT_RENDER_BT;
+    case PSM_USB:  return PSM_ACT_RENDER_USB;
+    case PSM_NONE: return PSM_ACT_RENDER_NONE;
+    default:       return PSM_ACT_NONE;
+    }
+}
+
 psm_result_t psm_reconcile(psm_state_t state, int bt_present, int usb_present) {
-    (void)bt_present; (void)usb_present;
+    psm_state_t target = psm_view_for(bt_present, usb_present);
     psm_result_t r = { state, PSM_ACT_NONE };
+    if (state == PSM_HOLD && target == PSM_NONE) return r;  /* don't fight the hold; timer owns NONE */
+    if (state == target) return r;
+    r.next = target; r.action = render_for(target);
     return r;
 }
