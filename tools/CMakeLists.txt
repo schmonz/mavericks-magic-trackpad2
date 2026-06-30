@@ -27,7 +27,8 @@ target_link_libraries(mt2_pane_watch
 # The prefpane-refresh osax: a pure-C GC-neutral payload injected into System
 # Preferences. MODULE = -bundle; objc is used via the runtime only (no GC image info).
 set(OSAX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mt2_prefpane_refresh)
-add_library(MT2PaneRefresh MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c)
+add_library(MT2PaneRefresh MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c)
+target_include_directories(MT2PaneRefresh PRIVATE ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(MT2PaneRefresh PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME MT2PaneRefresh)
 target_link_libraries(MT2PaneRefresh "-framework IOKit" "-framework CoreFoundation" objc)
 # Assemble MT2PaneRefresh.osax/Contents/{MacOS,Info.plist}
@@ -39,7 +40,8 @@ add_custom_command(TARGET MT2PaneRefresh POST_BUILD
   COMMENT "Assembling MT2PaneRefresh.osax")
 
 # Same payload as a DYLD_INSERT_LIBRARIES dylib (a loader we control at launch).
-add_library(MT2PaneRefresh_dylib SHARED ${OSAX_DIR}/mt2_prefpane_refresh.c)
+add_library(MT2PaneRefresh_dylib SHARED ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c)
+target_include_directories(MT2PaneRefresh_dylib PRIVATE ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(MT2PaneRefresh_dylib PROPERTIES
   PREFIX "" OUTPUT_NAME MT2PaneRefresh SUFFIX ".dylib"
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -47,7 +49,8 @@ target_link_libraries(MT2PaneRefresh_dylib "-framework IOKit" "-framework CoreFo
 
 # Same payload packaged as a SIMBL plugin bundle (SIMBLAgent injects it at launch —
 # the current working loader). Same -bundle binary, SIMBL-Info.plist, .bundle dir.
-add_library(MT2PaneRefresh_simbl MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c)
+add_library(MT2PaneRefresh_simbl MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c)
+target_include_directories(MT2PaneRefresh_simbl PRIVATE ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(MT2PaneRefresh_simbl PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME MT2PaneRefresh)
 target_link_libraries(MT2PaneRefresh_simbl "-framework IOKit" "-framework CoreFoundation" objc)
 set(SIMBL_OUT ${CMAKE_BINARY_DIR}/MT2PaneRefresh.bundle)
