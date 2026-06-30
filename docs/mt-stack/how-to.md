@@ -36,6 +36,34 @@ cmake --build cmake-build --target reload
 - If a load fails with **kextload error 71**, it's usually an unresolved symbol / missing
   `OSBundleLibraries` entry (`sudo kextutil -n -t /tmp/MT2Gesture.kext` shows which).
 
+## Trackpad prefpane live-refresh (standalone osax loader — no SIMBL)
+
+The Trackpad pref pane gets a live USB↔BT transport-refresh from a pure-C GC-neutral Scripting Addition
+(`tools/mt2_prefpane_refresh/`) injected into System Preferences. Delivery is a **standalone `.osax` +
+our own launch-watcher** — NOT SIMBL. How it loads (RE'd in `decisions.md` "Scripting Addition loading on
+10.9"): additions load on demand only, so the watcher sends our own `MT2x`/`load` Apple event to System
+Prefs on launch; the osax (in `/Library/ScriptingAdditions`) loads and its `__attribute__((constructor))`
+does the work. `ascr`/`gdut` does NOT load ours (it only eagerly loads terminology-bearing additions).
+
+```sh
+# Build + install the loader (osax + watcher binary + per-user LaunchAgent), then it auto-injects on every
+# System Preferences launch:
+cmake --build cmake-build --target prefpane-refresh        # build osax (+ dylib + arm) ...
+cmake --build cmake-build --target prefpane-refresh-install # ... osax -> /Library/ScriptingAdditions
+cmake --build cmake-build --target prefpane-watch-install   # watcher -> /usr/local/libexec + LaunchAgent (loads it)
+
+# Full teardown (osax + watcher + LaunchAgent). Leaves SIMBL alone:
+cmake --build cmake-build --target prefpane-uninstall
+```
+
+- **Coexists with SIMBL.** Users keep SIMBL for unrelated plugins; we ship NO SIMBL plugin and the
+  installer/uninstaller NEVER touch SIMBL. Installing our own dev SIMBL plugin AND the osax together
+  double-loads (didSelect swizzled twice) — so don't; pick one loader.
+- **Verify a load:** open System Preferences, then
+  `grep -a "mt2panewatch\|MT2PaneRefresh\]" /var/log/system.log | tail` — expect
+  `[mt2panewatch] injected pid N` then `[MT2PaneRefresh] image loaded -> swizzled didSelect -> inject handler invoked`.
+- The pkg ships all three; its postinstall loads the agent for the console user (next login otherwise).
+
 ## Watch the live stack (runtime diagnostics)
 
 ```sh
