@@ -14,9 +14,22 @@ See `explanation.md` for how these fit together, `how-to.md` for the workflows.
 | `0xcc8` | `MT2_VT_getMultitouchReport` | geometry **DATA** fetch | `tools/re vtable AppleBluetoothMultitouch BNBTrackpadDevice 0xcc8` |
 | `0xcd8` | `MT2_VT_getMultitouchReportInfo` | geometry **LENGTH** probe — runs **first**; if it fails the data fetch is never reached | `tools/re vtable … 0xcd8` |
 | `0xd08` | `MT2_VT_createMultitouchHandler` | spawns the AMD — **UNVERIFIED this session** | `tools/re vtable … 0xd08` |
+| `0xd58` | — | worker `_getMultitouchReport` — on **`BNBDevice`** a REAL wire query (override @0x4ee4), NOT a stub | `tools/re vtable AppleBluetoothMultitouch BNBDevice 0xd58` |
+| `0xd78` | — | gate-runner the `0xd58` worker dispatches the wire query through | disasm `_getMultitouchReport` |
+| `0xe50` | — | `_simpleGetReport` (issues the PSM-17 control GET) | disasm BNBDevice |
+| `0xe60` | — | `_setMultitouchReportID` (sets the report id for the wire GET) | disasm BNBDevice |
 
-Both `0xcc8` and `0xcd8` are stubs on the stock transport (return `kIOReturnUnsupported`); we override
-**both** on our cloned transport instance (see `explanation.md` → geometry).
+**Correction (2026-06-22 RE, was mis-simplified):** `0xcc8`/`0xcd8` are `kIOReturnUnsupported` stubs only on
+the **base** `BluetoothMultitouchTransport` (`_getMultitouchReport @0x152a`). But the shipped `gGenuineBnb`
+is a `BNBTrackpadDevice : BNBDevice`, and **`BNBDevice` OVERRIDES the worker `_getMultitouchReport` (slot
+`0xd58`, @0x4ee4) with a REAL implementation** — it `IOMalloc`s a temp buffer and queries the LIVE MT2 over
+the PSM-17 control channel (`_setMultitouchReportID` 0xe60 + `_simpleGetReport` 0xe50). So geometry GET on
+the real device does NOT die at a stub: it reaches the wire, and the MT2 simply never answers MT1 D-reports
+→ empty geometry (which is why we must publish geometry ourselves). We override slot **`0xcc8`** specifically
+because `staticGetReportHandler @0x1305` tail-calls `getMultitouchReport @0xbea` (slot `0xcc8`) directly
+(`movq 0xcc8(%rax),%r9 ; jmpq *%r9`) — overriding `0xcc8` **short-circuits before** the `0xd58` worker
+dispatches the wire query. We override **both** `0xcc8` and `0xcd8` on our cloned transport instance (see
+`explanation.md` → geometry).
 
 ## AMD vtable slots — `AppleMultitouchDevice` (the geometry GET call chain)
 
@@ -29,6 +42,15 @@ Both `0xcc8` and `0xcd8` are stubs on the stock transport (return `kIOReturnUnsu
 | `0x8f8` | `MT2_AMD_getFeatureReportInfo` | calls the handler obj → transport | `tools/re vtable … 0x8f8` |
 
 Chain: `_cacheDeviceProperties → getReport(0x880) → _deviceGetReportWithLookUp(0x8e8) → _getFeatureReportInfo(0x8f8) → handler obj (AMD+0xa8) → transport 0xcd8 then 0xcc8`.
+
+**Cursor-actuation ancestor walk** (`AppleMultitouchDevice::hidEventDriverPublished @0x31f8`, walk loop
+@0x3296): when a HID event driver publishes, the AMD climbs provider chains to decide whether it owns the
+pointer — via AMD vtable slots `*0x318` (fetch the AMD's own provider/reference node) and `*0x130`
+(getProvider-like, climb the published driver's provider chain). This is why a matched
+`AppleMultitouchHIDEventDriver` must live in the AMD's own subtree (Apple's `BNBTrackpadEventDriver`
+personality matched `DeviceUsagePairs {1,1},{1,2}` but NOT our BNB interface's VID 76/source 1, so the
+fix is our `MT2HIDEventDriverBNB` personality — see `explanation.md` → cursor actuation + Cursor-actuation
+personalities below).
 
 ## Struct field offsets
 
@@ -108,7 +130,10 @@ to ~half the pad → perpendicular-axis edge dead zones. Seed these genuine valu
 (BT) and `usb_build_init_props` (USB).
 
 **Coordinate-range caveat (edge-clamp root):** MT1 native X `-2909..3167`, Y `-2456..2565`; MT2 X
-`-3678..3934`, Y `-2478..2587` — an ~18–20% X-scale variance. `mt1_encode`'s X range can clamp near
+`-3678..3934`, Y `-2478..2587` — an ~18–20% X-scale variance. **Gotcha:** `mt2_decode` stores **Y negated**
+— the valid decoded-Y span is `[-MT2_MAX_Y, -MT2_MIN_Y]`, not `[MIN,MAX]`. Lesson (a touchdown-debounce
+range-gate experiment was reverted over exactly this): never range-gate decoded x/y by assumption —
+instrument the real decoded distribution first. `mt1_encode`'s X range can clamp near
 the L/R pad edges (the frozen-X band). Tracked as the edge-clamp bug ([[mt2-cursor-edge-clamp]]).
 Physical MT2 surface ≈ **160.0 × 114.9 mm**, res ≈ 47.6 / 44.1 units/mm (Linux+Windows drivers agree).
 

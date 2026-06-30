@@ -285,3 +285,28 @@ Procedure captured durably in `docs/mt-stack/prefpane-test-runthrough.md`. All r
 across the full matrix. Only-open item is the cosmetic single-flash on a redraw (SECONDARY; loadMainView's own
 rebuild; tracked in [[mt2-prefpane-osax-injection-mechanism]]). The Project-A/CMake commits + this prefpane
 work are all on `main` (unpushed).
+
+### Yield BNB's PSM-19 delegate; don't double-own it — *the Path-A delegate-conflict panic* (RE 2026-06-20)
+Why the shipped architecture lets genuine BNB own the interrupt channel and we only INTERPOSE its delegate
+(overwrite `channel+0x110`, keep `+0x118` target), rather than `listenAt`-ing PSM 19 ourselves:
+`IOBluetoothL2CAPChannel::listenAt` has a **single-owner check on `channel+0x118`** — a second owner gets
+`0xe00002bc` ("owner does not match new owner"). If OUR reader holds that delegate slot, BNB's
+`prepInterruptChannelWL → listenAt` fails → `closeDownServices` → the **5s restart loop** re-enters
+`handleStart` → page-fault in `createCommandGate+0x17` on a now-null provider → **panic** (a distinct vector
+from the bare-un-started-nub panic above). So: let BNB win PSM 19, then steal its delegate fn-ptr after the
+channel is up. (Teardown restores `+0x110`/`+0x118` before releasing — see `reference.md` ordered teardown.)
+
+### Trackpad pref-pane art/animation can't tell MT2 from MT1 — a swap would need a userspace file-swapper (RE 2026-06-20)
+Distinct from the **Bluetooth**-pane identity work (name/picture, in `explanation.md`): the **Trackpad**
+pref-pane's art path has **no ProductID/model/VID-PID compare**. `_pickMovie` (@0x4761) branches on a single
+boolean `mMagicTrackpadFound` (@0x478b), fed only by IOServiceMatching *presence* booleans (BNBTrackpadDevice
+@0x2335/0x38b6/0x4ce1, AppleUSBMultitouchDriver @0x23ac, `com.apple.AppleMultitouchTrackpad` @0x23db). ⇒ an
+"MT1-vs-MT2 art" conditional cannot live in the pane OR our kext; it would have to be a **userspace LaunchAgent
+that swaps on-disk asset files by name** (10.9 has no SIP, so the files are writable). Asset→state map:
+no-device → `NoTrackpad.nib` / `TrackpadPicture.png` (the half-MT1/half-MT2 target image); onboarding →
+`MTTrackpadController.nib` / `trackpad_remove_cover.png` / `trackpad_install_battery.png`; gesture demo →
+`BTTrackpad.mov` + `BTTrackpad.xml`. Animation contract: `.mov` + an `.xml` plist of `{name, startTime:CMTime}`,
+**23.976 fps, 27 shots, bound by CHAPTER NAME** (gesture rows carry `moviechaptername`; times read from the
+`.xml`, not hardcoded) → shipping our own `.mov`/`.xml` that keeps the referenced shot names (Shots
+3/4/6/7/8/15/16/17) needs no change to the existing gesture XMLs. **Not pursued** (cosmetic; deferred) —
+recorded so the RE isn't lost.
