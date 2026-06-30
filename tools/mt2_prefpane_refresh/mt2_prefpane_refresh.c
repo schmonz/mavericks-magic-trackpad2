@@ -247,11 +247,23 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
  * (id self, SEL, id arg1, signed char connected). The saved-state globals are declared near the
  * top (do_recompute/schedule_update read them). */
 static void my_magicAction(id self, SEL _cmd, id arg, signed char connected) {
-    if (gRemovalPending) {
+    if (connected == 0) {
+        /* BT REMOVAL — the root cause of the power-off "USB look". This in-place battery-hide
+         * fires from the CONTROLLER's own IOService observer, which races AHEAD of our
+         * dev_changed(BT-): with the old code gRemovalPending was still 0 here, so the call passed
+         * through and hid the battery before our hold could engage. Fix: treat connected=0 ITSELF
+         * as the start of the hold (race-proof). Suppress the hide, save the call for a handoff
+         * replay, and arm the removal-resolution window via schedule_update (it sets
+         * gRemovalPending=1; idempotent with dev_changed(BT-)'s arm via the gGen counter). Genuine
+         * power-off -> the held BT view goes straight to NoTrackpad at window end (no USB look);
+         * handoff -> do_recompute replays this call to hide the battery for USB. */
         gMagicSelf = self; gMagicArg = arg; gMagicConn = connected; gMagicSuppressed = 1;
-        LOG("removal pending -> hold view (suppressed _magicTrackpadAction connected=%d)", connected);
+        schedule_update(REMOVE_CHECK_MS, 1);
+        LOG("magicAction connected=0 -> hold battery (race-proof); removal window armed");
         return;
     }
+    /* connected=1: BT appear. End any pending hold and let the in-place update show the battery. */
+    if (gRemovalPending) { gRemovalPending = 0; gMagicSuppressed = 0; }
     if (gOrigMagicAction) gOrigMagicAction(self, _cmd, arg, connected);
 }
 
@@ -272,15 +284,19 @@ static void capture_pane(id self) {
         }
     }
     if (!gOrigMagicAction) {
-        Class c = objc_getClass("BaseTrackPadController");
+        /* The in-place battery-hide lives on MTTrackpadController (the runtime owner of
+         * _magicTrackpadAction:deviceConnected:; the binary symbol mislabels it
+         * "BaseTrackPadController", but its body uses MTTrackpadController ivars and the live
+         * runtime confirms MTTrackpadController owns the IMP). */
+        Class c = objc_getClass("MTTrackpadController");
         SEL sel = sel_registerName("_magicTrackpadAction:deviceConnected:");
         Method m = c ? class_getInstanceMethod(c, sel) : NULL;
         if (m) {
             gOrigMagicAction = (void (*)(id, SEL, id, signed char))method_getImplementation(m);
             method_setImplementation(m, (IMP)my_magicAction);
-            LOG("swizzled _magicTrackpadAction:deviceConnected: (hold-during-removal)");
+            LOG("swizzled MTTrackpadController _magicTrackpadAction:deviceConnected: (hold-during-removal)");
         } else {
-            LOG("BaseTrackPadController _magicTrackpadAction: not found (hold disabled)");
+            LOG("MTTrackpadController _magicTrackpadAction: not found (hold disabled) getClass=%p", c);
         }
     }
     arm_observer();
