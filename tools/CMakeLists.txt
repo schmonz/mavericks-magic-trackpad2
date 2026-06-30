@@ -87,3 +87,18 @@ add_custom_target(prefpane-refresh-simbl-uninstall
   COMMAND sudo rm -rf "/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle"
   COMMAND ${CMAKE_COMMAND} -E echo "Removed MT2PaneRefresh.bundle from SIMBL Plugins"
   COMMENT "Removing MT2PaneRefresh.bundle (SIMBL)")
+
+# The standalone-osax loader (Branch A): watcher binary + per-user LaunchAgent. The
+# load/unload tolerance lives in cmake/dev_prefpane_watch.sh. Never touches SIMBL.
+add_custom_target(prefpane-watch-install
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_prefpane_watch.sh install
+          ${CMAKE_BINARY_DIR}/sbin/mt2_pane_watch ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2panewatch.plist
+  COMMENT "Installing + loading the prefpane-refresh watcher LaunchAgent")
+add_dependencies(prefpane-watch-install mt2_pane_watch)
+
+# Full teardown of the standalone delivery: agent + watcher + osax (SIMBL untouched).
+add_custom_target(prefpane-uninstall
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_prefpane_watch.sh uninstall
+  COMMAND sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
+  COMMAND ${CMAKE_COMMAND} -E echo "Removed osax + watcher + LaunchAgent - SIMBL untouched"
+  COMMENT "Uninstalling the prefpane-refresh delivery (osax + watcher + LaunchAgent)")
