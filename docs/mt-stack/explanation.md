@@ -343,9 +343,14 @@ renames by storing the new name in the device over an active BT connection + res
 reset sets the BT name back to default** (our recovery path for this corrupted unit); it even detects an
 internal-vs-device name mismatch (exactly our `02 01` vs `displayName` state). ⇒ writing a proper on-device
 name is a KNOWN, shipping operation. The Apple-quality fix — a real on-device name that follows the unit
-across Macs — **is achievable**; the one un-published piece is the exact name-write feature report/bytes
-(RE by sniffing Magic Utilities' USB traffic, or empirically). The host `displayName` alias (+ auto-re-apply
-on pair) is only a *fallback*, not the real fix. See `mt2-device-writable-name` (REOPENED, web-confirmed).
+across Macs — **is achievable**; the one un-published piece is the exact name-write mechanism. **Both open
+drivers were checked and NEITHER writes the name** (Linux `hid-magicmouse.c` = enable + battery only;
+imbushuo Windows = `AmtPtpSetWellspringMode`/enable only) — but the Linux driver comments that *"connected to
+a Mac, the name is automatically personalized"*, so **macOS itself writes the name onto the device.** ⇒ best
+lead is our OWN platform: an `IOBluetooth` API that writes the remote device name (call it, no byte RE), or
+disasm `blued`/IOBluetooth on the 10.9 box (Magic Utilities' USB traffic is the Windows fallback reference).
+The host `displayName` alias (+ auto-re-apply on pair) is only a *fallback*, not the real fix. See
+`mt2-device-writable-name` (REOPENED, web-confirmed).
 [Earlier same-day note claiming
 "no writable field" was WRONG — it missed this EIR name field.]
 
