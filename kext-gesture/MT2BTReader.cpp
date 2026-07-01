@@ -146,6 +146,35 @@ static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
     if (conn_trace_format(buf, sizeof(buf), &r) > 0) MT2_DLOG(1, "%s", buf);
 }
 
+/* Battery bridge. The MT2 reports battery as the standard Apple Power-Device INPUT report id 0x90 =
+ * [id 0x90][status flags][capacity 0-100] (Usage Page 0x84 Power Device / 0x85 Battery System, capacity
+ * = Usage 0x65). Verified live on both transports (e.g. `90 05 64` = 100%; byte[1] bit = charging).
+ * Publish the capacity as the "BatteryPercent" OSNumber (0-100) on the genuine BNB node — EXACTLY the
+ * property the Trackpad pane reads: -[AppleBluetoothHIDDevice batteryPercent] does
+ * IORegistryEntryCreateCFProperty(node,"BatteryPercent")->unsignedLongValue. This bypasses BNB's own
+ * MT1-shaped voltage/chemistry model (getExtendedReport, which the MT2 can't answer -> "No extended
+ * features"). setProperty is registry-lock-guarded, safe from this newDataIn context. Publish only on
+ * change (avoids churning the registry if 0x90 repeats). */
+static void mt2_publish_battery(IOService *bnb, uint8_t pct) {
+    if (pct > 100) return;                     /* capacity is 0-100; ignore out-of-range */
+    static int gLastBatt = -1;
+    if ((int)pct == gLastBatt) return;
+    gLastBatt = (int)pct;
+    OSNumber *n = OSNumber::withNumber((unsigned long long)pct, 32);
+    if (n) { bnb->setProperty("BatteryPercent", n); n->release(); }
+    MT2_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
+}
+
+/* Diagnostic: log each DISTINCT report id the shim sees, once. On a load this reveals whether the
+ * battery report 0x90 actually arrives on the interrupt channel (passive watch works) or not (we'd
+ * need to poll it). Cheap — the device streams only a handful of distinct ids. */
+static void mt2_diag_report_id(uint8_t id) {
+    static uint8_t seen[32];
+    if (seen[id >> 3] & (uint8_t)(1u << (id & 7))) return;
+    seen[id >> 3] |= (uint8_t)(1u << (id & 7));
+    MT2_DLOG(1, "shim saw report id 0x%02x", (unsigned)id);
+}
+
 /* IOBluetoothL2CAPChannel delegate callback: translate the raw MT2 0x31 report to MT1 and
  * hand it to BNB's original callback, so Apple's genuine parse path consumes MT1 it
  * understands. Runs in the channel's BT workloop (newDataIn context), same as Apple's own. */
@@ -156,6 +185,13 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     const uint8_t *rep = b;
     size_t rlen = length;
     if (length > 0 && b[0] == 0xA1) { rep = b + 1; rlen = length - 1; }   /* strip transport byte */
+
+    /* Battery: publish the Apple Power-Device report id 0x90 capacity as "BatteryPercent" for the
+     * prefpane. A distinct report id from the multitouch stream (0x31), so it never disturbs the touch
+     * decode below. The diagnostic logs which ids arrive (confirms 0x90 streams passively). */
+    if (rlen > 0) mt2_diag_report_id(rep[0]);
+    if (rlen >= 3 && rep[0] == 0x90 && gGenuineBnb) mt2_publish_battery(gGenuineBnb, rep[2]);
+
     touch_frame_t tf;
     int drc = mt2_bt_decode(rep, rlen, &tf);
     { static bool once = false; if (!once) { once = true;
