@@ -238,28 +238,31 @@ absent, so they coexist unconditionally (no `kFullBnb` gate). Oracle: `tools/re 
   (logs "Forcing MT restart", calls `resetMultitouchTransport`); cancelled once real MT data
   (0x31 / the trigger) reaches `processDesyncedMultitouchData`. Starving it destabilizes the link.
 
-## Apple BT device-identity & USB-OOB pairing APIs (callable reuse targets, RE'd 2026-06-30)
+## Apple BT device-identity & USB-OOB pairing APIs (RE'd 2026-06-30/07-01; addresses nm-verified)
 
-macOS 10.9's own `IOBluetooth.framework`/`blued` already implement both features via **callable ObjC API**
-(reachable through the objc runtime like the prefpane/kext work) — likely no raw-byte RE needed. See
-`mt2-device-writable-name`, `mt2-usb-oob-pairing-api`.
+`IOBluetooth.framework`/`blued` on 10.9 — mixed: the name write is real+callable; the USB-OOB pairing is
+**declared but STUBBED**. See `mt2-device-writable-name`, `mt2-usb-oob-pairing-api`.
 
-- **Write the device's stored BT name** — `-[BluetoothHIDDevice setDeviceName:]` (@0x43180): HID **Feature**
-  reports via `reportIDForReportKey:` — either a single `"LongDeviceName"` (bounded by
+- **Write the device's stored BT name — REAL, callable.** `-[AppleBluetoothHIDDevice setDeviceName:]`
+  (@0x43180): HID **Feature** reports via `reportIDForReportKey:` — a single `"LongDeviceName"` (bounded by
   `getMaxDeviceNameLength`) or `"DeviceName1".."DeviceName4"` (4×8-byte) + a `"DeviceNameChange"` commit —
   then `remoteNameRequest:` (refresh) + `setDisplayName:` (alias). Wrapper: `+[IOBluetoothDevicePair
   setAppleDeviceName:]`. (Our unit's name got mis-written to `02 01` = our enable payload; one call fixes it.)
-- **USB out-of-band auto-pairing ("HID Emulation" = plug-in-once → BT-paired):**
-  - device-side (write pairing to the trackpad over USB): `-[BluetoothHIDDevice connectToHost:linkKey:]`,
-    `-[BluetoothHIDDevice handoffAndRemoveHost:pageType:deviceAddress:linkKey:]` (cross-Mac re-home).
-  - host-side: `-[IOBluetoothHostController addHIDEmulationDevice:classOfDevice:linkKey:]`,
-    `+[IOBluetoothHostController BluetoothHCIWriteStoredLinkKey:inDeviceAddress:inLinkKey:outNumKeysWritten:]`.
-  - `blued`: `-[BluetoothHIDManager writeLinkKeyToHardwareForDevice:]`, `readHIDEmulationDevice:classOfDevice:
-    pairedWithNULLPIN:`, `OOBconnectToDevice:shouldConnect:`, `isAppleDevice`/`initForAppleDevices`; recognizes
-    the plugged device by USB VID/PID; persists `DaemonControllersConfigurationKey → HIDEmulationTrackpad → <addr>`.
-  - Flow (= SkySafe CVE-2024-0230): USB attach → recognize by VID/PID → gen link key → `connectToHost:linkKey:`
-    (write host+key to device over USB) → `BluetoothHCIWriteStoredLinkKey` (store host-side) →
-    `addHIDEmulationDevice:…` (register) → unplug → BT connects seamlessly.
+- **USB out-of-band auto-pairing ("HID Emulation" = plug-in-once → BT-paired) — STUBBED on 10.9 (post-10.9
+  feature).** The symbols exist but the device-side bodies are unsupported stubs:
+  `-[IOBluetoothHostController addHIDEmulationDevice:classOfDevice:linkKey:]` (@0x5cada) →
+  `kIOReturnUnsupported` (0xe00002c7, one of a whole block of stubbed HostController methods);
+  `-[AppleBluetoothHIDDevice connectToHost:linkKey:]` (@0x43d50) / `handoffAndRemoveHost:…` (@0x43d60) →
+  `0`/NO. **REAL** on 10.9: `-[IOBluetoothHostController BluetoothHCIWriteStoredLinkKey:inDeviceAddress:
+  inLinkKey:outNumKeysWritten:]` (@0x57496, dispatches HCI routine `0x10E1`) — the host-side key store.
+  - The mechanism (SkySafe CVE-2024-0230; = what MODERN macOS does): USB attach → recognize by VID/PID → gen
+    link key → write host-addr+key TO the device over USB (a raw HID feature report) → `WriteStoredLinkKey`
+    (store host-side) → register → unplug → BT connects. `blued` refs (`writeLinkKeyToHardwareForDevice:`,
+    `OOBconnectToDevice:`, `isAppleDevice`, the `HIDEmulationTrackpad` prefs) are the daemon side.
+  - **To do OOB on 10.9 = implement it ourselves:** host side via the real `WriteStoredLinkKey:`; device side
+    via our own raw HID feature-report write (transport proven by `setDeviceName:`). Best source of the exact
+    device-side report format = **RE a MODERN macOS that supports MT2 natively (the stubs are filled in there)**
+    and/or the SkySafe writeup.
 
 ## MTTouchState lifecycle (what `mt1_encode` targets)
 
