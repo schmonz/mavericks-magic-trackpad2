@@ -347,10 +347,17 @@ across Macs — **is achievable**; the one un-published piece is the exact name-
 drivers were checked and NEITHER writes the name** (Linux `hid-magicmouse.c` = enable + battery only;
 imbushuo Windows = `AmtPtpSetWellspringMode`/enable only) — but the Linux driver comments that *"connected to
 a Mac, the name is automatically personalized"*, so **macOS itself writes the name onto the device.** ⇒ best
-lead is our OWN platform: an `IOBluetooth` API that writes the remote device name (call it, no byte RE), or
-disasm `blued`/IOBluetooth on the 10.9 box (Magic Utilities' USB traffic is the Windows fallback reference).
-The host `displayName` alias (+ auto-re-apply on pair) is only a *fallback*, not the real fix. See
-`mt2-device-writable-name` (REOPENED, web-confirmed).
+lead is our OWN platform. **FOUND (disasm of `IOBluetooth` on the 10.9 box):** the writer is
+**`-[BluetoothHIDDevice setDeviceName:]`** (@0x43180) — a HID **Feature-report** write: it looks up the report
+id via `reportIDForReportKey:` in one of two device-declared schemes — a single **`"LongDeviceName"`** report
+(bounded by `getMaxDeviceNameLength`), or **`"DeviceName1".."DeviceName4"`** (4×8-byte chunks) + a
+**`"DeviceNameChange"`** commit report — sends them via the IOHIDDeviceInterface `setReport` (type 2 = Feature,
+1000 ms), then does `remoteNameRequest:` (refresh) + `setDisplayName:` (alias sync). `+[IOBluetoothDevicePair
+setAppleDeviceName:]` is the pairing-time wrapper. (`blued` only *reads* device names + writes the *computer's*
+local name.) ⇒ **it's a callable ObjC method: `[bluetoothHIDDevice setDeviceName:@"Mavericks Trackpad 2"]`
+does the whole write** — no byte-level RE — which both un-corrupts our `02 01` unit and delivers the feature,
+via Apple's own vetted path. The host `displayName` alias (+ auto-re-apply on pair) is only a *fallback*.
+See `mt2-device-writable-name` (mechanism RE'd).
 [Earlier same-day note claiming
 "no writable field" was WRONG — it missed this EIR name field.]
 

@@ -35,6 +35,8 @@ re_resolve() {
     IOBluetoothHIDDriver)     echo "/System/Library/Extensions/IOBluetoothHIDDriver.kext/Contents/MacOS/IOBluetoothHIDDriver" ;;
     IOBluetoothFamily)        echo "/System/Library/Extensions/IOBluetoothFamily.kext/Contents/MacOS/IOBluetoothFamily" ;;
     IOBluetoothUI)            echo "/System/Library/Frameworks/IOBluetoothUI.framework/Versions/A/IOBluetoothUI" ;;
+    IOBluetooth)              echo "/System/Library/Frameworks/IOBluetooth.framework/Versions/A/IOBluetooth" ;;
+    blued)                    echo "/usr/sbin/blued" ;;
     IOHIDFamily)              echo "/System/Library/Extensions/IOHIDFamily.kext/Contents/MacOS/IOHIDFamily" ;;
     Trackpad)                 echo "/System/Library/PreferencePanes/Trackpad.prefPane/Contents/MacOS/Trackpad" ;;
     Mouse)                    echo "/System/Library/PreferencePanes/Mouse.prefPane/Contents/MacOS/Mouse" ;;
