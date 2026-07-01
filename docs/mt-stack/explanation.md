@@ -328,16 +328,20 @@ re-fetch. Setting `displayName` once (e.g. "Magic Trackpad 2") sticks across pow
 **proven on-device** (a manual Rename persisted). That's the (a) fix; it must be set through the proper
 path (a direct PlistBuddy edit of the cache is overwritten by `cfprefsd`/`blued`).
 
-**The `displayName` alias is a per-Mac, per-pairing local override — and it's the ONLY lever, because the
-MT2 has NO host-writable name field** (RE'd to the bottom 2026-06-30): the live USB report descriptor has
-only input reports + `MaxFeatureReportSize=1` (no name feature report), the USB identity strings
-(`Product="Magic Trackpad"`, `Manufacturer="Apple Inc."`) are firmware ROM, the whole RE'd MT2 vendor
-command set is functional not identity (enable/geometry-get `0x60`/`0x61`/haptics/battery — no name write),
-and as classic BT HID the name is the device-firmware HCI Remote Name (not host-writable; the `0x02 0x01` is
-the device carrying no settable name). Apple itself names Magic devices via a host alias, never a device
-write — so "name the device so it follows across Macs" is not achievable. **Consequence:** on a re-pair (or
-a different Mac) the alias is gone; the fix is a **pair-watcher that auto-re-applies `mt2_set_btname` on
-(re)pair** (see `mt2-device-writable-name`).
+**The `0x02 0x01` is the DEVICE's own advertised name — and it's WRITABLE (we appear to have written it).**
+The MT2's cache entry (`com.apple.Bluetooth.plist`, `ClassOfDevice=1428`, `displayName="Magic Trackpad 2"`,
+`Name=""`) carries an **`EIRData`** blob whose **AD type `0x09` (Complete Local Name) = the bytes `02 01`**
+— the device is *broadcasting* its name as `0x02 0x01` (non-printable → shows empty/garbage). This is
+persisted ON THE DEVICE: the same unit reports these exact bytes on **both Mavericks and Tahoe**, and OTHER
+MT2s report normal names — so it's this unit's stored name, not an OS parse bug. And `0x02 0x01` = our
+**multitouch-enable payload** (USB `02,01` / BT `F1,02,01`). Conclusion: **the MT2 HAS a writable,
+device-persisted name field, and our enable path apparently mis-wrote our payload into it.** (Contrast the
+Magic Mouse entry two rows up: `Name="Magic Mouse"` — Apple input devices carry a settable name.)
+⇒ the Apple-quality fix — a real on-device name that follows the unit across Macs — **is achievable** once
+we RE the write path (how `02 01` reached the name field; likely a mis-targeted name/config report). It also
+means we should un-corrupt this unit's name. The host `displayName` alias (+ auto-re-apply on pair) is only
+a *fallback*, not the real fix. See `mt2-device-writable-name` (REOPENED). [Earlier same-day note claiming
+"no writable field" was WRONG — it missed this EIR name field.]
 
 ### Picture — CoD-driven, no per-device hook, only fixable by in-process hook/patch
 The device picture resolves in **`IOBluetoothUI.framework`**, class **`IOBluetoothDeviceImageVault`**:
