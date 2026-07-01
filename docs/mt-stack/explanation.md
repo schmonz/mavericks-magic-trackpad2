@@ -344,6 +344,15 @@ resource file). → **An arbitrary external image file is natively supported by 
 - The **MT2's CoD = `0x594`** → major 5 (Peripheral), minor `0x25` → not a vault key → generic logo
   (user-confirmed icon = the Bluetooth logo).
 - The **Magic Trackpad 1 asset is `Trackpad.prefPane/TrackpadPicture.png`** (the picture we'd want).
+- **GAME-CHANGER (RE 2026-06-30):** `IOBluetoothUI` **already ships a trackpad vault entry wired to that
+  MT1 picture** — the binary carries strings `kVaultTrackpadApplePeripheralKey`,
+  `kVaultTrackpadPeripheralKey`, `/System/Library/PreferencePanes/Trackpad.prefPane`, `TrackpadPicture.png`
+  (alongside `MightyMouse.icns` for the mouse). So the trackpad ART + entry already exist; our MT2 simply
+  doesn't match the CoD (major/minor) that entry is registered under. The fix is therefore likely **map
+  MT2's CoD `(5, 0x25)` onto the EXISTING trackpad entry** (reusing Apple's own art) — NOT ship a new icon.
+  Still-open detail (needs a clean disasm of `+initImageDictionaries`, `objc-methods` gave no addresses on
+  this binary): the exact `(major,minor)` the existing trackpad entry keys on, and whether there's a
+  vendor/model gate (the two `kVaultTrackpad*` keys hint at an Apple-specific vs generic split).
 - There is **no per-device image override** like `displayName`, and the **CoD is re-fetched from the
   live device every connect** (a cache override of `ClassOfDevice` does NOT stick — proven: set
   `1428`→`9600`, restarted `blued`, it re-fetched and overwrote back to `1428`). So the picture cannot
@@ -357,9 +366,16 @@ by either: (i) inserting a `vault[5][0x25]` entry after `initImageDictionaries`,
 - **MT1 asset:** `{ BundlePath = "/System/Library/PreferencePanes/Trackpad.prefPane"; ResourceName = "TrackpadPicture.png"; }`
 - **Arbitrary file:** `{ BundlePath = "<our dir>"; ResourceName = "<our file>"; }` or `{ ImageObject = <NSImage from our file>; }`
 
-Delivery: `DYLD_INSERT_LIBRARIES` / a SIMBL-style plugin into those processes, OR a binary patch of the
-on-disk `IOBluetoothUI` (feasible only because **10.9 has no SIP**). Tradeoffs (see `decisions.md`):
-per-process or system-file, invasive to shared Apple UI, reverted by OS updates.
+Delivery — **the render surface is LAZY + MULTI-PROCESS** (RE 2026-06-30: right now only `coreaudiod`
+maps `IOBluetoothUI`; System Prefs maps it when the BT pane opens, `BluetoothUIServer` is spawned on
+demand, `SystemUIServer` loads it only when the BT menu draws). So a per-process injector (our osax/SIMBL
+loader reaches **System Prefs only**) covers a *fraction* of the surface. **The uniform-coverage delivery
+is a binary patch of the on-disk `IOBluetoothUI`** (feasible: 10.9 has no SIP) — one change, every consumer
+(pane + menu extra + pairing dialogs + coreaudio) picks it up. And because the framework ALREADY has the
+trackpad entry + MT1 art (game-changer above), that patch is likely *small* — add MT2's CoD `(5,0x25)` to
+the existing trackpad entry's key set, reusing Apple's own `TrackpadPicture.png` (no new asset). Tradeoff:
+a system-file mod (revert on OS update → our installer re-applies), but data/CoD-key-scoped, not new code.
+A `DYLD_INSERT`/SIMBL route would need injection into each lazy process — messier than the one framework patch.
 
 **This is a WANTED public-UX goal, not just-cosmetic** (user 2026-06-30, `mt2-bt-pane-icon-wanted`): a
 new user seeing a proper Magic Trackpad icon vs a generic Bluetooth blob is exactly the first-run polish
