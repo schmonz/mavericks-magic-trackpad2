@@ -310,6 +310,13 @@ no-device → `NoTrackpad.nib` / `TrackpadPicture.png` (the half-MT1/half-MT2 ta
 `.xml`, not hardcoded) → shipping our own `.mov`/`.xml` that keeps the referenced shot names (Shots
 3/4/6/7/8/15/16/17) needs no change to the existing gesture XMLs. **Not pursued** (cosmetic; deferred) —
 recorded so the RE isn't lost.
+**UPDATE 2026-06-30:** the "would have to be a LaunchAgent that swaps on-disk files" conclusion predates
+our osax (shipped 2026-06-29). The osax already injects into System Preferences and swizzles the Trackpad
+pane, so a MT2-accurate art swap can be done IN-PROCESS there (swizzle `setAVAsset:` / the image getter to
+return our `NSImage`/`AVAsset`) — no on-disk file mutation, reversible, per-process. Preferred over the
+file-swapper for the *Trackpad* pane (the osax loads only in System Prefs, which is where that pane lives).
+Contrast the *Bluetooth*-pane picture (`explanation.md`), which renders in THREE processes (System Prefs +
+`BluetoothUIServer` + menu extra), so the osax alone is only a partial fix there.
 
 ### Prefpane BT<->USB "video blink" — root cause + fix (RE 2026-06-30, commit 0f68531)
 The remaining SECONDARY flicker (a blink in the gesture-demo video area on a BT<->USB switch) was NOT a
