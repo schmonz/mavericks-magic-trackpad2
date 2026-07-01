@@ -373,24 +373,38 @@ resource file). → **An arbitrary external image file is natively supported by 
   `1428`→`9600`, restarted `blued`, it re-fetched and overwrote back to `1428`). So the picture cannot
   be fixed via the cache.
 
-**To make the Bluetooth pane show the MT1 picture (or any custom file) for our device**, the resolution
-happens in-process from the live CoD, so we must hook `IOBluetoothUI` in the processes that render BT
-device rows — **System Preferences (Bluetooth pane), `BluetoothUIServer`, the Bluetooth menu extra** —
-by either: (i) inserting a `vault[5][0x25]` entry after `initImageDictionaries`, or (ii) swizzling
-`imageForDevice:`/`imageForMajorDeviceClass:` to return our image for our device. The entry/return is:
-- **MT1 asset:** `{ BundlePath = "/System/Library/PreferencePanes/Trackpad.prefPane"; ResourceName = "TrackpadPicture.png"; }`
-- **Arbitrary file:** `{ BundlePath = "<our dir>"; ResourceName = "<our file>"; }` or `{ ImageObject = <NSImage from our file>; }`
+**The entry we need to make resolve for CoD `(5,0x25)`** (either as a real `vault[5][0x25]` entry, or as the
+value a swizzled `imageForDevice:`/`imageForMajorDeviceClass:` returns):
+- **MT1 art (reuse Apple's):** `{ BundlePath = "/System/Library/PreferencePanes/Trackpad.prefPane"; ResourceName = "TrackpadPicture.png"; }`
+- **Custom MT2 art:** `{ ImageObject = <our NSImage> }` (easiest via a runtime swizzle — build `[[NSImage alloc]
+  initWithContentsOfFile:…]` from any file/embedded data we control and return it), OR
+  `{ BundlePath = "<a bundle we install>"; ResourceName = "MagicTrackpad2.icns"; }` for the binary-patch route
+  (`BundlePath` must be an `NSBundle` dir — resolver does `bundleWithPath:` → `pathForResource:ofType:` →
+  `initWithContentsOfFile:`). **Asset spec:** the row image is drawn at **32×32 pt square** (`setSize:` double
+  `0x24750` = `32.0`, width=height; = 64px @2x) with `setScalesWhenResized:YES`, so author a high-res source
+  (multi-rep `.icns` / ≥256px, transparent bg, product-render style like Apple's Magic Mouse row icon) and it
+  rescales cleanly. Exact px isn't load-bearing; the *presentation style* is.
 
-Delivery — **the render surface is LAZY + MULTI-PROCESS** (RE 2026-06-30: right now only `coreaudiod`
-maps `IOBluetoothUI`; System Prefs maps it when the BT pane opens, `BluetoothUIServer` is spawned on
-demand, `SystemUIServer` loads it only when the BT menu draws). So a per-process injector (our osax/SIMBL
-loader reaches **System Prefs only**) covers a *fraction* of the surface. **The uniform-coverage delivery
-is a binary patch of the on-disk `IOBluetoothUI`** (feasible: 10.9 has no SIP) — one change, every consumer
-(pane + menu extra + pairing dialogs + coreaudio) picks it up. And because the framework ALREADY has the
-trackpad entry + MT1 art (game-changer above), that patch is likely *small* — add MT2's CoD `(5,0x25)` to
-the existing trackpad entry's key set, reusing Apple's own `TrackpadPicture.png` (no new asset). Tradeoff:
-a system-file mod (revert on OS update → our installer re-applies), but data/CoD-key-scoped, not new code.
-A `DYLD_INSERT`/SIMBL route would need injection into each lazy process — messier than the one framework patch.
+**Delivery — the render surface is LAZY + MULTI-PROCESS** (RE 2026-06-30: at rest only `coreaudiod` maps
+`IOBluetoothUI`; System Prefs maps it when the BT pane opens, `BluetoothUIServer` spawns on demand,
+`SystemUIServer` loads it only when the BT menu draws). Options, by where we intervene:
+1. **Binary-patch the on-disk `IOBluetoothUI`** (no SIP on 10.9): add a `vault[5][0x25]` entry in
+   `+initImageDictionaries` (the vault is code — no source plist). ONE change, every consumer picks it up
+   (uniform coverage). Tradeoff: modifies an Apple shared binary; reverts on OS update → installer re-applies.
+2. **In-process injection** (no Apple-binary change): a tiny dylib per rendering process that inserts the
+   entry or swizzles `imageForDevice:`. Coverage plumbing: System Prefs = our osax already; `SystemUIServer`
+   (BT menu) + `BluetoothUIServer` (pairing) via `DYLD_INSERT_LIBRARIES` in their launchd plists, or once in
+   `/etc/launchd.conf` (`setenv`, covers every launchd child). Tradeoff: our code loads into many processes
+   (must no-op unless `IOBluetoothUI` is present); reversible via config. For first-run UX the surfaces that
+   matter are the **pane** (osax) + **menu extra** (SystemUIServer) — so a pragmatic subset, not all four.
+3. **Replace the generic fallback asset** `UIBluetoothLogo.icns` — trivial data swap, but COLLATERAL (every
+   *unmatched* BT device then shows a trackpad). Only defensible if MT2 is the sole unmatched device. Not a
+   real targeted fix.
+4. **Device/CoD level** — blocked: the CoD is re-fetched every connect and a cache override doesn't stick;
+   making the device advertise a vault-matching CoD, or patching `IOBluetooth.framework`'s
+   `isPointingDevice`/CoD read, is just a *different* binary patch, no better than (1).
+No purely-data option exists for a *targeted* fix (the vault is code-built). Net: **(1) patch once, uniform,
+modifies Apple's file** vs **(2) inject per consumer, no Apple-file change, our code spreads.**
 
 **This is a WANTED public-UX goal, not just-cosmetic** (user 2026-06-30, `mt2-bt-pane-icon-wanted`): a
 new user seeing a proper Magic Trackpad icon vs a generic Bluetooth blob is exactly the first-run polish
