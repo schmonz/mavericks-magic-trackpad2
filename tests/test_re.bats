@@ -101,6 +101,17 @@ load_re() { RE_LIB=1 source "$RE"; }
   printf '%s\n' "$output" | grep -q 'loadMainView'
 }
 
+# Regression: a NON-STRIPPED system framework (IOBluetoothUI) has a symbol table, so
+# `otool -oV` SYMBOLICATES the imp — it prints `-[Class sel]` in place of the address.
+# Before the fix, the address column held that name fragment, not a 0x address; now the
+# address comes from `otool -o` (raw), paired by imp-line order, with the correct +/- kind
+# from the class/metaclass method list.
+@test "objc-methods yields a real address for a symbolicated framework binary" {
+  run "$RE" objc-methods IOBluetoothUI initImageDictionaries
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -qE '^0x[0-9a-f]+[[:space:]]+\+\[IOBluetoothDeviceImageVault initImageDictionaries\]'
+}
+
 # --- hex characterization (re_hexnum normalization, post-refactor) ------------
 
 @test "hex honors hex-or-decimal offset/length and reports the window" {

@@ -34,6 +34,7 @@ re_resolve() {
     AppleUSBMultitouch)       echo "/System/Library/Extensions/AppleUSBMultitouch.kext/Contents/MacOS/AppleUSBMultitouch" ;;
     IOBluetoothHIDDriver)     echo "/System/Library/Extensions/IOBluetoothHIDDriver.kext/Contents/MacOS/IOBluetoothHIDDriver" ;;
     IOBluetoothFamily)        echo "/System/Library/Extensions/IOBluetoothFamily.kext/Contents/MacOS/IOBluetoothFamily" ;;
+    IOBluetoothUI)            echo "/System/Library/Frameworks/IOBluetoothUI.framework/Versions/A/IOBluetoothUI" ;;
     IOHIDFamily)              echo "/System/Library/Extensions/IOHIDFamily.kext/Contents/MacOS/IOHIDFamily" ;;
     Trackpad)                 echo "/System/Library/PreferencePanes/Trackpad.prefPane/Contents/MacOS/Trackpad" ;;
     Mouse)                    echo "/System/Library/PreferencePanes/Mouse.prefPane/Contents/MacOS/Mouse" ;;
@@ -421,15 +422,34 @@ sub_objc_methods() {  # <target> [filter] | <target> --at <addr-hex>
   at=""
   if [ "$1" = "--at" ]; then at=$(printf '%s' "$2" | sed 's/^0[xX]//' | tr 'A-F' 'a-f'); fi
   filter=$1
-  # ObjC runtime metadata carries selector -> IMP even when the symtab is stripped
-  # (otool -oV). Pair each method 'name' (the one followed by 'types') with its 'imp'.
+  # ObjC runtime metadata carries selector -> IMP. Two on-disk shapes:
+  #  - STRIPPED (kexts, prefpanes): `otool -oV` prints the imp as a raw `0x..` address,
+  #    and we reconstruct the [Class sel] label from the CLASS/METACLASS + name markers.
+  #  - NON-STRIPPED (system frameworks, e.g. IOBluetoothUI): `otool -oV` SYMBOLICATES the
+  #    imp as `-[Class sel]` (no address) — so we take the address from `otool -o` (raw),
+  #    paired by imp-line order, and use the imp line's own label.
+  # Unified: slurp raw imp addresses from `otool -o` (in order) and index them by imp #.
   parse() {
-    otool -oV -arch "$arch" "$bin" 2>/dev/null | awk '
+    otool -oV -arch "$arch" "$bin" 2>/dev/null | awk -v arch="$arch" -v bin="$bin" '
+      BEGIN {
+        cmd = "otool -o -arch " arch " \"" bin "\" 2>/dev/null"
+        while ((cmd | getline l) > 0) {
+          if (l ~ /^[ \t]*imp[ \t]+0x/) { sub(/^[ \t]*imp[ \t]+/,"",l); sub(/[ \t].*$/,"",l); A[++na]=l }
+        }
+        close(cmd); i=0
+      }
       /_OBJC_METACLASS_\$_/ { c=$0; sub(/.*_OBJC_METACLASS_\$_/,"",c); sub(/[ \t].*/,"",c); cls=c; kind="+"; next }
       /_OBJC_CLASS_\$_/     { c=$0; sub(/.*_OBJC_CLASS_\$_/,"",c);     sub(/[ \t].*/,"",c); cls=c; kind="-"; next }
       $1=="name"  { s=$0; sub(/^[ \t]*name[ \t]+0x[0-9a-f]+[ \t]*/,"",s); pend=s; next }
       $1=="types" { meth=pend; next }
-      $1=="imp"   { if (meth!="") { printf "%s\t%s[%s %s]\n", $2, kind, cls, meth; meth="" } }'
+      $1=="imp"   {
+        i++                                    # count EVERY imp line to stay aligned with A[] (from -o)
+        if (meth!="") {
+          addr = (i in A) ? A[i] : $2          # raw address by order; fall back to a stripped 0x imp
+          printf "%s\t%s[%s %s]\n", addr, kind, cls, meth   # reconstructed label = correct +/- (meta vs class)
+          meth=""
+        }
+      }'
   }
   if [ -n "$at" ]; then
     echo "# ObjC method containing 0x$at in $bin ($arch)"
