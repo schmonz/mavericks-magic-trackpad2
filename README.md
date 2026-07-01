@@ -26,6 +26,9 @@ Mavericks will load an unsigned kext as long as it's _not_ in
 `/Library/Extensions` and therefore not present at early boot. Once
 loaded, we reenumerate the device if needed and attach.
 
+A small userland companion keeps the **Trackpad preference pane**
+honest as the device connects, disconnects, or switches transport.
+
 ## Requirements
 
 - Mac OS X 10.9
@@ -37,16 +40,17 @@ loaded, we reenumerate the device if needed and attach.
     cmake --build cmake-build --target pkg
     sudo installer -pkg cmake-build/mt2d-1.0.0.pkg -target /
 
-Installs the kext under `/usr/local/lib/mt2d`, userland helpers
-under `/usr/local/sbin`, and a LaunchDaemon for when you reboot
-(but you don't need to).
-
 ## Uninstall
 
     sudo launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist
+    launchctl unload /Library/LaunchAgents/com.schmonz.mt2panewatch.plist
     sudo kextunload -b com.schmonz.MT2Gesture
     sudo rm -rf /Library/LaunchDaemons/com.schmonz.mt2d.plist \
+        /Library/LaunchAgents/com.schmonz.mt2panewatch.plist \
+        /Library/ScriptingAdditions/MT2PaneRefresh.osax \
+        /usr/local/libexec/mt2_pane_watch \
         /usr/local/sbin/mt2d-run /usr/local/sbin/mt2_reenumerate \
+        /usr/local/sbin/mt2_set_btname \
         /usr/local/lib/mt2d /var/db/mt2d-boot.state /var/log/mt2d.log
 
 ## Develop
@@ -62,14 +66,20 @@ under `/usr/local/sbin`, and a LaunchDaemon for when you reboot
 - `src/` — the shared frame decode/encode + session core, compiled into the kext
   and exercised by the userspace unit tests: `mt2_decode` (shared core) with the
   thin `mt2_usb_decode`/`mt2_bt_decode` transport wrappers, `mt1_encode`,
-  `mt2_pipeline`/`mt2_session` (settle / lift-drop / decel / click logic), and
-  `touch_model.h`. `vhid_mt1` is a kextless research path kept for reference.
+  `mt2_pipeline`/`mt2_session`/`mt2_lifecycle` (settle / lift-drop / decel /
+  click logic), `mt2_geometry` + `mt2_usb_reframe` (injected sensor geometry
+  and the CompactV4 reframe), `mt2_coordinator`/`mt2_connect_sm` (transport
+  arbitration), and `touch_model.h`. `mt2_pane_sm` is the pure state machine
+  behind the prefpane refresh. `vhid_mt1` is a kextless research path kept
+  for reference.
 - `kext-gesture/` — `MT2Gesture`, the one shipped kext: the `MT2USBReader` and
   `MT2BTReader` transport readers that manual-start + interpose Apple's genuine
   drivers, and the `MT2Gesture` nub that hosts the shared session and feeds the
   conditioned stream to Apple's spawned `AppleMultitouchDevice`.
-- `tools/` — dev/diagnostic helpers; only `mt2_reenumerate` ships, the rest are
-  reverse-engineering probes (`tools/re` is the RE toolkit). `tools/spikes/` holds one-off probes.
+- `tools/` — dev/diagnostic helpers. `mt2_reenumerate` and `mt2_set_btname` ship,
+  as does the prefpane-refresh component in `mt2_prefpane_refresh/` (the
+  `MT2PaneRefresh.osax` + `mt2_pane_watch` agent); the rest are reverse-engineering
+  probes (`tools/re` is the RE toolkit). `tools/spikes/` holds one-off probes.
 - `tests/` — unit tests.
 - `dist/` — LaunchDaemon plist, the `mt2d-run` boot wrapper, and installer scripts.
 - `captures/` — recorded MT2 frames used as test fixtures.
