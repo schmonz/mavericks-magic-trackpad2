@@ -359,5 +359,12 @@ by either: (i) inserting a `vault[5][0x25]` entry after `initImageDictionaries`,
 
 Delivery: `DYLD_INSERT_LIBRARIES` / a SIMBL-style plugin into those processes, OR a binary patch of the
 on-disk `IOBluetoothUI` (feasible only because **10.9 has no SIP**). Tradeoffs (see `decisions.md`):
-invasive (shared Apple UI), per-process or system-file, reverted by OS updates — cosmetic, unlike the
-clean `displayName` name fix.
+per-process or system-file, invasive to shared Apple UI, reverted by OS updates.
+
+**This is a WANTED public-UX goal, not just-cosmetic** (user 2026-06-30, `mt2-bt-pane-icon-wanted`): a
+new user seeing a proper Magic Trackpad icon vs a generic Bluetooth blob is exactly the first-run polish
+public release aims for (`mt2-mission`/`mt2-project-goal-public-apple-ux`) — name + icon together give the
+genuine-device Bluetooth-pane identity. The RE above is settled; the open work is the **least-invasive
+multi-process delivery**, reusing our existing loader infra (`mt2-prefpane-osax-injection-mechanism`)
+rather than inventing a new one. (The `displayName` NAME fix is the already-clean half; the icon is the
+harder half worth doing.)
