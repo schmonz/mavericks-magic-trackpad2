@@ -45,6 +45,14 @@ static psm_state_t     gPsm = PSM_NONE;   /* the SM state; the adapter's only de
 /* The original MTTrackpadController _magicTrackpadAction: IMP (we own the selector; see
  * my_magicAction). perform() calls it via gOrigMagicAction_call() to set battery state. */
 static void (*gOrigMagicAction)(id, SEL, id, signed char) = NULL;
+/* The exact (self=controller, arg) pair the pane hands _magicTrackpadAction, captured from the
+ * autonomous call (see my_magicAction). The original body does [arg armIterators] (arg = the pane's
+ * iterator owner, disasm 0x4caf: `mov %r14,%rdi` where r14=rdx=arg); replaying with these real objects
+ * renders correctly. Task 5's regression passed the CONTROLLER as arg -> [controller armIterators] ->
+ * doesNotRecognizeSelector -> no render. Both are stable for the pane's life, so any capture is reusable;
+ * only `connected` varies (the SM decides it). */
+static id gMagicCtrl = NULL;   /* self: the trackpad controller */
+static id gMagicArg  = NULL;   /* arg:  the object [arg armIterators] targets (the pane) */
 
 typedef void (*didSelect_t)(id, SEL);
 static didSelect_t     gOrigDidSelect = NULL;
@@ -94,6 +102,9 @@ static void perform(psm_action_t a) {
         break;
     case PSM_ACT_RENDER_BT:
     case PSM_ACT_RENDER_USB: {
+        /* Rebuild the view only on a real change to/from the trackpad view (e.g. leaving NoTrackpad).
+         * A BT<->USB switch stays on the trackpad view, so the faithful replay below does the in-place
+         * transport update — no loadMainView, no movie-reload blink. */
         if (!current_view_is_trackpad()) {
             SEL lmv = sel_registerName("loadMainView");
             if (responds(gPane, lmv)) ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
@@ -200,40 +211,31 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
     (void)self; (void)_cmd; (void)obs; (void)connected;
 }
 
-/* We OWN this selector: the controller's autonomous calls are suppressed unconditionally (like we
- * own _ioServiceObserver). The SM decides battery state; perform() calls the original via
- * gOrigMagicAction_call(). This removes the power-off battery-hide race entirely. */
+/* We OWN this selector: suppress the controller's autonomous render (the SM owns WHEN we replay, via
+ * gOrigMagicAction_call). Capture the (self, arg) the pane passes so the replay is FAITHFUL — the body
+ * does [arg armIterators], so arg must be the pane's iterator owner, never the controller. */
 static void my_magicAction(id self, SEL _cmd, id arg, signed char connected) {
-    (void)self; (void)_cmd; (void)arg; (void)connected;   /* suppress the autonomous call entirely */
+    (void)_cmd; (void)connected;
+    if (self && (self != gMagicCtrl || arg != gMagicArg)) {
+        gMagicCtrl = self; gMagicArg = arg;
+        LOG("captured magic (self=%s, arg=%s armIterators=%d)",
+            object_getClassName(self), object_getClassName(arg),
+            (int)((signed char (*)(id, SEL, SEL))objc_msgSend)(
+                arg, sel_registerName("respondsToSelector:"), sel_registerName("armIterators")));
+    }
 }
 
-/* Find the LIVE MTTrackpadController. Primary: mCurrentController.mController (the current view's
- * content controller). Fallback: [MTTrackpadController sharedController]. (RE 2026-06-30 PROBE.) */
-static id find_mt_controller(void) {
-    if (!gPane) return NULL;
-    Class mt = objc_getClass("MTTrackpadController");
-    SEL isk = sel_registerName("isKindOfClass:");
-    Ivar iv = class_getInstanceVariable(object_getClass(gPane), "mCurrentController");
-    id cur = iv ? object_getIvar(gPane, iv) : NULL;
-    if (cur) {
-        Ivar mc = class_getInstanceVariable(object_getClass(cur), "mController");
-        id c = mc ? object_getIvar(cur, mc) : NULL;
-        if (c && mt && ((signed char (*)(id, SEL, Class))objc_msgSend)(c, isk, mt)) return c;
-    }
-    if (mt && ((signed char (*)(id, SEL, SEL))objc_msgSend)(
-            (id)mt, sel_registerName("respondsToSelector:"), sel_registerName("sharedController"))) {
-        id sc = ((id (*)(id, SEL))objc_msgSend)((id)mt, sel_registerName("sharedController"));
-        if (sc && ((signed char (*)(id, SEL, Class))objc_msgSend)(sc, isk, mt)) return sc;
-    }
-    return NULL;
-}
-
+/* Replay the pane's OWN _magicTrackpadAction faithfully: the captured (self=controller, arg) with the
+ * SM's `connected`. The body does [arg armIterators], so arg MUST be the pane object the runtime handed
+ * us — passing the controller there was the doesNotRecognizeSelector regression. Until a device event has
+ * let us capture the pair, skip (bootstrap renders natively via loadMainView on a view change). */
 static void gOrigMagicAction_call(int connected) {
-    if (!gOrigMagicAction || !gPane) return;
-    id ctrl = find_mt_controller();
-    if (!ctrl) { LOG("gOrigMagicAction_call: no MTTrackpadController found"); return; }
-    gOrigMagicAction(ctrl, sel_registerName("_magicTrackpadAction:deviceConnected:"),
-                     ctrl, (signed char)(connected ? 1 : 0));
+    if (!gOrigMagicAction || !gPane || !gMagicCtrl || !gMagicArg) {
+        LOG("gOrigMagicAction_call: (self,arg) not captured yet -> skip replay");
+        return;
+    }
+    gOrigMagicAction(gMagicCtrl, sel_registerName("_magicTrackpadAction:deviceConnected:"),
+                     gMagicArg, (signed char)(connected ? 1 : 0));
 }
 
 /* Capture the live Trackpad pane: arm the USB observer + swizzle the pane class's
