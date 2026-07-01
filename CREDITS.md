@@ -53,6 +53,10 @@ If you contributed and aren't listed (or want different wording/attribution), pl
 - **Apple Support** — Magic Trackpad requires OS X 10.6.4 (fixes the supported-OS floor).
   https://support.apple.com/en-us/106534
 - **PacketLogger** (Apple, in Xcode's Additional Tools) — Bluetooth HID sniffing.
+- **Magic Utilities** (magicutilities.net) — its device-config docs confirmed that Magic devices store
+  their Bluetooth name *on the device* and that it's host-writable (rename writes the device + restarts;
+  a factory reset restores the default name) — the reference that the on-device name is a real, settable
+  field. https://magicutilities.net/magic-mouse/help/device-config
 
 ---
 

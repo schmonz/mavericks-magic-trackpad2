@@ -337,10 +337,16 @@ MT2s report normal names — so it's this unit's stored name, not an OS parse bu
 **multitouch-enable payload** (USB `02,01` / BT `F1,02,01`). Conclusion: **the MT2 HAS a writable,
 device-persisted name field, and our enable path apparently mis-wrote our payload into it.** (Contrast the
 Magic Mouse entry two rows up: `Name="Magic Mouse"` — Apple input devices carry a settable name.)
-⇒ the Apple-quality fix — a real on-device name that follows the unit across Macs — **is achievable** once
-we RE the write path (how `02 01` reached the name field; likely a mis-targeted name/config report). It also
-means we should un-corrupt this unit's name. The host `displayName` alias (+ auto-re-apply on pair) is only
-a *fallback*, not the real fix. See `mt2-device-writable-name` (REOPENED). [Earlier same-day note claiming
+**Web-confirmed** ([Magic Utilities device-config docs](https://magicutilities.net/magic-mouse/help/device-config)):
+Apple Magic devices store the BT name *on the device*, and it's host-writable — Magic Utilities (Windows)
+renames by storing the new name in the device over an active BT connection + restarting it; a **factory
+reset sets the BT name back to default** (our recovery path for this corrupted unit); it even detects an
+internal-vs-device name mismatch (exactly our `02 01` vs `displayName` state). ⇒ writing a proper on-device
+name is a KNOWN, shipping operation. The Apple-quality fix — a real on-device name that follows the unit
+across Macs — **is achievable**; the one un-published piece is the exact name-write feature report/bytes
+(RE by sniffing Magic Utilities' USB traffic, or empirically). The host `displayName` alias (+ auto-re-apply
+on pair) is only a *fallback*, not the real fix. See `mt2-device-writable-name` (REOPENED, web-confirmed).
+[Earlier same-day note claiming
 "no writable field" was WRONG — it missed this EIR name field.]
 
 ### Picture — CoD-driven, no per-device hook, only fixable by in-process hook/patch
