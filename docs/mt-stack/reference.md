@@ -238,6 +238,29 @@ absent, so they coexist unconditionally (no `kFullBnb` gate). Oracle: `tools/re 
   (logs "Forcing MT restart", calls `resetMultitouchTransport`); cancelled once real MT data
   (0x31 / the trigger) reaches `processDesyncedMultitouchData`. Starving it destabilizes the link.
 
+## Apple BT device-identity & USB-OOB pairing APIs (callable reuse targets, RE'd 2026-06-30)
+
+macOS 10.9's own `IOBluetooth.framework`/`blued` already implement both features via **callable ObjC API**
+(reachable through the objc runtime like the prefpane/kext work) — likely no raw-byte RE needed. See
+`mt2-device-writable-name`, `mt2-usb-oob-pairing-api`.
+
+- **Write the device's stored BT name** — `-[BluetoothHIDDevice setDeviceName:]` (@0x43180): HID **Feature**
+  reports via `reportIDForReportKey:` — either a single `"LongDeviceName"` (bounded by
+  `getMaxDeviceNameLength`) or `"DeviceName1".."DeviceName4"` (4×8-byte) + a `"DeviceNameChange"` commit —
+  then `remoteNameRequest:` (refresh) + `setDisplayName:` (alias). Wrapper: `+[IOBluetoothDevicePair
+  setAppleDeviceName:]`. (Our unit's name got mis-written to `02 01` = our enable payload; one call fixes it.)
+- **USB out-of-band auto-pairing ("HID Emulation" = plug-in-once → BT-paired):**
+  - device-side (write pairing to the trackpad over USB): `-[BluetoothHIDDevice connectToHost:linkKey:]`,
+    `-[BluetoothHIDDevice handoffAndRemoveHost:pageType:deviceAddress:linkKey:]` (cross-Mac re-home).
+  - host-side: `-[IOBluetoothHostController addHIDEmulationDevice:classOfDevice:linkKey:]`,
+    `+[IOBluetoothHostController BluetoothHCIWriteStoredLinkKey:inDeviceAddress:inLinkKey:outNumKeysWritten:]`.
+  - `blued`: `-[BluetoothHIDManager writeLinkKeyToHardwareForDevice:]`, `readHIDEmulationDevice:classOfDevice:
+    pairedWithNULLPIN:`, `OOBconnectToDevice:shouldConnect:`, `isAppleDevice`/`initForAppleDevices`; recognizes
+    the plugged device by USB VID/PID; persists `DaemonControllersConfigurationKey → HIDEmulationTrackpad → <addr>`.
+  - Flow (= SkySafe CVE-2024-0230): USB attach → recognize by VID/PID → gen link key → `connectToHost:linkKey:`
+    (write host+key to device over USB) → `BluetoothHCIWriteStoredLinkKey` (store host-side) →
+    `addHIDEmulationDevice:…` (register) → unplug → BT connects seamlessly.
+
 ## MTTouchState lifecycle (what `mt1_encode` targets)
 
 Apple's recognizer keys tap/click on an 8-state lifecycle; the state is the **high nibble of finger
