@@ -344,15 +344,30 @@ resource file). → **An arbitrary external image file is natively supported by 
 - The **MT2's CoD = `0x594`** → major 5 (Peripheral), minor `0x25` → not a vault key → generic logo
   (user-confirmed icon = the Bluetooth logo).
 - The **Magic Trackpad 1 asset is `Trackpad.prefPane/TrackpadPicture.png`** (the picture we'd want).
-- **GAME-CHANGER (RE 2026-06-30):** `IOBluetoothUI` **already ships a trackpad vault entry wired to that
-  MT1 picture** — the binary carries strings `kVaultTrackpadApplePeripheralKey`,
-  `kVaultTrackpadPeripheralKey`, `/System/Library/PreferencePanes/Trackpad.prefPane`, `TrackpadPicture.png`
-  (alongside `MightyMouse.icns` for the mouse). So the trackpad ART + entry already exist; our MT2 simply
-  doesn't match the CoD (major/minor) that entry is registered under. The fix is therefore likely **map
-  MT2's CoD `(5, 0x25)` onto the EXISTING trackpad entry** (reusing Apple's own art) — NOT ship a new icon.
-  Still-open detail (needs a clean disasm of `+initImageDictionaries`, `objc-methods` gave no addresses on
-  this binary): the exact `(major,minor)` the existing trackpad entry keys on, and whether there's a
-  vendor/model gate (the two `kVaultTrackpad*` keys hint at an Apple-specific vs generic split).
+- **RE COMPLETE (2026-06-30, exact flow disasm'd** — after extending `tools/re objc-methods` to emit IMP
+  addresses for symbolicated frameworks; IMPs: `+initImageDictionaries`@`0x17d1f`, `+imageForDevice:
+  forMacTarget:`@`0x18867`, `+imageForMajorDeviceClass:minorDeviceClass:forMacTarget:`@`0x188e2`,
+  `+loadResourcesForDict:`@`0x18715`**):**
+  - **The pane's row icon comes from `imageForDevice:` → `imageForMajorDeviceClass:minorDeviceClass:`**, a
+    two-level dict lookup: `vault[NSNumber(major)][NSNumber(minor)]`, with a **per-level `"none"` fallback**
+    keyed by `NSNumber(0x6e6f6e65)` (ASCII "none" packed as a uint32) — i.e. `vault[major]["none"]` and
+    `dict[minor]` → `dict["none"]`. `forMacTarget` picks `mMacImageMajorDict` first, else `mImageMajorDict`.
+    The resolved entry is a dict → `ImageObject` (an `NSImage`) or `BundlePath`+`ResourceName` (→ `NSBundle
+    pathForResource:ofType:` → `[[NSImage alloc] initWithContentsOfFile:]`, `setScalesWhenResized:YES`,
+    `setSize:`). So the asset is a scaled `NSImage` — **exact pixel size is not critical** (it rescales).
+  - **The vault has a MOUSE entry (major 5 → `Mouse.prefPane`/`Mouse.icns`) but NO trackpad entry.** MT2
+    `(5, 0x25)` misses every level → generic logo. (Correcting an earlier note: the framework DOES contain
+    the trackpad art + a `loadImageFromBundle:"Trackpad.prefPane" withResourceNamed:"TrackpadPicture.png"`
+    call, but that lives on a SEPARATE path (~`0x42d0`) gated on `-[device isPointingDevice] && (major&0xf)
+    ==5`, used elsewhere — NOT the pane's `imageForDevice:` vault. Likely MT2's non-standard CoD minor
+    `0x25` also fails `isPointingDevice`, so even that path skips it. The `kVaultTrackpad*` strings are
+    TYPE-STRING (text label) keys, not image-vault keys.)
+  - **THE FIX** (pinned): insert `vault[5][0x25]` (or the major-5 `"none"` fallback) →
+    `{ BundlePath = "/System/Library/PreferencePanes/Trackpad.prefPane"; ResourceName = "TrackpadPicture.png" }`
+    (Apple's own MT1 art, already on disk) — by swizzling `imageForDevice:` / `imageForMajorDeviceClass:` to
+    return our image for CoD `(5,0x25)`, OR binary-patching `+initImageDictionaries` to add the entry. Since
+    the vault is code (no source plist), a **binary patch of the shared `IOBluetoothUI` covers all render
+    processes uniformly** (per the lazy-multi-process finding below).
 - There is **no per-device image override** like `displayName`, and the **CoD is re-fetched from the
   live device every connect** (a cache override of `ClassOfDevice` does NOT stick — proven: set
   `1428`→`9600`, restarted `blued`, it re-fetched and overwrote back to `1428`). So the picture cannot
