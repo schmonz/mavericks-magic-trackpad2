@@ -16,6 +16,62 @@ do all the gesture/tap/click work, and only **condition** the stream (lifecycle 
 **inject** the two things Apple's path can't get for this device — sensor **geometry** and the
 **device-button gate**. Everything else is Apple's code.
 
+## The refactoring shape: system hook → object of our own → thin adapter
+
+The load-bearing principle above is about *what* we reuse; this is about *how the reuse is structured*
+so it stays legible. The recurring, desirable shape: **find the system hook, wrap it in an object of our
+own design (a pure state machine, pure policy, or declarative plan — no OS types, unit-testable
+off-device), and keep the adapter that binds it to the OS thin** (translate events in, perform actions
+out; no decision logic). This is what keeps a sharp outside reader from misreading the code, and it's the
+structural half of the "97% interface over driver" mission — each RE finding becomes a *dimension of one
+of our objects*, not another imperative special-case.
+
+**Realized exemplars (copy these):**
+- **`src/mt2_connect_sm.{h,c}`** — pure BT connect/teardown state machine (`csm_step(state,event) →
+  {next,action}`; `csm_teardown_steps()` is teardown as an ordered *declarative list*). The kext is the
+  adapter. Tested exhaustively in `tests/test_connect_sm.c`.
+- **`src/mt2_pane_sm.{h,c}`** — pure Trackpad-prefpane transport SM (states/events/actions + reconcile);
+  the osax (`tools/mt2_prefpane_refresh/mt2_prefpane_refresh.c`) is a thin adapter that maps IOKit
+  edges + a poll to events and performs render actions. Delivery (osax / SIMBL bundle / DYLD dylib) is
+  *orthogonal* to the logic — three build targets, one payload. Tested in `tests/test_pane_sm.c`.
+- **`mt2_should_inject`** in the launch watcher — pure inject-decision + thin AppKit adapter
+  (`tests/test_pane_watch.m`).
+- **`kext-gesture/gh_default_adapter.cpp`** — half-realized: 7 shared generic callbacks with the provider
+  threaded through a seam. The config-engine in miniature (a fuller engine waits on a real 3rd device).
+
+**Latent targets (apply the shape here next — ranked by payoff):**
+1. **The interpose/splice as a declarative plan (highest leverage + stakes).** `MT2BTReader.cpp` manual-
+   starts a genuine BNB, yields the interrupt delegate, and interposes our MT2→MT1 shim on the delegate-
+   callback slot via `vtable_clone` + magic offsets in `src/mt2_stack.h`. `csm_teardown_steps()` already
+   models teardown as data; the latent object is the symmetric **install** plan — `{slot, save-original,
+   install-shim, restore}` as a table the adapter walks. Because this code can panic, a declarative plan
+   is unit-testable off-device (assert save/restore pairing + ordering + offset provenance) — turning the
+   scariest code into the most-checked. (= the `refactor-to-explainability` "magic interpose offsets".)
+2. **Stream conditioning as a pure policy (highest mission value).** The RE'd gates are scattered magic
+   constants: `MT1_FIRM_RADIUS` (`src/mt1_encode.c` density), `MT2_SETTLE_MS` (`src/mt2_session.c`
+   settle-gate), geometry normalization (`src/mt2_geometry.c`, the edge-clamp fix), the downstream clamp
+   band (`MT2BTReader.cpp:172`). Extract a pure **conditioning policy** struct + `condition(frame,policy)
+   → frame`, pipeline as the thin adapter → each RE finding becomes a config dimension; a new device
+   becomes a config file. Gives every gate an off-device oracle (`mt2-behavior-tests-required`).
+3. **Transport presence as one object shared by kext *and* pane.** `mt2_pane_sm` models transport truth
+   `{BT,USB present}` for the UI; the kext's single-transport arbitration *and* the queued USB→BT handoff
+   model the same reality independently. A shared transport-presence SM (same shape) that the handoff
+   adapter reuses avoids a second ad-hoc SM over the identical truth.
+
+Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response table + thin HID adapter;
+`src/mt2_usb_reframe.c`'s `mt2_usb_button_edge` is already a clean pure edge-detector (the shape done
+small). Standing direction + running debt list: memory `mt2-refactor-to-explainability`.
+
+**The public interface will be modeled after [VoodooInput](https://github.com/acidanthera/VoodooInput),
+possibly verbatim.** VoodooInput is the established open-source macOS multitouch-input interface (the
+transport-agnostic contract other Voodoo trackpad drivers feed); we already RE'd it as a reference
+(CREDITS.md). Rather than invent our own "97% API" (`mt2-mission-interface-over-driver`), we intend to
+adopt VoodooInput's shape — same interface, so this codebase becomes *a driver that speaks a known
+interface* rather than a bespoke stack. Concretely that means the "object of our own design" the adapters
+target on the input side is (or wraps) VoodooInput's contact/transducer model; the RE'd conditioning +
+geometry become how we *populate* that contract. (Not built yet — a stated design direction; when we
+implement it, credit the interface debt in CREDITS.md.)
+
 ## The cast
 
 - **`BNBTrackpadDevice : BNBDevice : BluetoothMultitouchTransport`** — Apple's genuine BT trackpad
