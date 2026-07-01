@@ -328,6 +328,17 @@ re-fetch. Setting `displayName` once (e.g. "Magic Trackpad 2") sticks across pow
 **proven on-device** (a manual Rename persisted). That's the (a) fix; it must be set through the proper
 path (a direct PlistBuddy edit of the cache is overwritten by `cfprefsd`/`blued`).
 
+**The `displayName` alias is a per-Mac, per-pairing local override — and it's the ONLY lever, because the
+MT2 has NO host-writable name field** (RE'd to the bottom 2026-06-30): the live USB report descriptor has
+only input reports + `MaxFeatureReportSize=1` (no name feature report), the USB identity strings
+(`Product="Magic Trackpad"`, `Manufacturer="Apple Inc."`) are firmware ROM, the whole RE'd MT2 vendor
+command set is functional not identity (enable/geometry-get `0x60`/`0x61`/haptics/battery — no name write),
+and as classic BT HID the name is the device-firmware HCI Remote Name (not host-writable; the `0x02 0x01` is
+the device carrying no settable name). Apple itself names Magic devices via a host alias, never a device
+write — so "name the device so it follows across Macs" is not achievable. **Consequence:** on a re-pair (or
+a different Mac) the alias is gone; the fix is a **pair-watcher that auto-re-applies `mt2_set_btname` on
+(re)pair** (see `mt2-device-writable-name`).
+
 ### Picture — CoD-driven, no per-device hook, only fixable by in-process hook/patch
 The device picture resolves in **`IOBluetoothUI.framework`**, class **`IOBluetoothDeviceImageVault`**:
 `imageForDevice:forMacTarget:` reads the device's **Class-of-Device** (`deviceClassMajor` /
