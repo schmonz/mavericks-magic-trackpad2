@@ -64,6 +64,23 @@ First: open System Preferences, click **Trackpad** → expect `captured Trackpad
 Record per-row PASS/FAIL + any new transient into `docs/mt-stack/decisions.md` (durable). The full
 post-fix acceptance is in `decisions.md` → "Task C.2 FULL matrix"; the pre-fix baseline is below.
 
+## SM-build re-validation (2026-07-01) — the matrix caught a real regression
+Re-ran the entire matrix on the **state-machine** osax (the `mt2_pane_sm`-driven adapter, commit `555e62e`).
+It exposed a regression the SM *unit* tests can't see — they cover the pure `psm_*` logic, which was correct;
+the bug was in the adapter's render call. The replay invoked `_magicTrackpadAction` with the **controller as
+the `arg`**, but the body does `[arg armIterators]`, and `armIterators` is owned by the **`IOServiceObserver`**,
+not the controller (disasm `-[BaseTrackPadController _magicTrackpadAction:deviceConnected:]`@0x4c57: prologue
+`r14=rdx=arg`; @0x4caf `mov %r14,%rdi; callq [%rdi armIterators]`). So the replay threw
+`-[MTTrackpadController armIterators]: unrecognized selector` → an AppKit-swallowed NSException at capture and
+a no-render ("zilch") on every transport change. **Fix** (commit `6231b53`): capture the real `(self, arg)`
+pair in `my_magicAction` and replay faithfully — `gOrigMagicAction(gMagicCtrl, gMagicArg, connected)`, exactly
+macOS's own call, so it can't throw; reverted the stopgap forced `loadMainView` (the faithful replay does the
+in-place switch, no blink). After the fix **all rows pass**, log line `captured magic
+(self=MTTrackpadController, arg=IOServiceObserver armIterators=1)`. **Lesson:** the render/suppression seam is
+NOT host-testable — the on-device matrix is the oracle for it. (Also noticed + left as native Apple behavior:
+the BT UI exposes a three-finger-drag toggle the USB UI doesn't — the faithful replay reproduces the full
+per-transport render, so the difference is Apple's, not ours.)
+
 ## Clean-room baseline (pre-fix, 2026-06-28) — what the BUG looked like
 Characterized physically (clean-room: Cmd-Q System Prefs between every trial to clear accumulated process
 state; device-truth via `re ioreg-class` alongside the user-reported pane). This is the "before" the fix
