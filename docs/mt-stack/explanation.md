@@ -63,14 +63,23 @@ Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response 
 small). Standing direction + running debt list: memory `mt2-refactor-to-explainability`.
 
 **The public interface will be modeled after [VoodooInput](https://github.com/acidanthera/VoodooInput),
-possibly verbatim.** VoodooInput is the established open-source macOS multitouch-input interface (the
-transport-agnostic contract other Voodoo trackpad drivers feed); we already RE'd it as a reference
-(CREDITS.md). Rather than invent our own "97% API" (`mt2-mission-interface-over-driver`), we intend to
-adopt VoodooInput's shape — same interface, so this codebase becomes *a driver that speaks a known
-interface* rather than a bespoke stack. Concretely that means the "object of our own design" the adapters
-target on the input side is (or wraps) VoodooInput's contact/transducer model; the RE'd conditioning +
-geometry become how we *populate* that contract. (Not built yet — a stated design direction; when we
-implement it, credit the interface debt in CREDITS.md.)
+possibly verbatim** (decided — see `decisions.md` → "Run VoodooInput on 10.9 / become a VoodooInput
+plugin"). VoodooInput (acidanthera) is the de-facto community multitouch-input interface — there is no
+Apple-published equivalent to model against — and it was this project's original reference (CREDITS.md).
+So rather than invent our own "97% API" (`mt2-mission-interface-over-driver`), we **speak VoodooInput's
+contact interface** and become *a driver that speaks a known interface* — the same shape, so one device
+can target both eras.
+
+The concrete contract (already RE'd): `VoodooInputEvent{contact_count, timestamp, transducers[]}` +
+`VoodooInputTransducer{type, id, fingerType, …}`, delivered via the IOKit message
+`kIOMessageVoodooInputMessage = 12345`. The "object of our own design" the input-side adapters target is
+(or wraps) that transducer model; our RE'd conditioning + geometry become how we *populate* it.
+
+**Nuance (don't lose it):** VoodooInput is the mechanical *inverse* of us — it *fabricates* a fake MT2 so
+IOKit matching binds Apple's native MT-HID driver to a virtual nub, and clients translate *non-Apple*
+devices into its contact format; we drive a *real* MT2 into Apple's *older* stack. So we adopt its
+**interface**, not its plumbing — becoming a VoodooInput *plugin* was evaluated and ruled wrong-direction
+(it doesn't wake the real device). Not built yet; credit the interface in CREDITS.md when we implement it.
 
 ## The cast
 
