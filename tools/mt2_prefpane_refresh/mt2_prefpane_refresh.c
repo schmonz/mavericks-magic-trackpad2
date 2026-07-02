@@ -27,7 +27,10 @@
 #include <dispatch/dispatch.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
+#include <time.h>
 #include <IOKit/IOKitLib.h>
+#include <IOKit/hid/IOHIDManager.h>
+#include <IOKit/hid/IOHIDDevice.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <ApplicationServices/ApplicationServices.h>
 #include "mt2_pane_sm.h"
@@ -299,6 +302,159 @@ static void walk_hide_battery_button(id view, int depth) {
             subs, sel_registerName("objectAtIndex:"), i), depth + 1);
 }
 
+/* ---- USB battery paint ----------------------------------------------------------------------
+ * Apple's USB Trackpad view HIDES the battery row (BatteryControl + percent + static label,
+ * hidden=1 in the window bottom bar) and shows "Set Up Bluetooth Trackpad…" — but the MT2 reports
+ * battery over USB too (Power-Device report 0x90, byte[1]&1 = charging, byte[2] = %; readable from
+ * userspace via IOHIDDeviceGetReport — proven by tools/mt2_battery_probe.c). So when the SM state
+ * is USB we unhide Apple's own row and feed it ourselves: charging progress on the cable. */
+
+/* Read the MT2 battery via HID (any transport; on the USB view the USB interface answers).
+ * Returns 1 and fills pct/charging on success. Fresh manager per read (every ~30 s) so cable
+ * cycles never leave a stale device ref. kIOHIDOptionsTypeNone — never seizes the device. */
+static int mt2_usb_read_battery(int *pct, int *charging) {
+    int got = 0;
+    IOHIDManagerRef mgr = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+    if (!mgr) return 0;
+    IOHIDManagerSetDeviceMatching(mgr, NULL);
+    IOHIDManagerOpen(mgr, kIOHIDOptionsTypeNone);
+    CFSetRef devs = IOHIDManagerCopyDevices(mgr);
+    if (devs) {
+        CFIndex n = CFSetGetCount(devs);
+        IOHIDDeviceRef stack[64];
+        if (n > 0 && n <= 64) {
+            CFSetGetValues(devs, (const void **)stack);
+            for (CFIndex i = 0; i < n && !got; i++) {
+                CFNumberRef pidRef = (CFNumberRef)IOHIDDeviceGetProperty(stack[i], CFSTR(kIOHIDProductIDKey));
+                int pid = 0;
+                if (pidRef) CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
+                if (pid != 0x0265) continue;                     /* MT2 (USB vid 05ac / BT vid 004c) */
+                if (IOHIDDeviceOpen(stack[i], kIOHIDOptionsTypeNone) != kIOReturnSuccess) continue;
+                uint8_t b[16] = {0}; CFIndex L = sizeof b;
+                if (IOHIDDeviceGetReport(stack[i], kIOHIDReportTypeInput, 0x90, b, &L)
+                        == kIOReturnSuccess && L >= 3 && b[0] == 0x90 && b[2] <= 100) {
+                    *pct = b[2]; *charging = (b[1] & 0x01) != 0; got = 1;
+                }
+                IOHIDDeviceClose(stack[i], kIOHIDOptionsTypeNone);
+            }
+        }
+        CFRelease(devs);
+    }
+    IOHIDManagerClose(mgr, kIOHIDOptionsTypeNone);
+    CFRelease(mgr);
+    return got;
+}
+
+/* Find the battery row: the view whose class name contains "BatteryControl", plus its two
+ * NSTextField siblings that FOLLOW it in subview order (percent field, then the static
+ * "Trackpad battery level:" label — order verified by the live tree dump both transports). Walked
+ * fresh each paint — never cached (System Prefs runs ObjC GC; a stale cached view would dangle). */
+static void find_battery_row(id view, int depth, id *ctl, id *pctField, id *staticLbl) {
+    if (!view || depth > 14 || *ctl) return;
+    if (strstr(object_getClassName(view), "BatteryControl")) {
+        *ctl = view;
+        id sup = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("superview"));
+        id subs = sup ? ((id (*)(id, SEL))objc_msgSend)(sup, sel_registerName("subviews")) : NULL;
+        unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
+        Class tfCls = objc_getClass("NSTextField");
+        int seen = 0;
+        for (unsigned long i = 0; i < n; i++) {
+            id v = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i);
+            if (!seen) { if (v == view) seen = 1; continue; }
+            if (tfCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(
+                    v, sel_registerName("isKindOfClass:"), tfCls)) {
+                if (!*pctField) *pctField = v;
+                else if (!*staticLbl) { *staticLbl = v; break; }
+            }
+        }
+        return;
+    }
+    id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+    if (!subs) return;
+    unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
+    for (unsigned long i = 0; i < n && !*ctl; i++)
+        find_battery_row(((id (*)(id, SEL, unsigned long))objc_msgSend)(
+            subs, sel_registerName("objectAtIndex:"), i), depth + 1, ctl, pctField, staticLbl);
+}
+
+static int gUsbBattPainted = 0;   /* we unhid the row for USB (so we re-hide it on -> NoTrackpad) */
+
+/* Called from the tick with the window root. state==PSM_USB: read (throttled 30 s) + paint.
+ * Leaving USB: ->NONE re-hides the row (NoTrackpad must not show battery); ->BT just stops
+ * painting (Apple's own BT render owns the row again and repaints real BT values). */
+static void usb_battery_tick(id root) {
+    static time_t lastRead = 0;
+    static int pct = -1, charging = 0;
+    if (gPsm != PSM_USB) {
+        if (gUsbBattPainted && gPsm == PSM_NONE) {
+            id ctl = NULL, pf = NULL, sl = NULL;
+            find_battery_row(root, 0, &ctl, &pf, &sl);
+            id vs[3] = { ctl, pf, sl };
+            for (int i = 0; i < 3; i++) if (vs[i])
+                ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 1);
+            LOG("usb-battery: row re-hidden (left USB -> NoTrackpad)");
+        }
+        if (gPsm != PSM_HOLD) { gUsbBattPainted = 0; lastRead = 0; }   /* HOLD: keep display through the window */
+        return;
+    }
+    time_t now = time(NULL);
+    if (!lastRead || now - lastRead >= 30) {
+        int p, c;
+        if (mt2_usb_read_battery(&p, &c)) {
+            if (p != pct || c != charging) LOG("usb-battery: read %d%% charging=%d", p, c);
+            pct = p; charging = c;
+        }
+        lastRead = now;
+    }
+    if (pct < 0) return;                                   /* nothing read yet — leave Apple's UI alone */
+    id ctl = NULL, pf = NULL, sl = NULL;
+    find_battery_row(root, 0, &ctl, &pf, &sl);
+    if (!ctl || !pf || !sl) return;
+    ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)pct / 100.0f);
+    char label[48];
+    snprintf(label, sizeof(label), charging ? "%d%% (charging)" : "%d%%", pct);
+    CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
+    if (s) {
+        ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
+        CFRelease(s);
+        /* The nib sizes the field for "100%"; widen so " (charging)" isn't clipped (grows right,
+         * into the empty gap before the Set Up button). */
+        ((void (*)(id, SEL))objc_msgSend)(pf, sel_registerName("sizeToFit"));
+    }
+    id vs[3] = { ctl, pf, sl };
+    for (int i = 0; i < 3; i++)
+        ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 0);
+    if (!gUsbBattPainted) { gUsbBattPainted = 1; LOG("usb-battery: row painted (%s)", label); }
+}
+
+/* On-demand RE aid: `touch /tmp/mt2_pane_dump` -> the next tick dumps the whole window view tree
+ * (class, hidden, frame, and any title/stringValue) to syslog, once, then removes the flag. Used to
+ * map the battery-row controls in each transport state (e.g. what exists on the USB view). */
+static void dump_view_tree(id view, int depth) {
+    if (!view || depth > 14) return;
+    char pad[32]; int p = depth < 15 ? depth * 2 : 30;
+    memset(pad, ' ', (size_t)p); pad[p] = 0;
+    const char *cn = object_getClassName(view);
+    signed char hid = ((signed char (*)(id, SEL))objc_msgSend)(view, sel_registerName("isHidden"));
+    const char *txt = "";
+    SEL tsel = sel_registerName("title");
+    if (!responds(view, tsel)) tsel = sel_registerName("stringValue");
+    if (responds(view, tsel)) {
+        id s = ((id (*)(id, SEL))objc_msgSend)(view, tsel);
+        if (s) txt = ((const char *(*)(id, SEL))objc_msgSend)(s, sel_registerName("UTF8String"));
+    }
+    double fv = -1;
+    if (responds(view, sel_registerName("doubleValue")))
+        fv = ((double (*)(id, SEL))objc_msgSend)(view, sel_registerName("doubleValue"));
+    LOG("tree %s%s hidden=%d val=%.2f \"%s\"", pad, cn, hid, fv, txt ? txt : "");
+    id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+    if (!subs) return;
+    unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
+    for (unsigned long i = 0; i < n; i++)
+        dump_view_tree(((id (*)(id, SEL, unsigned long))objc_msgSend)(
+            subs, sel_registerName("objectAtIndex:"), i), depth + 1);
+}
+
 /* Hide the button — called from our own 2s reconcile tick so it fires regardless of whether the
  * pane's battery timer re-runs. Walk from the pane's mainView (covers whichever controller/tab owns
  * the button right now). */
@@ -311,7 +467,13 @@ static void hide_battery_button_now(void) {
      * window contentView; fall back to mainView if the pane isn't in a window yet. */
     id win = ((id (*)(id, SEL))objc_msgSend)(mv, sel_registerName("window"));
     id root = win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : mv;
-    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; }
+    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; usb_battery_tick(root); }
+    if (root && access("/tmp/mt2_pane_dump", F_OK) == 0) {
+        unlink("/tmp/mt2_pane_dump");
+        LOG("tree dump BEGIN (flag /tmp/mt2_pane_dump)");
+        dump_view_tree(root, 0);
+        LOG("tree dump END");
+    }
 }
 
 /* Swizzled _checkBatteryTimer:: let the pane update the level/label as usual, then re-hide the
