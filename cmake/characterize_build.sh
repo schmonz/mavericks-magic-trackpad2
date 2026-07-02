@@ -27,32 +27,40 @@
 #   MT2Gesture.kext/Contents/MacOS/MT2Gesture   (+ Contents/Info.plist)
 set -eu
 
+# Deterministic, locale-independent collation so `sort` byte-orders identically on
+# the native 10.9 box (default C locale) and a modern runner (en_US.UTF-8, which
+# collates case-insensitively) -- otherwise identical symbol SETS diff purely on
+# sort order and the gate false-fails.
+export LC_ALL=C
+
 die() { echo "CANNOT MEASURE (fail-closed): $*" >&2; exit 4; }
 
-# Run a measurement to a file; fail if the tool errors or the result is empty.
-measure_nonempty() {   # <out-file> <what> <cmd> [args...]
-  mn_out=$1; mn_what=$2; shift 2
-  "$@" > "$mn_out" 2>/dev/null || die "$mn_what ($* failed)"
-  [ -s "$mn_out" ] || die "$mn_what produced no output"
-}
-
+# All GATED measurements MUST be portable across the native-10.9 cctools toolchain
+# (which generates the reference) and the modern llvm toolchain (which generates the
+# GHA candidate), AND produce byte-identical output on both -- else the diff is
+# comparing tool quirks, not the artifact. Notably: 10.9 `lipo` has no -archs, and
+# 10.9 `nm` rejects long options + has no -U "defined-only" flag.
 emit_binary() {   # <mach-o> <out-prefix> <want-defined:0|1>
   eb_bin=$1; eb_pfx=$2; eb_wd=${3:-0}
   [ -f "$eb_bin" ] || die "missing binary $eb_bin"
-  measure_nonempty "$eb_pfx.arch" "lipo -archs $eb_bin" lipo -archs "$eb_bin"
-  # Undefined external symbols = the kxld/dyld inputs the loader must resolve.
-  nm -u "$eb_bin" > "$eb_pfx.undefined.raw" 2>/dev/null || die "nm -u $eb_bin"
-  sed 's/^[[:space:]]*//' "$eb_pfx.undefined.raw" | awk 'NF{print $NF}' | sort -u > "$eb_pfx.undefined"
-  rm -f "$eb_pfx.undefined.raw"
+  # arch: `lipo -info` exists on both toolchains (10.9 has no `lipo -archs`); the
+  # architecture is the last whitespace field on both ("... is architecture: x86_64").
+  eb_arch=$(lipo -info "$eb_bin" 2>/dev/null | awk '{print $NF}') || die "lipo -info $eb_bin"
+  [ -n "$eb_arch" ] || die "no arch measured for $eb_bin"
+  printf '%s\n' "$eb_arch" > "$eb_pfx.arch"
+  # One portable `nm -g` (external symbols only) call. Defined symbols carry a hex
+  # address in field 1; undefined ones do not. Symbol NAMES ($NF) are ABI/source-
+  # determined, so they are identical between cctools nm and llvm-nm.
+  nm -g "$eb_bin" > "$eb_pfx.nm.raw" 2>/dev/null || die "nm -g $eb_bin"
+  awk '$1 !~ /^[0-9a-fA-F]+$/ {print $NF}' "$eb_pfx.nm.raw" | sort -u > "$eb_pfx.undefined"
   [ -s "$eb_pfx.undefined" ] || die "no undefined symbols measured for $eb_bin"
   # Defined external symbols = what we export (classes, vtables, C entry points).
   # Gated for the kext only (executables' exports aren't a meaningful contract).
   if [ "$eb_wd" = 1 ]; then
-    nm -gU "$eb_bin" > "$eb_pfx.defined.raw" 2>/dev/null || die "nm -gU $eb_bin"
-    awk 'NF{print $NF}' "$eb_pfx.defined.raw" | sort -u > "$eb_pfx.defined"
-    rm -f "$eb_pfx.defined.raw"
+    awk '$1 ~ /^[0-9a-fA-F]+$/ {print $NF}' "$eb_pfx.nm.raw" | sort -u > "$eb_pfx.defined"
     [ -s "$eb_pfx.defined" ] || die "no defined external symbols measured for $eb_bin"
   fi
+  rm -f "$eb_pfx.nm.raw"
   # Advisory only (NOT gated -- otool wording can differ across toolchains).
   {
     printf 'filetype=%s\n' "$(otool -hv "$eb_bin" 2>/dev/null | grep -oE '(EXECUTE|KEXT_BUNDLE|BUNDLE|DYLIB|OBJECT)' | head -1)"
