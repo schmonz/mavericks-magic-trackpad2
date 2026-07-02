@@ -2,7 +2,13 @@
 # Makefile `pkg` target. Unsigned kext -> /usr/local/lib/mt2d (NOT /Library/Extensions,
 # which enforces signing); the launchd wrapper kextloads it from there.
 set(PKGROOT ${CMAKE_BINARY_DIR}/pkgroot)
-set(PKG_OUT ${CMAKE_BINARY_DIR}/mt2d-${PROJECT_VERSION}.pkg)
+# Version stamped into the pkg name + component. Defaults to the project version;
+# CI overrides it from the git tag with -DMT2_PKG_VERSION=<x> so the artifact is
+# named mt2d-<tag>.pkg directly (no post-build rename).
+if(NOT MT2_PKG_VERSION)
+  set(MT2_PKG_VERSION ${PROJECT_VERSION})
+endif()
+set(PKG_OUT ${CMAKE_BINARY_DIR}/mt2d-${MT2_PKG_VERSION}.pkg)
 add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E remove_directory ${PKGROOT}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/lib/mt2d
@@ -33,7 +39,7 @@ add_custom_target(pkg
   # installer enforces the 10.9.5 floor (allowed-os-versions in dist/distribution.xml).
   # A bare pkgbuild product cannot express an OS floor; productbuild can.
   COMMAND pkgbuild --root ${PKGROOT} --scripts ${CMAKE_SOURCE_DIR}/dist/scripts
-          --identifier com.schmonz.mt2d --version ${PROJECT_VERSION} --install-location /
+          --identifier com.schmonz.mt2d --version ${MT2_PKG_VERSION} --install-location /
           ${CMAKE_BINARY_DIR}/mt2d-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}

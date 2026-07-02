@@ -1,0 +1,113 @@
+name: release
+
+# One automated build on the latest macOS: cross-build the whole 10.9 product
+# (x86_64 @ 10.9 userland + a real MT2Gesture.kext built against a fetched
+# MacOSX10.9 SDK), gate it, package it, and publish a GitHub Release on v* tags.
+#
+# AUTHENTICITY / CORRECTNESS of the cross-built kext rests on two things, no old
+# Xcode required:
+#   1. the SDK is pinned by SHA-256 in cmake/fetch_10_9_sdk.sh (integrity), and
+#   2. the equivalence gate (cmake/characterize_build.sh compare) proves the
+#      cross-built kext is identical -- in undefined+defined external symbol sets,
+#      KPI deps, and arch -- to the trusted native 10.9.5 build committed in
+#      dist/characterization/. A swapped/tampered SDK yields a different kext and
+#      fails this gate.
+#
+# RELEASE INVARIANT: the single `publish` job is the ONLY thing that writes to
+# GitHub Releases and it `needs` the build job, so any build/gate failure skips
+# publishing entirely -- never a partial release.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:        # manual runs produce an artifact, not a release
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure Rosetta (x86_64 @ 10.9 tests run under it)
+        run: softwareupdate --install-rosetta --agree-to-license || true
+
+      - name: Fetch + checksum-verify the MacOSX10.9 SDK
+        id: sdk
+        run: echo "path=$(sh cmake/fetch_10_9_sdk.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure + build (x86_64 @ 10.9 userland + kext)
+        run: |
+          cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}"
+          cmake --build build
+          echo "userland slice:"; lipo -info build/sbin/mt2_reenumerate
+          echo "kext:"; file build/MT2Gesture.kext/Contents/MacOS/MT2Gesture
+
+      - name: 10.9 userland compat guard (no post-10.9 imports)
+        run: sh cmake/compat_guard.sh build
+
+      - name: Kext cross-build equivalence gate (vs native 10.9 reference, fail-closed)
+        run: sh cmake/characterize_build.sh compare dist/characterization build
+
+      - name: Unit tests (Rosetta)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Build .pkg (10.9.5 install floor)
+        run: |
+          cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}" \
+            -DMT2_PKG_VERSION="${{ steps.ver.outputs.version }}"
+          cmake --build build --target pkg
+          echo "floor check:"; pkgutil --expand "build/mt2d-${{ steps.ver.outputs.version }}.pkg" /tmp/pkgx
+          grep -o 'os-version min="[0-9.]*"' /tmp/pkgx/Distribution
+
+      - name: Emit machine-readable feed
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          cat > build/latest.json <<EOF
+          {
+            "version": "$VER",
+            "min_os": "10.9.5",
+            "pkg": "mt2d-$VER.pkg",
+            "url": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/mt2d-$VER.pkg"
+          }
+          EOF
+          cat build/latest.json
+
+      - name: Upload build artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt2d-pkg
+          path: |
+            build/mt2d-${{ steps.ver.outputs.version }}.pkg
+            build/latest.json
+
+  # All-or-nothing publish: the ONLY job that writes to GitHub Releases, gated on a
+  # successful build. A forgotten `needs` entry is the classic way to ship a partial
+  # release -- keep this list complete as build jobs are added.
+  publish:
+    needs: [build-macos]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/mt2d-*.pkg
+            dist/latest.json
