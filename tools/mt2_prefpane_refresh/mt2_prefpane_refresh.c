@@ -515,6 +515,19 @@ static void my_checkBatteryTimer(id self, SEL _cmd, id timer) {
     hide_change_battery_button(self);
 }
 
+/* Install the _checkBatteryTimer swizzle. Called EARLY from willSelect (before the pane's one-shot
+ * battery timer fires, so our hook hides the Change-Batteries button in that same fire -> no flash)
+ * and from capture_pane as a belt. MTTrackpadController exists once the Trackpad pane bundle loads. */
+static void install_battery_timer_swizzle(const char *src) {
+    if (gOrigCheckBatteryTimer) return;
+    Class c = objc_getClass("MTTrackpadController");
+    Method m = c ? class_getInstanceMethod(c, sel_registerName("_checkBatteryTimer:")) : NULL;
+    if (!m) return;
+    gOrigCheckBatteryTimer = (void (*)(id, SEL, id))method_getImplementation(m);
+    method_setImplementation(m, (IMP)my_checkBatteryTimer);
+    LOG("swizzled MTTrackpadController _checkBatteryTimer: via %s (hide Change Batteries — sealed MT2)", src);
+}
+
 /* Capture the live Trackpad pane: arm the USB observer + swizzle the pane class's
  * deviceConnected: for NoTrackpad suppression (the class is loaded by now). */
 static void capture_pane(id self) {
@@ -547,18 +560,7 @@ static void capture_pane(id self) {
             LOG("MTTrackpadController _magicTrackpadAction: not found (suppression disabled) getClass=%p", c);
         }
     }
-    if (!gOrigCheckBatteryTimer) {
-        Class c = objc_getClass("MTTrackpadController");
-        SEL sel = sel_registerName("_checkBatteryTimer:");
-        Method m = c ? class_getInstanceMethod(c, sel) : NULL;
-        if (m) {
-            gOrigCheckBatteryTimer = (void (*)(id, SEL, id))method_getImplementation(m);
-            method_setImplementation(m, (IMP)my_checkBatteryTimer);
-            LOG("swizzled MTTrackpadController _checkBatteryTimer: (hide Change Batteries — sealed MT2 battery)");
-        } else {
-            LOG("MTTrackpadController _checkBatteryTimer: not found (button-hide disabled)");
-        }
-    }
+    install_battery_timer_swizzle("capture");   /* belt; willSelect installs it earlier (no flash) */
     arm_observer();
     sm_reconcile();   /* sync to current truth immediately */
     static dispatch_source_t tick;
@@ -576,6 +578,10 @@ static void capture_pane(id self) {
  * bowtie->trackpad flash). didSelect proved too late — the Bluetooth pane populates earlier. */
 static void my_willSelect(id self, SEL _cmd) {
     install_device_icon_swizzle("willSelect");
+    /* Trackpad pane: install the battery-timer swizzle BEFORE the pane's one-shot _checkBatteryTimer
+     * fires, so the Change-Batteries button is hidden in that same fire (no flash at low battery). */
+    const char *cn = object_getClassName(self);
+    if (cn && strcmp(cn, "Trackpad") == 0) install_battery_timer_swizzle("willSelect");
     if (gOrigWillSelect) gOrigWillSelect(self, _cmd);
 }
 
