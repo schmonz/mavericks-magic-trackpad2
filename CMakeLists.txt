@@ -5,6 +5,14 @@ project(mt2 VERSION 1.0.0 LANGUAGES C CXX)
 if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "" FORCE)
 endif()
+
+# 10.9 is Intel-only; force the single x86_64 slice unless the caller overrides.
+# Without this, a modern arm64 host silently bumps the deployment target to 11.0
+# and emits an arm64 binary that cannot run on Mavericks. On the native 10.9 dev
+# box x86_64 is already the native arch, so this is a no-op there.
+if(NOT CMAKE_OSX_ARCHITECTURES)
+  set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "" FORCE)
+endif()
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/sbin")
