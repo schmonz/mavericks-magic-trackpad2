@@ -57,6 +57,11 @@ static id gMagicArg  = NULL;   /* arg:  the object [arg armIterators] targets (t
 typedef void (*didSelect_t)(id, SEL);
 static didSelect_t     gOrigDidSelect = NULL;
 
+/* Original MTTrackpadController _checkBatteryTimer: — we call through then force the "Change
+ * Batteries" button hidden (the MT2 has a sealed rechargeable battery; that AA-era control never
+ * applies, yet the pane re-shows it every tick at 0%). */
+static void (*gOrigCheckBatteryTimer)(id, SEL, id) = NULL;
+
 /* --- small objc helpers (no Obj-C syntax) --- */
 static int responds(id obj, SEL s) {
     return obj && ((signed char (*)(id, SEL, SEL))objc_msgSend)(
@@ -238,6 +243,86 @@ static void gOrigMagicAction_call(int connected) {
                      gMagicArg, (signed char)(connected ? 1 : 0));
 }
 
+/* Force the pane's "Change Batteries" button hidden. The MT2 charges over Lightning (sealed
+ * battery), so the AA-era swap prompt never applies — yet the pane RE-SHOWS it every
+ * _checkBatteryTimer tick whenever the level reads 0% (setHidden:(pct>0.0), threshold 0.0; disasm
+ * Trackpad.prefPane @0x4bdf). mChangeBatteryButton is an MTTrackpadController ivar. */
+static void hide_change_battery_button(id controller) {
+    if (!controller) return;
+    Ivar iv = class_getInstanceVariable(object_getClass(controller), "mChangeBatteryButton");
+    id btn = iv ? object_getIvar(controller, iv) : NULL;
+    if (btn) {
+        signed char was = ((signed char (*)(id, SEL))objc_msgSend)(btn, sel_registerName("isHidden"));
+        ((void (*)(id, SEL, signed char))objc_msgSend)(
+            btn, sel_registerName("setHidden:"), (signed char)1);
+        if (!was) LOG("hid Change-Batteries button %p on %s", btn, object_getClassName(controller));
+    } else {
+        static int warned = 0;
+        if (!warned) { warned = 1;
+            LOG("mChangeBatteryButton ivar not found on %s (iv=%p)", object_getClassName(controller), iv); }
+    }
+}
+
+/* Capture-free fallback: recursively walk a view tree and hide the Change-Batteries NSButton.
+ * Matched by ACTION SELECTOR (locale-independent); first walk logs every button's action+title so
+ * the criterion is verifiable in syslog. Needed because (a) _checkBatteryTimer is one-shot on a
+ * valid read (invalidates its fast timer; disasm 0x4b45/0x4c15) so the swizzle rarely re-fires, and
+ * (b) the button ivar lives on MTTrackpadController, which we may never be handed on a quiet open. */
+static int gLoggedButtons = 0;
+static void walk_hide_battery_button(id view, int depth) {
+    if (!view || depth > 12) return;
+    Class btnCls = objc_getClass("NSButton");
+    if (btnCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(
+            view, sel_registerName("isKindOfClass:"), btnCls)) {
+        SEL action = ((SEL (*)(id, SEL))objc_msgSend)(view, sel_registerName("action"));
+        const char *an = action ? sel_getName(action) : "(none)";
+        id title = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("title"));
+        const char *tn = title ? ((const char *(*)(id, SEL))objc_msgSend)(
+                                     title, sel_registerName("UTF8String")) : "";
+        if (!gLoggedButtons)
+            LOG("button scan: action=%s title=\"%s\"", an, tn ? tn : "");
+        /* Primary: the button's real action selector (ground truth from the live scan:
+         * "lowBatteryButton:") — locale-independent. Title match kept as a fallback. */
+        if (strcmp(an, "lowBatteryButton:") == 0 || (tn && strstr(tn, "Change Batter"))) {
+            signed char was = ((signed char (*)(id, SEL))objc_msgSend)(
+                view, sel_registerName("isHidden"));
+            ((void (*)(id, SEL, signed char))objc_msgSend)(
+                view, sel_registerName("setHidden:"), (signed char)1);
+            if (!was) LOG("hid Change-Batteries button (action=%s)", an);
+        }
+    }
+    id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+    if (!subs) return;
+    unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
+    for (unsigned long i = 0; i < n; i++)
+        walk_hide_battery_button(((id (*)(id, SEL, unsigned long))objc_msgSend)(
+            subs, sel_registerName("objectAtIndex:"), i), depth + 1);
+}
+
+/* Hide the button — called from our own 2s reconcile tick so it fires regardless of whether the
+ * pane's battery timer re-runs. Walk from the pane's mainView (covers whichever controller/tab owns
+ * the button right now). */
+static void hide_battery_button_now(void) {
+    if (!gPane) return;
+    id mv = ((id (*)(id, SEL))objc_msgSend)(gPane, sel_registerName("mainView"));
+    if (!mv) return;
+    /* The battery row (level + Change Batteries) is NOT inside mainView — it sits in the window's
+     * bottom bar (verified: a mainView-only scan finds just the gesture buttons). Walk the whole
+     * window contentView; fall back to mainView if the pane isn't in a window yet. */
+    id win = ((id (*)(id, SEL))objc_msgSend)(mv, sel_registerName("window"));
+    id root = win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : mv;
+    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; }
+}
+
+/* Swizzled _checkBatteryTimer:: let the pane update the level/label as usual, then re-hide the
+ * Change-Batteries button (it re-shows it at 0%). Caveat: hides for any trackpad the pane shows; on
+ * this stack the connected device is always the MT2 (a co-connected genuine MT1 with AA batteries
+ * would be a rare exception — future refinement could gate on the MT2 CoD minor 0x25). */
+static void my_checkBatteryTimer(id self, SEL _cmd, id timer) {
+    if (gOrigCheckBatteryTimer) gOrigCheckBatteryTimer(self, _cmd, timer);
+    hide_change_battery_button(self);
+}
+
 /* Capture the live Trackpad pane: arm the USB observer + swizzle the pane class's
  * deviceConnected: for NoTrackpad suppression (the class is loaded by now). */
 static void capture_pane(id self) {
@@ -270,6 +355,18 @@ static void capture_pane(id self) {
             LOG("MTTrackpadController _magicTrackpadAction: not found (suppression disabled) getClass=%p", c);
         }
     }
+    if (!gOrigCheckBatteryTimer) {
+        Class c = objc_getClass("MTTrackpadController");
+        SEL sel = sel_registerName("_checkBatteryTimer:");
+        Method m = c ? class_getInstanceMethod(c, sel) : NULL;
+        if (m) {
+            gOrigCheckBatteryTimer = (void (*)(id, SEL, id))method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_checkBatteryTimer);
+            LOG("swizzled MTTrackpadController _checkBatteryTimer: (hide Change Batteries — sealed MT2 battery)");
+        } else {
+            LOG("MTTrackpadController _checkBatteryTimer: not found (button-hide disabled)");
+        }
+    }
     arm_observer();
     sm_reconcile();   /* sync to current truth immediately */
     static dispatch_source_t tick;
@@ -277,7 +374,7 @@ static void capture_pane(id self) {
         tick = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(tick, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
                                   2 * NSEC_PER_SEC, (uint64_t)(0.25 * NSEC_PER_SEC));
-        dispatch_source_set_event_handler(tick, ^{ sm_reconcile(); });
+        dispatch_source_set_event_handler(tick, ^{ sm_reconcile(); hide_battery_button_now(); });
         dispatch_resume(tick);
     }
 }

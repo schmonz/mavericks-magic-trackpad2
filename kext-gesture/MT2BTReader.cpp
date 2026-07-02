@@ -171,6 +171,9 @@ static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
  * features"). setProperty is registry-lock-guarded, safe from this newDataIn context. Publish only on
  * change (avoids churning the registry if 0x90 repeats). */
 static void mt2_publish_battery(IOService *bnb, uint8_t pct) {
+    /* debug.mt2_batt override: force a value for prefpane UI testing (e.g. 0 to exercise the pane's
+     * low-battery / Change-Batteries painting). -1 = off (use the real device value). */
+    if (gMT2BattOverride >= 0 && gMT2BattOverride <= 100) pct = (uint8_t)gMT2BattOverride;
     if (pct > 100) return;                     /* capacity is 0-100; ignore out-of-range */
     static int gLastBatt = -1;
     if ((int)pct == gLastBatt) return;

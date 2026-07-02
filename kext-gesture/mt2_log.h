@@ -12,6 +12,10 @@
 
 extern int gMT2LogLevel;
 
+/* debug.mt2_batt: force the published battery % for prefpane UI testing (-1=off, 0-100=force).
+ * See mt2_log.cpp; consumed by MT2BTReader's mt2_publish_battery. */
+extern int gMT2BattOverride;
+
 #define MT2_DLOG(lvl, fmt, ...) \
     do { if (gMT2LogLevel >= (lvl)) IOLog("MT2: " fmt "\n", ##__VA_ARGS__); } while (0)
 
