@@ -13,6 +13,12 @@ endif()
 if(NOT CMAKE_OSX_ARCHITECTURES)
   set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "" FORCE)
 endif()
+
+# Absolute path to a MacOSX10.9 SDK root, used ONLY to cross-build the kext from a
+# modern host (the kext needs 10.9 kernel headers + libkmod, which the modern SDK
+# does not provide). Fetch it with cmake/fetch_10_9_sdk.sh. Leave UNSET on the
+# native 10.9 dev box -- the kext then falls back to CMAKE_OSX_SYSROOT (unchanged).
+set(MT2_MACOSX_10_9_SDK "" CACHE PATH "MacOSX10.9 SDK root for kext cross-build (modern host only)")
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/sbin")

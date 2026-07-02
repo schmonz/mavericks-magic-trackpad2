@@ -17,14 +17,33 @@ foreach(c ${KEXT_SHARED_NAMES})
   list(APPEND KEXT_SHARED_SRCS ${CMAKE_SOURCE_DIR}/src/${c}.c)
 endforeach()
 
+# On a modern host the kext must see the 10.9 kernel headers + libkmod, NOT the
+# live system / modern SDK (whose Kernel.framework describes a different kernel
+# ABI -- wrong vtable slots + struct sizes for the RE'd 10.9.5 hijack). When
+# MT2_MACOSX_10_9_SDK is set, isysroot to it and take Kernel/IOKit headers + libs
+# from there. UNSET (native 10.9 dev box) -> current CMAKE_OSX_SYSROOT behavior.
+if(MT2_MACOSX_10_9_SDK)
+  set(MT2_KEXT_SYSROOT_FLAGS -isysroot ${MT2_MACOSX_10_9_SDK})
+  set(MT2_KEXT_KHDRS
+    ${MT2_MACOSX_10_9_SDK}/System/Library/Frameworks/Kernel.framework/Headers
+    ${MT2_MACOSX_10_9_SDK}/System/Library/Frameworks/IOKit.framework/Headers)
+  set(MT2_KEXT_LIBDIR -L${MT2_MACOSX_10_9_SDK}/usr/lib)
+else()
+  set(MT2_KEXT_SYSROOT_FLAGS)
+  set(MT2_KEXT_KHDRS
+    ${CMAKE_OSX_SYSROOT}/System/Library/Frameworks/Kernel.framework/Headers
+    ${CMAKE_OSX_SYSROOT}/System/Library/Frameworks/IOKit.framework/Headers)
+  set(MT2_KEXT_LIBDIR)
+endif()
+
 add_library(mt2gesture_objs OBJECT ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS})
 target_compile_options(mt2gesture_objs PRIVATE
+  ${MT2_KEXT_SYSROOT_FLAGS}
   -mmacosx-version-min=10.9 -fapple-kext -fno-rtti -fno-exceptions
   -std=c++11 -Wno-deprecated-register)
 target_include_directories(mt2gesture_objs PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src
-  ${CMAKE_OSX_SYSROOT}/System/Library/Frameworks/Kernel.framework/Headers
-  ${CMAKE_OSX_SYSROOT}/System/Library/Frameworks/IOKit.framework/Headers)
+  ${MT2_KEXT_KHDRS})
 
 # Compile the shared .c as C++ (kext mangling must match the .cpp callers; some shared
 # headers lack extern "C", so plain-C compilation would mismatch and fail to link).
@@ -40,7 +59,8 @@ set_source_files_properties(
 set(KEXT_BIN ${CMAKE_CURRENT_BINARY_DIR}/MT2Gesture)
 add_custom_command(OUTPUT ${KEXT_BIN}
   COMMAND ${CMAKE_CXX_COMPILER} -arch x86_64 -mmacosx-version-min=10.9
-          -nostdlib -Wl,-kext -Wl,-no_uuid -lkmodc++ -lkmod
+          ${MT2_KEXT_SYSROOT_FLAGS}
+          -nostdlib -Wl,-kext -Wl,-no_uuid ${MT2_KEXT_LIBDIR} -lkmodc++ -lkmod
           $<TARGET_OBJECTS:mt2gesture_objs> -o ${KEXT_BIN}
   DEPENDS mt2gesture_objs
   COMMAND_EXPAND_LISTS
