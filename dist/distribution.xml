@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>Mavericks Trackpad 2</title>
+    <!--
+      HARD install floor: OS X 10.9.5. A SAFETY gate, not a KPI limit. The hijack of
+      AppleMultitouchDriver / MultitouchHID.plugin is reverse-engineered against
+      10.9.5 offsets, and loading those on an unverified kernel risks a panic. See
+      the 2026-07-02 crossbuild design spec (section 2a) and the FLOOR item in
+      IDEAS.md before widening this.
+    -->
+    <allowed-os-versions>
+        <os-version min="10.9.5"/>
+    </allowed-os-versions>
+    <options customize="never" require-scripts="true"/>
+    <choices-outline>
+        <line choice="default"><line choice="com.schmonz.mt2d"/></line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.schmonz.mt2d" visible="false">
+        <pkg-ref id="com.schmonz.mt2d"/>
+    </choice>
+    <pkg-ref id="com.schmonz.mt2d" version="0" onConclusion="none">mt2d-component.pkg</pkg-ref>
+</installer-gui-script>

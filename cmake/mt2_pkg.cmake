@@ -29,7 +29,13 @@ add_custom_target(pkg
   # dir only if SIMBL is present on the target.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/share/mt2d
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/MT2PaneRefresh.bundle ${PKGROOT}/usr/local/share/mt2d/MT2PaneRefresh.bundle
+  # Build the flat component, then wrap it with productbuild --distribution so the
+  # installer enforces the 10.9.5 floor (allowed-os-versions in dist/distribution.xml).
+  # A bare pkgbuild product cannot express an OS floor; productbuild can.
   COMMAND pkgbuild --root ${PKGROOT} --scripts ${CMAKE_SOURCE_DIR}/dist/scripts
-          --identifier com.schmonz.mt2d --version ${PROJECT_VERSION} --install-location / ${PKG_OUT}
+          --identifier com.schmonz.mt2d --version ${PROJECT_VERSION} --install-location /
+          ${CMAKE_BINARY_DIR}/mt2d-component.pkg
+  COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
+          --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
   DEPENDS kext mt2_reenumerate mt2_set_btname MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch
-  COMMENT "Building ${PKG_OUT}")
+  COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
