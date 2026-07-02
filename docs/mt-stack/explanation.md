@@ -361,7 +361,37 @@ See `mt2-device-writable-name` (mechanism RE'd).
 [Earlier same-day note claiming
 "no writable field" was WRONG — it missed this EIR name field.]
 
-### Picture — CoD-driven, no per-device hook, only fixable by in-process hook/patch
+### Picture — ✅ FIXED 2026-07-02 (pane row = a VIEW, NOT the vault); vault RE below was the WRONG premise
+**REALITY CORRECTION (2026-07-02, mt2-prefpanery session — shipped, on-device verified).** The entire
+vault story below is real for the vault API, but it is **NOT how the Bluetooth PANE's device-row icon is
+drawn**, so the "only fixable by binary-patching the vault / swizzling `imageForDevice:`" conclusion was
+wrong. What we actually found by RE + on-device:
+- The pane's **"Devices" list is a VIEW-BASED `NSTableView`**: each row is an `NSTableCellView` whose
+  **direct-child `NSImageView`** holds the device icon (Magic Mouse gets a mouse image; the MT2 got the
+  generic BT logo). Proven by a runtime view-tree dump (`/tmp/mt2_pane_dump` → the osax logs the tree).
+- **The vault is never consulted for that row.** `tools/re calls` shows `imageForMajorDeviceClass:...` has
+  **no callers inside IOBluetoothUI** for the list; `stockImageForDevice:` has none; the **pane binary
+  doesn't reference the vault at all** (`re str-xref` on Bluetooth.prefPane). And empirically: a swizzle of
+  `imageForDevice:forMacTarget:` AND of the funnel `imageForMajorDeviceClass:minorDeviceClass:forMacTarget:`
+  **never fired** when the row drew. (The vault path is used by *other* surfaces — pairing wizard / info —
+  not the pane row; that part of the RE stands, just mis-attributed.)
+- **THE FIX WE SHIPPED (osax, `tools/mt2_prefpane_refresh/mt2_prefpane_refresh.c`, `paint_device_icon`):**
+  walk the pane window's view tree each 2s tick, find the MT2's `NSTableCellView`, and set its direct-child
+  `NSImageView.image` directly to Apple's `Trackpad.prefPane/Contents/Resources/TrackpadPicture.png` — the
+  same "own the real view" approach as the battery row / Change-Batteries button. **No vault swizzle, no
+  binary patch.** Re-asserted each tick (the list repopulates on device edges); Magic Mouse untouched.
+- **Row-identification finding:** the cell's `objectValue` is NOT the `IOBluetoothDevice` (doesn't answer
+  `getDeviceClassMinor`), and the paired MT2's **`name` AND `displayName` are EMPTY in-process** — the pane
+  shows Apple's product-database name. So we match the MT2 row by the CoD-resolved paired-device label
+  (`refresh_mt2_label`, from `[IOBluetoothDevice pairedDevices]` filtered to major 5 / minor 0x25) OR the
+  product name "Magic Trackpad 2" the row shows. Residual: breaks only if a user renames the device to
+  something that is neither its resolved label nor contains "Magic Trackpad 2".
+- **Scope:** covers the **pane** (the deliverable). The BT **menu extra** / `BluetoothUIServer` were NOT
+  touched; if they ever want the icon they need their own delivery (and may use a different path than both
+  the vault and this view — re-RE before assuming).
+
+**(historical vault RE — accurate about the vault API, but it is NOT the pane-row path; kept for the other
+surfaces that do use the vault):**
 The device picture resolves in **`IOBluetoothUI.framework`**, class **`IOBluetoothDeviceImageVault`**:
 `imageForDevice:forMacTarget:` reads the device's **Class-of-Device** (`deviceClassMajor` /
 `deviceClassMinor`) → `imageForMajorDeviceClass:minorDeviceClass:forMacTarget:` → a **nested dict
