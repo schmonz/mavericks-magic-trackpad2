@@ -35,6 +35,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <ApplicationServices/ApplicationServices.h>
 #include "mt2_pane_sm.h"
+#include "mt2_single_load.h"
 
 #define LOG(...) syslog(LOG_NOTICE, "[MT2PaneRefresh] " __VA_ARGS__)
 
@@ -832,6 +833,10 @@ OSErr MT2InjectHandler(const AppleEvent *evt, AppleEvent *reply, long refcon) {
  * Install the didSelect swizzle immediately; capture happens on the next select. */
 __attribute__((constructor))
 static void mt2_image_loaded(void) {
+    if (!mt2_claim_single_load()) {
+        LOG("single-load guard: another payload copy already active in pid %d — bailing", getpid());
+        return;
+    }
     LOG("image loaded into pid %d", getpid());
     install_swizzle();
     /* Device-tied BT-pane icon: install the deviceIcon swizzle the moment IOBluetooth loads (the hook
