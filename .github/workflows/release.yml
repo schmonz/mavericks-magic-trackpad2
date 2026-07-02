@@ -20,11 +20,6 @@ name: release
 on:
   push:
     tags: ['v*']
-    # TEMPORARY: smoke-test the pipeline on this branch before it reaches the
-    # default branch (workflow_dispatch is only dispatchable once on default).
-    # The publish job is tag-gated, so branch pushes build+gate but never release.
-    # REMOVE this `branches:` line at merge; keep only tags + workflow_dispatch.
-    branches: ['macos26-crossbuild']
   workflow_dispatch:        # manual runs produce an artifact, not a release
 
 permissions:
@@ -117,6 +112,10 @@ jobs:
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
+          # Hyphenated (semver pre-release) tags -> marked prerelease; a clean
+          # tag like v1.0.0 -> full release. Until the kext is load-verified on
+          # 10.9.5, ship pre-release tags (e.g. v1.0.0-rc.1).
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/mt2d-*.pkg
             dist/latest.json
