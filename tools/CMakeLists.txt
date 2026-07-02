@@ -51,7 +51,11 @@ target_link_libraries(MT2PaneRefresh_dylib "-framework IOKit" "-framework CoreFo
 # the current working loader). Same -bundle binary, SIMBL-Info.plist, .bundle dir.
 add_library(MT2PaneRefresh_simbl MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c)
 target_include_directories(MT2PaneRefresh_simbl PRIVATE ${CMAKE_SOURCE_DIR}/src)
-set_target_properties(MT2PaneRefresh_simbl PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME MT2PaneRefresh)
+# Distinct output dir: MT2PaneRefresh (osax) also emits an unprefixed/unsuffixed
+# "MT2PaneRefresh" in tools/ -- same path => a parallel-build race where one target's
+# POST_BUILD bundle never gets assembled. Give SIMBL its own dir so the paths differ.
+set_target_properties(MT2PaneRefresh_simbl PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME MT2PaneRefresh
+  LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/simbl)
 target_link_libraries(MT2PaneRefresh_simbl "-framework IOKit" "-framework CoreFoundation" "-framework Carbon" objc)
 set(SIMBL_OUT ${CMAKE_BINARY_DIR}/MT2PaneRefresh.bundle)
 add_custom_command(TARGET MT2PaneRefresh_simbl POST_BUILD
