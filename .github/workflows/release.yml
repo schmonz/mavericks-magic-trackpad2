@@ -61,7 +61,11 @@ jobs:
         run: sh cmake/characterize_build.sh compare dist/characterization build
 
       - name: Unit tests (Rosetta)
-        run: ctest --test-dir build --output-on-failure
+        # Exclude test_re_bats: the `re` toolkit suite reverse-engineers 10.9 system
+        # frameworks (MultitouchSupport / MTDeviceCreateListForDriverType, symbolicated
+        # framework binaries) that don't exist on the macos-26 runner. It runs on the
+        # 10.9 dev box; here we validate the cross-built product's logic + portable tooling.
+        run: ctest --test-dir build --output-on-failure -E '^test_re_bats$'
 
       - name: Build .pkg (10.9.5 install floor)
         run: |
