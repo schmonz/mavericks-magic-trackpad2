@@ -60,6 +60,7 @@ static id gMagicArg  = NULL;   /* arg:  the object [arg armIterators] targets (t
 
 typedef void (*didSelect_t)(id, SEL);
 static didSelect_t     gOrigDidSelect = NULL;
+static didSelect_t     gOrigWillSelect = NULL;
 
 /* Original MTTrackpadController _checkBatteryTimer: — we call through then force the "Change
  * Batteries" button hidden (the MT2 has a sealed rechargeable battery; that AA-era control never
@@ -99,7 +100,7 @@ static int current_view_is_trackpad(void) {
  * battery via the real _magicTrackpadAction(connected). We OWN that selector (see my_magicAction),
  * so this is the only place it fires. */
 static void gOrigMagicAction_call(int connected);   /* fwd decl; defined with the swizzle */
-static void install_device_icon_swizzle(void);      /* fwd decl; device-tied BT-pane icon */
+static void install_device_icon_swizzle(const char *src);  /* fwd decl; device-tied BT-pane icon */
 static id (*gOrigDeviceIcon)(id, SEL) = NULL;        /* saved -[IOBluetoothDevice deviceIcon] */
 static id (*gOrigGetDeviceIcon)(id, SEL) = NULL;     /* saved -[IOBluetoothDevice getDeviceIcon] */
 static id (*gOrigImage)(id, SEL) = NULL;             /* saved -[IOBluetoothDevice image] (the row icon accessor) */
@@ -570,8 +571,17 @@ static void capture_pane(id self) {
     }
 }
 
+/* Swizzled -[NSPreferencePane willSelect] (fires BEFORE didSelect): install the image swizzle here,
+ * before the pane populates its device list, so the MT2 row's first draw already reads our art (no
+ * bowtie->trackpad flash). didSelect proved too late — the Bluetooth pane populates earlier. */
+static void my_willSelect(id self, SEL _cmd) {
+    install_device_icon_swizzle("willSelect");
+    if (gOrigWillSelect) gOrigWillSelect(self, _cmd);
+}
+
 /* Swizzled -[NSPreferencePane didSelect]: call through, then capture if Trackpad. */
 static void my_didSelect(id self, SEL _cmd) {
+    install_device_icon_swizzle("didSelect");   /* belt, in case willSelect didn't fire/was late */
     if (gOrigDidSelect) gOrigDidSelect(self, _cmd);
     const char *cn = object_getClassName(self);
     if (cn && strcmp(cn, "Trackpad") == 0) capture_pane(self);
@@ -724,7 +734,7 @@ static void aux_tick_start(void) {
     dispatch_source_set_timer(gAuxTick, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
                               (uint64_t)(1.5 * NSEC_PER_SEC), (uint64_t)(0.25 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gAuxTick, ^{
-        install_device_icon_swizzle();                   /* belt: ensure the image swizzle is in */
+        install_device_icon_swizzle("auxtick");          /* belt: ensure the image swizzle is in */
         kvo_refresh_mt2_icon(front_window_content(), 0);  /* re-read if swizzled after the pane bound it */
         if (access("/tmp/mt2_pane_dump", F_OK) == 0) {
             unlink("/tmp/mt2_pane_dump");
@@ -755,7 +765,7 @@ static id my_image(id self, SEL _cmd)         { return mt2_icon_for(self, gOrigI
  * deviceIcon returns 243x243 but the binding shows `image`). Swizzle `image` (the real accessor) so
  * the MT2 shows our trackpad art device-tied, consistent in every view/state like Magic Mouse; also
  * swizzle deviceIcon/getDeviceIcon for any direct/KVC callers. All scoped to the MT2 CoD (5,0x25). */
-static void install_device_icon_swizzle(void) {
+static void install_device_icon_swizzle(const char *src) {
     if (gOrigImage) return;
     Class c = objc_getClass("IOBluetoothDevice");
     if (!c) return;                                  /* IOBluetooth not loaded yet */
@@ -768,10 +778,10 @@ static void install_device_icon_swizzle(void) {
         method_setImplementation(md, (IMP)my_deviceIcon); }
     if (mg) { gOrigGetDeviceIcon = (id (*)(id, SEL))method_getImplementation(mg);
         method_setImplementation(mg, (IMP)my_getDeviceIcon); }
-    if (mi) LOG("bt-icon: swizzled IOBluetoothDevice image/deviceIcon (device-tied MT2 icon)");
+    if (mi) LOG("bt-icon: swizzled IOBluetoothDevice image/deviceIcon via %s (device-tied MT2 icon)", src);
 }
 static void mt2_dyld_added(const struct mach_header *mh, intptr_t slide) {
-    (void)mh; (void)slide; install_device_icon_swizzle();
+    (void)mh; (void)slide; install_device_icon_swizzle("dyld");
 }
 
 static void install_swizzle(void) {
@@ -784,7 +794,16 @@ static void install_swizzle(void) {
     gOrigDidSelect = (didSelect_t)method_getImplementation(m);
     method_setImplementation(m, (IMP)my_didSelect);
     LOG("swizzled -[NSPreferencePane didSelect]");
-    install_device_icon_swizzle();   /* device-tied BT-pane MT2 icon (if IOBluetooth already loaded) */
+    /* Also swizzle willSelect (fires before didSelect) so the image swizzle is in before the Bluetooth
+     * pane populates its device list — kills the first-open icon flash. */
+    SEL wsel = sel_registerName("willSelect");
+    Method wm = class_getInstanceMethod(c, wsel);
+    if (wm && !gOrigWillSelect) {
+        gOrigWillSelect = (didSelect_t)method_getImplementation(wm);
+        method_setImplementation(wm, (IMP)my_willSelect);
+        LOG("swizzled -[NSPreferencePane willSelect]");
+    }
+    install_device_icon_swizzle("inject");   /* device-tied BT-pane MT2 icon (if IOBluetooth already loaded) */
 }
 
 /* OSAX entry point named in Info.plist (OSAXHandlers Events MT2xload Handler). Put a MARKER in the
