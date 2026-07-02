@@ -385,21 +385,37 @@ static void find_battery_row(id view, int depth, id *ctl, id *pctField, id *stat
 static int gUsbBattPainted = 0;   /* we unhid the row for USB (so we re-hide it on -> NoTrackpad) */
 
 /* Called from the tick with the window root. state==PSM_USB: read (throttled 30 s) + paint.
- * Leaving USB: ->NONE re-hides the row (NoTrackpad must not show battery); ->BT just stops
- * painting (Apple's own BT render owns the row again and repaints real BT values). */
+ * Leaving USB (one-shot, gUsbBattPainted->0): ->NONE re-hides the row (NoTrackpad must not show
+ * battery); ->BT strips our "NN% (charging)" USB text down to a clean "NN%". (Earlier this branch
+ * assumed Apple re-renders the row on ->BT, but on a LIVE transport switch it does NOT — the pane
+ * only re-lays-out the battery row on a full load — so our charging text lingered. On BT the device
+ * is on battery, never charging, so "NN%" is correct and matches Apple's next full-load render.) */
 static void usb_battery_tick(id root) {
     static time_t lastRead = 0;
     static int pct = -1, charging = 0;
     if (gPsm != PSM_USB) {
-        if (gUsbBattPainted && gPsm == PSM_NONE) {
+        if (gUsbBattPainted && gPsm != PSM_HOLD) {   /* HOLD: keep the display through the window */
             id ctl = NULL, pf = NULL, sl = NULL;
             find_battery_row(root, 0, &ctl, &pf, &sl);
-            id vs[3] = { ctl, pf, sl };
-            for (int i = 0; i < 3; i++) if (vs[i])
-                ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 1);
-            LOG("usb-battery: row re-hidden (left USB -> NoTrackpad)");
+            if (gPsm == PSM_NONE) {
+                id vs[3] = { ctl, pf, sl };
+                for (int i = 0; i < 3; i++) if (vs[i])
+                    ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 1);
+                LOG("usb-battery: row re-hidden (left USB -> NoTrackpad)");
+            } else if (pf && pct >= 0) {             /* -> BT: strip the '(charging)' residue */
+                char label[48];
+                snprintf(label, sizeof(label), "%d%%", pct);
+                CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
+                if (s) {
+                    ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
+                    CFRelease(s);
+                    ((void (*)(id, SEL))objc_msgSend)(pf, sel_registerName("sizeToFit"));
+                }
+                if (ctl) ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)pct / 100.0f);
+                LOG("usb-battery: handed row to BT (stripped '(charging)', %s)", label);
+            }
         }
-        if (gPsm != PSM_HOLD) { gUsbBattPainted = 0; lastRead = 0; }   /* HOLD: keep display through the window */
+        if (gPsm != PSM_HOLD) { gUsbBattPainted = 0; lastRead = 0; }
         return;
     }
     time_t now = time(NULL);
