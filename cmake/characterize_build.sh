@@ -114,7 +114,9 @@ case "${1:-}" in
     cmp_tmp=$(mktemp -d "${TMPDIR:-/tmp}/mt2-char.XXXXXX")
     emit "$cmp_bd" "$cmp_tmp"            # dies if the candidate can't be fully measured
     assert_gated_present "$cmp_tmp"
-    if diff -ru -x '*.info' "$cmp_ref" "$cmp_tmp" > "$cmp_tmp.diff" 2>&1; then
+    # Exclude advisory .info + filesystem turds (AppleDouble ._*, .DS_Store) that
+    # NFS/AFP sprinkles into the reference dir -- never gated content.
+    if diff -ru -x '*.info' -x '._*' -x '.DS_Store' "$cmp_ref" "$cmp_tmp" > "$cmp_tmp.diff" 2>&1; then
       echo "EQUIVALENT: $cmp_bd matches native reference $cmp_ref"
     else
       echo "DIVERGENCE: $cmp_bd differs from native reference $cmp_ref" >&2
