@@ -8,7 +8,8 @@ function(mt2_ctest name)
 endfunction()
 
 foreach(t test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle
-          test_session test_connect_sm test_pane_sm test_conn_trace test_usb_reframe test_genuine_host test_coordinator)
+          test_session test_connect_sm test_pane_sm test_conn_trace test_usb_reframe test_genuine_host test_coordinator
+          test_battery)
   mt2_ctest(${t})
 endforeach()
 

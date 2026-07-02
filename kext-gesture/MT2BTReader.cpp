@@ -26,6 +26,7 @@
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
  * with C++ linkage on both sides — no extern "C". */
 #include "mt2_bt_decode.h"
+#include "mt2_battery.h"    /* mt2_parse_battery_report — shared pure decode of report 0x90 */
 #include "mt2_pipeline.h"   /* MT2_EVENT_DRIVEN */
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
@@ -48,6 +49,11 @@ extern "C" {
 #define GMRINFO_SLOT_INDEX (MT2_VT_getMultitouchReportInfo / sizeof(void *))  /* LENGTH probe (1st) */
 /* Clone span: must cover the highest dispatched slot (>= 0xd78) + margin. Generous fixed span. */
 #define BNB_VTABLE_SPAN  0x2000
+
+/* Battery poll cadence (ms). The MT2 only answers a GET_REPORT(0x90) — it never streams battery —
+ * so the control reader polls on this interval once the connection is settled. A battery moves
+ * slowly; 30 s keeps the prefpane number fresh without churning the control channel. */
+#define MT2_BATTERY_POLL_MS  30000
 
 /* Set by com_schmonz_MT2Gesture::start (same kext). */
 extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
@@ -82,6 +88,15 @@ static IOService *gInterruptReader = 0;
 static void *gOrigCb = 0;
 static IOService *gOrigTarget = 0;
 static IOBluetoothL2CAPChannel *gInterposedChannel = 0;
+
+/* Battery poll: the CONTROL channel (PSM 17) delegate, interposed SEPARATELY from the interrupt one
+ * so the interrupt shim's gOrigCb (used to forward touch frames / inject the create-trigger) is never
+ * clobbered. Our control shim forwards EVERY control PDU to BNB's original (the control plane must stay
+ * intact) and only peeks report 0x90 responses to our GET_REPORT(0x90) poll. Single genuine device, so
+ * file-static globals mirror gGenuineBnb/gOrigCb. */
+static void *gCtrlOrigCb = 0;
+static IOService *gCtrlOrigTarget = 0;
+static IOBluetoothL2CAPChannel *gCtrlInterposedChannel = 0;
 
 /* BNB geometry: our transport instance's cloned vtable. */
 static vtc_clone_t gBnbVtableClone;
@@ -165,6 +180,16 @@ static void mt2_publish_battery(IOService *bnb, uint8_t pct) {
     MT2_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
 }
 
+/* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), publish its capacity
+ * on the genuine BNB node. Shared by both channel shims; the pure parse is host-tested
+ * (tests/test_battery.c). No-op when there is no genuine node or the packet isn't 0x90. */
+static void mt2_maybe_publish_battery(const void *data, size_t len) {
+    if (!gGenuineBnb) return;
+    uint8_t pct;
+    if (mt2_parse_battery_report((const uint8_t *)data, len, &pct))
+        mt2_publish_battery(gGenuineBnb, pct);
+}
+
 /* Diagnostic: log each DISTINCT report id the shim sees, once. On a load this reveals whether the
  * battery report 0x90 actually arrives on the interrupt channel (passive watch works) or not (we'd
  * need to poll it). Cheap — the device streams only a handful of distinct ids. */
@@ -186,11 +211,12 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     size_t rlen = length;
     if (length > 0 && b[0] == 0xA1) { rep = b + 1; rlen = length - 1; }   /* strip transport byte */
 
-    /* Battery: publish the Apple Power-Device report id 0x90 capacity as "BatteryPercent" for the
-     * prefpane. A distinct report id from the multitouch stream (0x31), so it never disturbs the touch
-     * decode below. The diagnostic logs which ids arrive (confirms 0x90 streams passively). */
+    /* Battery: the MT2 does NOT stream report 0x90 on the interrupt channel (proven — this never
+     * fired), so battery is polled on the CONTROL channel (bt_control_shim + the poll timer). This
+     * peek is kept as a cheap safety net in case a firmware ever pushes it here; distinct id from the
+     * multitouch stream (0x31), so it never disturbs the touch decode below. */
     if (rlen > 0) mt2_diag_report_id(rep[0]);
-    if (rlen >= 3 && rep[0] == 0x90 && gGenuineBnb) mt2_publish_battery(gGenuineBnb, rep[2]);
+    mt2_maybe_publish_battery(rep, rlen);
 
     touch_frame_t tf;
     int drc = mt2_bt_decode(rep, rlen, &tf);
@@ -219,6 +245,26 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
         gActiveMT2Gesture->setBnbTarget(amd);
         gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
     }
+}
+
+/* Delegate-callback ABI: IOBluetoothL2CAPChannel::newDataIn invokes (channel+0x110) as
+ * cb(target, channel, length, data), target read from channel+0x118. */
+typedef void (*bt_l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
+
+/* CONTROL-channel (PSM 17) delegate shim. Unlike the interrupt shim (which consumes touch frames),
+ * this is peek-and-forward: BNB owns the control plane, so EVERY PDU must reach BNB's original
+ * callback unchanged. We only sniff GET_REPORT(0x90) responses ([0xA1][0x90][flags][cap]) to publish
+ * the battery %. Runs in the control channel's BT workloop (newDataIn context). */
+static void bt_control_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
+                            unsigned short length, void *data) {
+    (void)target;
+    const uint8_t *b = (const uint8_t *)data;
+    /* Log distinct ids seen on control (confirmed the battery 0x90 response arrives here, not on the
+     * interrupt channel). Strip the 0xA1 transport byte for the id, matching the interrupt diag. */
+    if (length > 0) mt2_diag_report_id((length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
+    mt2_maybe_publish_battery(data, length);
+    /* Forward to BNB's real delegate — the control plane depends on seeing every PDU. */
+    if (gCtrlOrigCb) ((bt_l2cap_cb_t)gCtrlOrigCb)(gCtrlOrigTarget, channel, length, data);
 }
 
 /* Runs in-gate (the channel's Bluetooth workloop): the only place IOBluetoothFamily
@@ -374,6 +420,16 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
              * genuine AMD copies the device's real USB iProduct descriptor ("Magic Trackpad"). */
             OSString *prod = OSString::withCString("Magic Trackpad 2");
             if (prod) { fManualBnb->setProperty("Product", prod); prod->release(); }
+            /* Battery display gate: the Trackpad pane reads battery via
+             * -[AppleBluetoothHIDDevice withBluetoothDevice:], whose initWithHIDDevice: (IOBluetooth
+             * @0x114d8) does `if (IORegistryEntryCreateCFProperty(node,"ExtendedFeatures")==nil){dealloc;
+             * return nil;}` — so with no ExtendedFeatures the wrapper is nil and batteryPercent returns 0
+             * REGARDLESS of our published BatteryPercent (RE'd 2026-07-01, tools/mt2_panebattery_probe).
+             * Genuine MT1 sets it from real extended feature reports; the MT2 has none. Publish a
+             * present-but-empty dict purely to pass that presence gate — batteryPercent then reads our
+             * "BatteryPercent" off this same node (it does not consult the dict's contents). */
+            OSDictionary *ef = OSDictionary::withCapacity(1);
+            if (ef) { fManualBnb->setProperty("ExtendedFeatures", ef); ef->release(); }
             bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, fManualBnb, 0, 0);
         } else {
             IOLog("MT2BTReader: manual BNBTrackpadDevice host start FAILED\n");
@@ -442,6 +498,48 @@ IOReturn com_schmonz_MT2BTReader::restoreInGate(OSObject * /*owner*/, void *arg0
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
     void **cbslot = (void **)((uint8_t *)ch + L2CAP_DELEGATE_CB_OFF);
     if (*cbslot == (void *)&bt_interpose_shim && gOrigCb) *cbslot = gOrigCb;
+    return kIOReturnSuccess;
+}
+
+/* In the CONTROL channel's gate: save BNB's control-channel delegate and swap in bt_control_shim,
+ * so we can sniff GET_REPORT(0x90) responses. Same save-and-swap as interposeInGate but on separate
+ * globals (gCtrlOrigCb/…). arg0 = the control channel (the control reader's own fChannel). Returns
+ * NotReady until BNB has populated the slot. */
+IOReturn com_schmonz_MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, void *arg0,
+                                                         void * /*a1*/, void * /*a2*/, void * /*a3*/) {
+    IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
+    uint8_t *c = (uint8_t *)ch;
+    void **cbslot = (void **)(c + L2CAP_DELEGATE_CB_OFF);
+    void *cur = *cbslot;
+    if (!cur || cur == (void *)&bt_control_shim) return kIOReturnNotReady;   /* not set yet / already ours */
+    gCtrlOrigCb = cur;
+    gCtrlOrigTarget = (IOService *)*(void **)(c + L2CAP_DELEGATE_CB_OFF + 8); /* +0x118 target */
+    *cbslot = (void *)&bt_control_shim;
+    gCtrlInterposedChannel = ch;
+    IOLog("MT2BTReader: battery control interpose installed (origCb=%p origTgt=%p)\n",
+          gCtrlOrigCb, gCtrlOrigTarget);
+    return kIOReturnSuccess;
+}
+
+/* In-gate: restore BNB's original control-channel callback before we tear down. arg0 = channel. */
+IOReturn com_schmonz_MT2BTReader::controlRestoreInGate(OSObject * /*owner*/, void *arg0,
+                                                       void * /*a1*/, void * /*a2*/, void * /*a3*/) {
+    IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
+    void **cbslot = (void **)((uint8_t *)ch + L2CAP_DELEGATE_CB_OFF);
+    if (*cbslot == (void *)&bt_control_shim && gCtrlOrigCb) *cbslot = gCtrlOrigCb;
+    return kIOReturnSuccess;
+}
+
+/* In the CONTROL channel's gate: poll the battery. HIDP GET_REPORT(Input, report 0x90) = the 2-byte
+ * request { 0x41, 0x90 } on the control channel (mirrors reEnableInGate's SET_REPORT enable). The
+ * device answers with [0xA1][0x90][flags][cap] on the same channel, which bt_control_shim catches.
+ * arg0 = the control reader; its fChannel is the PSM-17 control channel. */
+IOReturn com_schmonz_MT2BTReader::pollBatteryInGate(OSObject * /*owner*/, void *arg0,
+                                                    void * /*a1*/, void * /*a2*/, void * /*a3*/) {
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    if (!self || !self->fChannel) return kIOReturnNoDevice;
+    static const uint8_t kGetBattery[] = { MT2_HIDP_GET_REPORT_INPUT, MT2_BATTERY_REPORT_ID };
+    self->fChannel->sendTo((void *)kGetBattery, sizeof(kGetBattery), 0, self, 0, 0);
     return kIOReturnSuccess;
 }
 
@@ -526,22 +624,39 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
      * it to mouse mode (findings S2.11). self->fChannel is the control channel (this is the
      * control reader — the manual-start + this timer are armed only when fIsControl). */
     if (gInterposedChannel) {
-        if (self->fChannel) {
-            IOCommandGate *cg = ((IOBluetoothObject *)self->fChannel)->getCommandGate();
+        IOCommandGate *cg = self->fChannel
+            ? ((IOBluetoothObject *)self->fChannel)->getCommandGate() : 0;
+
+        /* Battery: install the CONTROL-channel interpose (once) so we can catch GET_REPORT(0x90)
+         * responses. Retry each tick until BNB has set its control delegate; idempotent. */
+        if (!gCtrlInterposedChannel && cg)
+            cg->runAction(&com_schmonz_MT2BTReader::controlInterposeInGate, self->fChannel);
+
+        if (self->fReEnableCount < 8) {
+            /* Phase 2a: re-send the 0xF1 enable on the control channel a few times to force the
+             * device back into multitouch mode after BNB's handleStart knocked it to mouse mode
+             * (findings S2.11). self->fChannel is the control channel (the manual-start + this timer
+             * are armed only when fIsControl). */
             if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
+            /* HANDLER_UP once the trigger has spawned BNB's AMD (visible at gGenuineBnb+0x1b0). */
+            if (gGenuineBnb) {
+                void *amd = *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF);
+                static int gHandlerConn = -1;
+                if (amd && gHandlerConn != gConnId) { gHandlerConn = gConnId;
+                    bt_conntrace(CSM_HANDLER_UP, CSM_EV_HANDLER_SPAWNED, 0, gGenuineBnb, amd, 0); }
+            }
+            if (++self->fReEnableCount == 8) {
+                IOLog("MT2BTReader: Path A re-enable phase done (%d sends)\n", self->fReEnableCount);
+                bt_conntrace(CSM_MT_MODE, CSM_EV_MT_MODE_CONFIRMED, self->fChannel, gGenuineBnb, 0, 0);
+            }
+            ts->setTimeoutMS(250);   /* ~2 s of re-enables, then transition to the battery poll */
+            return;
         }
-        /* HANDLER_UP once the trigger has spawned BNB's AMD (visible at gGenuineBnb+0x1b0). */
-        if (gGenuineBnb) {
-            void *amd = *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF);
-            static int gHandlerConn = -1;
-            if (amd && gHandlerConn != gConnId) { gHandlerConn = gConnId;
-                bt_conntrace(CSM_HANDLER_UP, CSM_EV_HANDLER_SPAWNED, 0, gGenuineBnb, amd, 0); }
-        }
-        if (++self->fReEnableCount < 8) ts->setTimeoutMS(250);  /* ~2 s of re-enables, then stop */
-        else {
-            IOLog("MT2BTReader: Path A re-enable phase done (%d sends)\n", self->fReEnableCount);
-            bt_conntrace(CSM_MT_MODE, CSM_EV_MT_MODE_CONFIRMED, self->fChannel, gGenuineBnb, 0, 0);
-        }
+
+        /* Phase 2b (steady state): poll the battery. bt_control_shim catches the response and
+         * publishes "BatteryPercent" for the prefpane. Slow cadence — a battery moves slowly. */
+        if (cg) cg->runAction(&com_schmonz_MT2BTReader::pollBatteryInGate, self);
+        ts->setTimeoutMS(MT2_BATTERY_POLL_MS);
         return;
     }
 
@@ -608,6 +723,14 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
         if (gate) gate->runAction(&com_schmonz_MT2BTReader::restoreInGate, gInterposedChannel);
         gInterposedChannel = 0;
         gOrigCb = 0; gOrigTarget = 0;
+    }
+    /* Battery: restore BNB's original control-channel delegate too (separate save-and-swap), so the
+     * about-to-be-freed bt_control_shim is never called. Same single-device global pattern. */
+    if (gCtrlInterposedChannel) {
+        IOCommandGate *gate = ((IOBluetoothObject *)gCtrlInterposedChannel)->getCommandGate();
+        if (gate) gate->runAction(&com_schmonz_MT2BTReader::controlRestoreInGate, gCtrlInterposedChannel);
+        gCtrlInterposedChannel = 0;
+        gCtrlOrigCb = 0; gCtrlOrigTarget = 0;
     }
     /* Path A: tear down the manually-started genuine BNBTrackpadDevice before we go away, or it
      * outlives the channel it was started on.

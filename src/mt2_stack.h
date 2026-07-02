@@ -65,6 +65,12 @@
 
 /* ---- BT device enable / mode / handler-create trigger ---------------------------------------- */
 #define MT2_HIDP_SET_REPORT_FEATURE      0x53   /* [BUILD] (SET_REPORT<<4)|FEATURE — raw-L2CAP HIDP */
+#define MT2_HIDP_GET_REPORT_INPUT        0x41   /* [BUILD] (GET_REPORT<<4)|INPUT — poll report over  */
+                                               /*   the control channel; response returns as        */
+                                               /*   0xA1(DATA|INPUT) id .. on the same channel.      */
+#define MT2_BATTERY_REPORT_ID            0x90   /* [BUILD] Apple Power-Device INPUT report:           */
+                                               /*   [0x90][flags][capacity 0-100]. See               */
+                                               /*   docs/mt-stack/battery-reporting.md.              */
 #define MT2_ENABLE_REPORT_ID             0xf1   /* [BUILD] MT2 enable feature report: 0xF1 0x02 0x01;*/
                                                /*   BNB bring-up resets to mouse mode after, so we  */
                                                /*   re-send it ~8x once both channels are OPEN.     */

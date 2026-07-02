@@ -1,9 +1,34 @@
-# MT2 battery reporting — findings + resume plan
+# MT2 battery reporting — findings + solution
 
-**Status (2026-07-01):** read side fully cracked + verified live on both transports; the userspace publish
-path is ruled out; the remaining work is a kext **poll** of report `0x90` on the BT control channel. This doc
-is the durable record + the resume guide. Companion memory note: `mt2-battery-reporting-plan`. Live probe:
-`tools/mt2_battery_probe.c` (committed).
+**Status (2026-07-01): ✅ COMPLETE — the BT prefpane shows a real battery % (verified 100% on-device).**
+Full chain: kext polls `GET_REPORT(0x90)` on the BT **control** channel, publishes `BatteryPercent` (+ an
+`ExtendedFeatures` gate-property) on the `BNBTrackpadDevice` node, and the pane reads it. This doc is the
+durable record. Companion memory note: `mt2-battery-reporting-plan`. Live probes: `tools/mt2_battery_probe.c`
+(raw device read), `tools/mt2_panebattery_probe.m` (replicates the pane's exact battery read = the oracle),
+`tools/mt2_hidnode_probe.c` (the pane's `IOServiceMatching("IOBluetoothHIDDriver")` node resolution).
+
+## ▶▶ THE SOLUTION (shipped)
+1. **Poll** (kext, `MT2BTReader.cpp`): the device never streams `0x90`; it only answers a poll. So the control
+   reader interposes the **control channel's** L2CAP delegate (`bt_control_shim`, separate globals from the
+   interrupt interpose, peek-and-forward so BNB's control plane is untouched) and, after the re-enable burst,
+   sends `GET_REPORT(Input,0x90)` = `{0x41,0x90}` on a 30 s timer. The device answers `A1 90 <flags> <cap>` on
+   the control channel; the shim catches it and publishes.
+2. **Publish** (kext): `fManualBnb->setProperty("BatteryPercent", OSNumber(cap,32))` on change. The shared pure
+   decode is `mt2_parse_battery_report` (`src/mt2_battery.c`, host-tested `tests/test_battery.c`).
+3. **The `ExtendedFeatures` gate** (the non-obvious part — RE'd via `mt2_panebattery_probe`): publishing
+   `BatteryPercent` alone was NOT enough — the pane still showed 0%. The pane's
+   `-[AppleBluetoothHIDDevice initWithHIDDevice:]` (IOBluetooth @0x114d8) does
+   `if (IORegistryEntryCreateCFProperty(node,"ExtendedFeatures")==nil){[self dealloc]; return nil;}` — so with
+   no `ExtendedFeatures` the wrapper is nil and `batteryPercent` returns 0 **regardless** of `BatteryPercent`.
+   Genuine MT1 sets `ExtendedFeatures` from real extended feature reports; the MT2 has none. Fix = publish a
+   present-but-empty `ExtendedFeatures` OSDictionary on the node (in `start()`, alongside the `Product` seed)
+   purely to pass that presence gate. `batteryPercent` does NOT read the dict's contents — it reads
+   `BatteryPercent` off the same node and returns it as a 0.0–1.0 fraction (100 → 1.0 = full).
+   BT-only (the USB pane has no battery row); USB parity would be separate.
+
+---
+
+## (history) read-side findings + earlier resume plan
 
 ## Goal
 Make the Trackpad prefpane's Bluetooth battery row show a real percentage (today it reads 0% — a placeholder).

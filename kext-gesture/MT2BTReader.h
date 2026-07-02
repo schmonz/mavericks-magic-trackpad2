@@ -47,6 +47,13 @@ public:
     static IOReturn interposeInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
     /* In-gate: restore BNB's original callback before we tear down. arg0 = channel. */
     static IOReturn restoreInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
+    /* Battery: interpose/restore BNB's CONTROL-channel (PSM 17) delegate — separate from the
+     * interrupt interpose — so we can sniff GET_REPORT(0x90) responses. arg0 = the control channel. */
+    static IOReturn controlInterposeInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
+    static IOReturn controlRestoreInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
+    /* In the CONTROL channel's gate: send a HIDP GET_REPORT(Input, 0x90) battery poll. arg0 = the
+     * control reader (self); its fChannel is the PSM-17 control channel. */
+    static IOReturn pollBatteryInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
     /* In the CONTROL channel's gate: re-send the 0xF1 multitouch enable. BNB's handleStart
      * resets the device to mouse mode (report 0x02) after our initial enable; re-sending forces
      * it back to multitouch (report 0x31). arg0 = the control reader (self). */
