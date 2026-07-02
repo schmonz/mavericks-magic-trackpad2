@@ -31,13 +31,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Determine version
+      - name: Determine version (from CMake MT2_VERSION — single source of truth)
         id: ver
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=0.0.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          VER=$(grep -m1 'set(MT2_VERSION' CMakeLists.txt | sed -E 's/.*"([^"]+)".*/\1/')
+          [ -n "$VER" ] || { echo "::error::could not read MT2_VERSION from CMakeLists.txt"; exit 1; }
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          # On a tag build, enforce that the tag matches the CMake version so the
+          # release name and the pkg version can never drift.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$VER" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} != v$VER (CMakeLists MT2_VERSION); keep them in sync"
+            exit 1
           fi
 
       - name: Ensure Rosetta (x86_64 @ 10.9 tests run under it)
@@ -69,9 +73,7 @@ jobs:
 
       - name: Build .pkg (10.9.5 install floor)
         run: |
-          cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}" \
-            -DMT2_PKG_VERSION="${{ steps.ver.outputs.version }}"
-          cmake --build build --target pkg
+          cmake --build build --target pkg   # version derives from CMake MT2_VERSION
           echo "floor check:"; pkgutil --expand "build/mt2d-${{ steps.ver.outputs.version }}.pkg" /tmp/pkgx
           grep -o 'os-version min="[0-9.]*"' /tmp/pkgx/Distribution
 
@@ -112,10 +114,11 @@ jobs:
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          # Hyphenated (semver pre-release) tags -> marked prerelease; a clean
-          # tag like v1.0.0 -> full release. Until the kext is load-verified on
-          # 10.9.5, ship pre-release tags (e.g. v1.0.0-rc.1).
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          # Pre-release if the tag has a -suffix OR is a v0.x (pre-1.0, unstable by
+          # semver convention). A clean v1.0.0+ -> full release. So v0.1.0 ships as a
+          # prerelease now; the eventual v1.0.0 (after the 10.9.5 load-test) is a real
+          # release automatically -- no manual toggling.
+          prerelease: ${{ contains(github.ref_name, '-') || startsWith(github.ref_name, 'v0.') }}
           files: |
             dist/mt2d-*.pkg
             dist/latest.json

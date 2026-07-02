@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
-project(mt2 VERSION 1.0.0 LANGUAGES C CXX)
+
+# Single source of truth for the product version. May carry a pre-release suffix
+# (e.g. -pre.1 / -rc.1) that CMake's project(VERSION) can't hold, so keep the full
+# string here and feed project() only the numeric part. The .pkg name + version and
+# CI all derive from MT2_VERSION -- bump it here, tag v<MT2_VERSION> to match.
+set(MT2_VERSION "0.1.0")
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MT2_VERSION_NUMERIC "${MT2_VERSION}")
+project(mt2 VERSION ${MT2_VERSION_NUMERIC} LANGUAGES C CXX)
 
 # Native 10.9 build for now; Project B adds the modern-SDK cross-build on top.
 if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)

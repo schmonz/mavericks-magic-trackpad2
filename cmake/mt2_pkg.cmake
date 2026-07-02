@@ -2,11 +2,11 @@
 # Makefile `pkg` target. Unsigned kext -> /usr/local/lib/mt2d (NOT /Library/Extensions,
 # which enforces signing); the launchd wrapper kextloads it from there.
 set(PKGROOT ${CMAKE_BINARY_DIR}/pkgroot)
-# Version stamped into the pkg name + component. Defaults to the project version;
-# CI overrides it from the git tag with -DMT2_PKG_VERSION=<x> so the artifact is
-# named mt2d-<tag>.pkg directly (no post-build rename).
+# Version stamped into the pkg name + component: the single source of truth,
+# MT2_VERSION (full string incl. any pre-release suffix). Still overridable via
+# -DMT2_PKG_VERSION for one-off builds.
 if(NOT MT2_PKG_VERSION)
-  set(MT2_PKG_VERSION ${PROJECT_VERSION})
+  set(MT2_PKG_VERSION ${MT2_VERSION})
 endif()
 set(PKG_OUT ${CMAKE_BINARY_DIR}/mt2d-${MT2_PKG_VERSION}.pkg)
 add_custom_target(pkg
