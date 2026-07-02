@@ -76,6 +76,19 @@ add_custom_command(OUTPUT ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
   COMMENT "Assembling MT2Gesture.kext")
 add_custom_target(kext ALL DEPENDS ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture)
 
+# Always characterize the freshly-built kext (sub-second; no need to remember).
+# NATIVE 10.9 dev box (MT2_MACOSX_10_9_SDK unset): refresh the committed cross-build
+# equivalence reference at dist/characterization/ so it stays current -- it just
+# shows up in `git status` to commit before you tag a release. MODERN cross-build:
+# the release workflow runs `characterize_build.sh compare` as the publish gate
+# (.github/workflows/release.yml) instead of overwriting the native reference.
+if(NOT MT2_MACOSX_10_9_SDK)
+  add_custom_command(TARGET kext POST_BUILD
+    COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/characterize_build.sh emit
+            ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/dist/characterization
+    COMMENT "Refreshing kext cross-build equivalence reference (dist/characterization)")
+endif()
+
 # Operational load/unload (ports kext-gesture/Makefile load/unload). The multi-step
 # load (stage root:wheel in /tmp, Apple kexts first, then ours) lives in cmake/dev_kext.sh
 # so the `|| true` tolerance + sequencing stay correct (CMake's COMMAND can't express
