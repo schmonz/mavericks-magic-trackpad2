@@ -14,31 +14,40 @@ BOOL mt2_should_inject(NSString *bundleID) {
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 
-// Send the MT2x/load Apple event to pid, retrying (the app's AppleEvent machinery may
-// not be ready the instant it launches). Phase 0 proved this loads the osax (in
-// /Library/ScriptingAdditions) and runs its constructor. kAENeverInteract: never block
-// on a UI prompt. The retry loop is our "wait until the app is ready" — if it proves
-// insufficient on-device, escalate to KVO on -[NSRunningApplication finishedLaunching].
+// Send the MT2x/load Apple event to pid, retrying until the osax CONFIRMS it loaded.
+//
+// The load race: a plain noErr is NOT proof of load. When our OSAX handler isn't registered yet
+// (right after a reinstall, before OpenScripting rescans /Library/ScriptingAdditions), the event
+// falls to System Prefs' default handler, which also returns noErr -> false-positive "injected", and
+// the osax never loads. So we require our handler's reply MARKER (MT2InjectHandler puts it), and keep
+// sending — OpenScripting's first unhandled event kicks off the additions scan/load asynchronously,
+// so a later retry hits our now-registered handler. 40 tries x 250ms ~= 10s covers the rescan.
+#define MT2_INJECT_MARKER 0x4D543258  /* 'MT2X'; must match MT2InjectHandler */
 static void inject(pid_t pid) {
-    OSStatus err = procNotFound;
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 40; i++) {
+        OSStatus err = procNotFound;
+        Boolean confirmed = false;
         AEAddressDesc target = { typeNull, NULL };
-        err = AECreateDesc(typeKernelProcessID, &pid, sizeof(pid), &target);
-        if (err == noErr) {
+        if (AECreateDesc(typeKernelProcessID, &pid, sizeof(pid), &target) == noErr) {
             AppleEvent evt = { typeNull, NULL }, reply = { typeNull, NULL };
-            err = AECreateAppleEvent('MT2x', 'load', &target,
-                                     kAutoGenerateReturnID, kAnyTransactionID, &evt);
-            if (err == noErr) {
+            if (AECreateAppleEvent('MT2x', 'load', &target,
+                                   kAutoGenerateReturnID, kAnyTransactionID, &evt) == noErr) {
                 err = AESendMessage(&evt, &reply, kAEWaitReply | kAENeverInteract, kAEDefaultTimeout);
+                if (err == noErr) {
+                    SInt32 marker = 0; DescType dt = 0; Size sz = 0;
+                    if (AEGetParamPtr(&reply, keyDirectObject, typeSInt32, &dt,
+                                      &marker, sizeof(marker), &sz) == noErr && marker == MT2_INJECT_MARKER)
+                        confirmed = true;
+                }
                 AEDisposeDesc(&reply);
             }
             AEDisposeDesc(&evt);
         }
         AEDisposeDesc(&target);
-        if (err == noErr) { NSLog(@"[mt2panewatch] injected pid %d (try %d)", pid, i + 1); return; }
-        usleep(250000);  // 250ms; up to 12 tries ~= 3s of settling
+        if (confirmed) { NSLog(@"[mt2panewatch] injected+confirmed pid %d (try %d)", pid, i + 1); return; }
+        usleep(250000);  // 250ms
     }
-    NSLog(@"[mt2panewatch] inject FAILED for pid %d (last err %d)", pid, (int)err);
+    NSLog(@"[mt2panewatch] inject NOT CONFIRMED for pid %d after 40 tries", pid);
 }
 
 int main(void) {

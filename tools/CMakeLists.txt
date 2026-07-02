@@ -30,7 +30,7 @@ set(OSAX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mt2_prefpane_refresh)
 add_library(MT2PaneRefresh MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c)
 target_include_directories(MT2PaneRefresh PRIVATE ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(MT2PaneRefresh PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME MT2PaneRefresh)
-target_link_libraries(MT2PaneRefresh "-framework IOKit" "-framework CoreFoundation" objc)
+target_link_libraries(MT2PaneRefresh "-framework IOKit" "-framework CoreFoundation" "-framework Carbon" objc)
 # Assemble MT2PaneRefresh.osax/Contents/{MacOS,Info.plist}
 set(OSAX_OUT ${CMAKE_BINARY_DIR}/MT2PaneRefresh.osax)
 add_custom_command(TARGET MT2PaneRefresh POST_BUILD
@@ -45,14 +45,14 @@ target_include_directories(MT2PaneRefresh_dylib PRIVATE ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(MT2PaneRefresh_dylib PROPERTIES
   PREFIX "" OUTPUT_NAME MT2PaneRefresh SUFFIX ".dylib"
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-target_link_libraries(MT2PaneRefresh_dylib "-framework IOKit" "-framework CoreFoundation" objc)
+target_link_libraries(MT2PaneRefresh_dylib "-framework IOKit" "-framework CoreFoundation" "-framework Carbon" objc)
 
 # Same payload packaged as a SIMBL plugin bundle (SIMBLAgent injects it at launch —
 # the current working loader). Same -bundle binary, SIMBL-Info.plist, .bundle dir.
 add_library(MT2PaneRefresh_simbl MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c)
 target_include_directories(MT2PaneRefresh_simbl PRIVATE ${CMAKE_SOURCE_DIR}/src)
 set_target_properties(MT2PaneRefresh_simbl PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME MT2PaneRefresh)
-target_link_libraries(MT2PaneRefresh_simbl "-framework IOKit" "-framework CoreFoundation" objc)
+target_link_libraries(MT2PaneRefresh_simbl "-framework IOKit" "-framework CoreFoundation" "-framework Carbon" objc)
 set(SIMBL_OUT ${CMAKE_BINARY_DIR}/MT2PaneRefresh.bundle)
 add_custom_command(TARGET MT2PaneRefresh_simbl POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory ${SIMBL_OUT}/Contents/MacOS
@@ -73,6 +73,11 @@ add_custom_target(prefpane-refresh-simbl DEPENDS MT2PaneRefresh_simbl)
 add_custom_target(prefpane-refresh-install
   COMMAND sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
   COMMAND sudo cp -R ${OSAX_OUT} /Library/ScriptingAdditions/
+  # Force OpenScripting to re-scan /Library/ScriptingAdditions so our (re)installed handler is
+  # registered BEFORE the next System Preferences launch. Without this the OSA additions cache is
+  # stale after a bundle change, our MT2x/load event falls to the default handler, and the osax
+  # doesn't load until a *later* launch (the "needs 2-3 relaunches" race).
+  COMMAND sh -c "osascript -e 'return 1' >/dev/null 2>&1 || true"
   COMMAND ${CMAKE_COMMAND} -E echo "Installed /Library/ScriptingAdditions/MT2PaneRefresh.osax"
   COMMENT "Installing MT2PaneRefresh.osax")
 add_dependencies(prefpane-refresh-install MT2PaneRefresh)

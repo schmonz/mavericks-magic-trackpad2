@@ -47,6 +47,9 @@ else
     # Standalone route: the osax (already staged to /Library/ScriptingAdditions) + our per-user
     # launch-watcher LaunchAgent. Auto-loads at next login; also load into the current GUI session so
     # the feature works without a logout. We do NOT touch SIMBL.
+    # Force an OpenScripting additions rescan so our just-installed handler is registered before the
+    # next System Preferences launch (else the osax won't load until a later launch).
+    osascript -e "return 1" >/dev/null 2>&1 || true
     if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
         sudo -u "$CONSOLE_USER" launchctl unload "$AGENT" 2>/dev/null || true
         sudo -u "$CONSOLE_USER" launchctl load -w "$AGENT" 2>/dev/null || true

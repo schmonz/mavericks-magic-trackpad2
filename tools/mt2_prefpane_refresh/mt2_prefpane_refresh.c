@@ -28,6 +28,7 @@
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <time.h>
+#include <mach-o/dyld.h>
 #include <IOKit/IOKitLib.h>
 #include <IOKit/hid/IOHIDManager.h>
 #include <IOKit/hid/IOHIDDevice.h>
@@ -98,7 +99,10 @@ static int current_view_is_trackpad(void) {
  * battery via the real _magicTrackpadAction(connected). We OWN that selector (see my_magicAction),
  * so this is the only place it fires. */
 static void gOrigMagicAction_call(int connected);   /* fwd decl; defined with the swizzle */
-static void paint_device_icon(id view, int depth);  /* fwd decl; BT-pane MT2 device-row icon */
+static void install_device_icon_swizzle(void);      /* fwd decl; device-tied BT-pane icon */
+static id (*gOrigDeviceIcon)(id, SEL) = NULL;        /* saved -[IOBluetoothDevice deviceIcon] */
+static id (*gOrigGetDeviceIcon)(id, SEL) = NULL;     /* saved -[IOBluetoothDevice getDeviceIcon] */
+static id (*gOrigImage)(id, SEL) = NULL;             /* saved -[IOBluetoothDevice image] (the row icon accessor) */
 static void perform(psm_action_t a) {
     if (!gPane) return;
     switch (a) {
@@ -480,12 +484,9 @@ static void hide_battery_button_now(void) {
     id win = ((id (*)(id, SEL))objc_msgSend)(mv, sel_registerName("window"));
     id root = win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : mv;
     if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; usb_battery_tick(root); }
-    if (root && access("/tmp/mt2_pane_dump", F_OK) == 0) {
-        unlink("/tmp/mt2_pane_dump");
-        LOG("tree dump BEGIN (flag /tmp/mt2_pane_dump)");
-        dump_view_tree(root, 0);
-        LOG("tree dump END");
-    }
+    /* NB: the /tmp/mt2_pane_dump view-tree dump lives ONLY in the aux tick (front window) so it works
+     * on any pane, incl. Bluetooth; a second trigger here would consume the flag first on the Trackpad
+     * pane and dump the wrong window. */
 }
 
 /* Swizzled _checkBatteryTimer:: let the pane update the level/label as usual, then re-hide the
@@ -625,50 +626,16 @@ static id mt2_trackpad_image(void) {
  * the MT2 row's NSImageView.image directly to Apple's trackpad art — same "own the real view"
  * approach as the battery row. Re-asserted each aux tick (the pane repopulates on device edges). */
 
-/* The MT2's row-display label, recomputed each paint: the CoD-identified (major 5, minor 0x25)
- * paired device's name, or its address string if nameless. This is exactly what the row's
- * NSTextField shows, so matching against it identifies the MT2 row robustly — no hardcoded name,
- * survives rename and the nameless-after-re-pair case ([[mt2-device-writable-name]]). The cell's
- * objectValue is NOT the IOBluetoothDevice (RE'd: it doesn't answer getDeviceClassMinor), hence the
- * paired-devices cross-reference rather than the cell. Empty when no MT2 is paired -> no match. */
-static char gMT2Label[64] = "";
-static void refresh_mt2_label(void) {
-    gMT2Label[0] = 0;
-    Class BTDev = objc_getClass("IOBluetoothDevice");
-    if (!BTDev) return;
-    id paired = ((id (*)(Class, SEL))objc_msgSend)(BTDev, sel_registerName("pairedDevices"));
-    unsigned long n = paired ? ((unsigned long (*)(id, SEL))objc_msgSend)(paired, sel_registerName("count")) : 0;
-    for (unsigned long i = 0; i < n; i++) {
-        id d = ((id (*)(id, SEL, unsigned long))objc_msgSend)(paired, sel_registerName("objectAtIndex:"), i);
-        int mj = ((int (*)(id, SEL))objc_msgSend)(d, sel_registerName("getDeviceClassMajor"));
-        int mn = ((int (*)(id, SEL))objc_msgSend)(d, sel_registerName("getDeviceClassMinor"));
-        if (mj != 5 || mn != 0x25) continue;
-        /* The row shows the device's DISPLAY name (what mt2_set_btname sets via setDisplayName:,
-         * "Magic Trackpad 2"); [name] is empty on the MT2 (nameless in pairedDevices). Try
-         * displayName -> name -> addressString, matching the pane's own row text. */
-        id s = responds(d, sel_registerName("displayName"))
-             ? ((id (*)(id, SEL))objc_msgSend)(d, sel_registerName("displayName")) : NULL;
-        unsigned long len = s ? ((unsigned long (*)(id, SEL))objc_msgSend)(s, sel_registerName("length")) : 0;
-        if (!len) { s = ((id (*)(id, SEL))objc_msgSend)(d, sel_registerName("name"));
-            len = s ? ((unsigned long (*)(id, SEL))objc_msgSend)(s, sel_registerName("length")) : 0; }
-        if (!len) s = ((id (*)(id, SEL))objc_msgSend)(d, sel_registerName("addressString"));
-        const char *cs = s ? ((const char *(*)(id, SEL))objc_msgSend)(s, sel_registerName("UTF8String")) : NULL;
-        if (cs) { strncpy(gMT2Label, cs, sizeof(gMT2Label) - 1); gMT2Label[sizeof(gMT2Label) - 1] = 0; }
-        return;
-    }
-}
-/* Does this cell's subtree contain the MT2 row's name field? Match the CoD-resolved device label
- * (gMT2Label, when the paired device exposes one — it's empty on this unit: name/displayName both
- * blank in-process) OR Apple's product-database name "Magic Trackpad 2" that the pane always shows
- * for this product. The product-name match is the reliable one here; the label match additionally
- * covers a user-renamed device once the metadata populates. */
+/* Does this cell's subtree contain an NSTextField reading "Magic Trackpad 2" — i.e. is it the MT2
+ * device row? (Apple's product-database name; the cell's objectValue is a dict, not the device, so
+ * we match the visible row text.) Used only to locate the row for the one-shot binding re-read. */
 static int cell_is_mt2(id v, int depth) {
     if (!v || depth > 6) return 0;
     Class tf = objc_getClass("NSTextField");
     if (tf && ((signed char (*)(id, SEL, Class))objc_msgSend)(v, sel_registerName("isKindOfClass:"), tf)) {
         id s = ((id (*)(id, SEL))objc_msgSend)(v, sel_registerName("stringValue"));
         const char *cs = s ? ((const char *(*)(id, SEL))objc_msgSend)(s, sel_registerName("UTF8String")) : NULL;
-        if (cs && ((gMT2Label[0] && strcmp(cs, gMT2Label) == 0) || strstr(cs, "Magic Trackpad 2"))) return 1;
+        if (cs && strstr(cs, "Magic Trackpad 2")) return 1;
     }
     id subs = ((id (*)(id, SEL))objc_msgSend)(v, sel_registerName("subviews"));
     unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
@@ -678,35 +645,37 @@ static int cell_is_mt2(id v, int depth) {
     return 0;
 }
 
-/* Walk the window; for the MT2 device row, set its icon NSImageView (the cell's direct-child
- * NSImageView — the 16x16 one is nested under a button, so a direct-child scan picks the device
- * icon) to our trackpad art. */
-static void paint_device_icon(id view, int depth) {
-    if (!view || depth > 16) return;
+/* The image swizzle may install AFTER the pane already bound the row icons (the osax loads once the
+ * pane is up), so the MT2 row shows the stale original the binding cached (reloadData + KVO pokes
+ * don't re-fire it). Fix: re-establish the image view's "value" binding to the SAME device-tied
+ * keypath (objectValue.device.deviceIcon) — that forces a fresh read, now through our swizzle -> our
+ * art. Not per-view painting: we reuse the pane's own binding + the device's own deviceIcon; from
+ * here Apple re-reads deviceIcon (our value) on every future refresh, so it stays correct. One-shot. */
+static int gIconRebound = 0;
+static void kvo_refresh_mt2_icon(id view, int depth) {
+    if (!view || depth > 16 || gIconRebound || !gOrigDeviceIcon) return;
     Class cellCls = objc_getClass("NSTableCellView");
-    if (cellCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(
-            view, sel_registerName("isKindOfClass:"), cellCls) && cell_is_mt2(view, 0)) {
+    if (cellCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(view, sel_registerName("isKindOfClass:"), cellCls)
+        && cell_is_mt2(view, 0)) {
         id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
         unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
         Class ivCls = objc_getClass("NSImageView");
         for (unsigned long i = 0; i < n; i++) {
             id sv = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i);
-            if (ivCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(sv, sel_registerName("isKindOfClass:"), ivCls)) {
-                id want = mt2_trackpad_image();
-                id cur = ((id (*)(id, SEL))objc_msgSend)(sv, sel_registerName("image"));
-                if (want && cur != want) {
-                    ((void (*)(id, SEL, id))objc_msgSend)(sv, sel_registerName("setImage:"), want);
-                    LOG("bt-icon: set MT2 device-row icon");
-                }
-                break;   /* first direct-child NSImageView = the device icon */
-            }
+            if (!(ivCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(sv, sel_registerName("isKindOfClass:"), ivCls)))
+                continue;
+            ((void (*)(id, SEL, id))objc_msgSend)(sv, sel_registerName("unbind:"), (id)CFSTR("value"));
+            ((void (*)(id, SEL, id, id, id, id))objc_msgSend)(sv, sel_registerName("bind:toObject:withKeyPath:options:"),
+                (id)CFSTR("value"), view, (id)CFSTR("objectValue.device.deviceIcon"), (id)NULL);
+            gIconRebound = 1;
+            LOG("bt-icon: rebound MT2 row icon (fresh read of device.image via swizzle)");
+            return;
         }
     }
     id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
     unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
     for (unsigned long i = 0; i < n; i++)
-        paint_device_icon(((id (*)(id, SEL, unsigned long))objc_msgSend)(
-            subs, sel_registerName("objectAtIndex:"), i), depth + 1);
+        kvo_refresh_mt2_icon(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
 }
 
 /* The front window's contentView (any pane, incl. Bluetooth — gPane only tracks Trackpad). */
@@ -716,6 +685,17 @@ static id front_window_content(void) {
     id nsapp = ((id (*)(Class, SEL))objc_msgSend)(app, sel_registerName("sharedApplication"));
     id win = ((id (*)(id, SEL))objc_msgSend)(nsapp, sel_registerName("mainWindow"));
     if (!win) win = ((id (*)(id, SEL))objc_msgSend)(nsapp, sel_registerName("keyWindow"));
+    /* mainWindow/keyWindow are nil when System Prefs is backgrounded (our terminal has focus), which
+     * was silently disabling the icon paint + dump. Fall back to the first visible window so both work
+     * regardless of foreground — the pane's icon must hold even while another app is active. */
+    if (!win) {
+        id wins = ((id (*)(id, SEL))objc_msgSend)(nsapp, sel_registerName("windows"));
+        unsigned long n = wins ? ((unsigned long (*)(id, SEL))objc_msgSend)(wins, sel_registerName("count")) : 0;
+        for (unsigned long i = 0; i < n; i++) {
+            id w = ((id (*)(id, SEL, unsigned long))objc_msgSend)(wins, sel_registerName("objectAtIndex:"), i);
+            if (((signed char (*)(id, SEL))objc_msgSend)(w, sel_registerName("isVisible"))) { win = w; break; }
+        }
+    }
     return win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : NULL;
 }
 
@@ -728,8 +708,8 @@ static void aux_tick_start(void) {
     dispatch_source_set_timer(gAuxTick, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
                               (uint64_t)(1.5 * NSEC_PER_SEC), (uint64_t)(0.25 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gAuxTick, ^{
-        refresh_mt2_label();                             /* MT2 row label (name/addr) for the match */
-        paint_device_icon(front_window_content(), 0);    /* BT-pane MT2 device-row icon */
+        install_device_icon_swizzle();                   /* belt: ensure the image swizzle is in */
+        kvo_refresh_mt2_icon(front_window_content(), 0);  /* re-read if swizzled after the pane bound it */
         if (access("/tmp/mt2_pane_dump", F_OK) == 0) {
             unlink("/tmp/mt2_pane_dump");
             id root = front_window_content();
@@ -737,6 +717,45 @@ static void aux_tick_start(void) {
         }
     });
     dispatch_resume(gAuxTick);
+}
+
+/* DEVICE-TIED icon fix: swizzle -[IOBluetoothDevice deviceIcon] to return the trackpad art for the
+ * MT2 (CoD major 5 / minor 0x25). The BT pane binds the row icon to objectValue.device.deviceIcon
+ * (RE'd), so overriding deviceIcon fixes it at the source — consistent in every view and every
+ * connection state, exactly like Magic Mouse (whose deviceIcon returns a mouse). No per-view
+ * painting. A genuine MT1 (different minor) is untouched. Installed the moment IOBluetooth loads (dyld
+ * add-image hook) so it is active before the pane first reads deviceIcon. */
+static id mt2_icon_for(id self, id (*orig)(id, SEL), SEL _cmd) {
+    int mj = ((int (*)(id, SEL))objc_msgSend)(self, sel_registerName("getDeviceClassMajor"));
+    int mn = ((int (*)(id, SEL))objc_msgSend)(self, sel_registerName("getDeviceClassMinor"));
+    if (mj == 5 && mn == 0x25) { id img = mt2_trackpad_image(); if (img) return img; }
+    return orig ? orig(self, _cmd) : NULL;
+}
+static id my_deviceIcon(id self, SEL _cmd)    { return mt2_icon_for(self, gOrigDeviceIcon, _cmd); }
+static id my_getDeviceIcon(id self, SEL _cmd) { return mt2_icon_for(self, gOrigGetDeviceIcon, _cmd); }
+static id my_image(id self, SEL _cmd)         { return mt2_icon_for(self, gOrigImage, _cmd); }
+/* The row's icon binds to objectValue.device.deviceIcon, but the value it displays is
+ * -[IOBluetoothDevice image] (the generic 512x512 for the MT2; RE'd via a method enumeration —
+ * deviceIcon returns 243x243 but the binding shows `image`). Swizzle `image` (the real accessor) so
+ * the MT2 shows our trackpad art device-tied, consistent in every view/state like Magic Mouse; also
+ * swizzle deviceIcon/getDeviceIcon for any direct/KVC callers. All scoped to the MT2 CoD (5,0x25). */
+static void install_device_icon_swizzle(void) {
+    if (gOrigImage) return;
+    Class c = objc_getClass("IOBluetoothDevice");
+    if (!c) return;                                  /* IOBluetooth not loaded yet */
+    Method mi = class_getInstanceMethod(c, sel_registerName("image"));
+    Method md = class_getInstanceMethod(c, sel_registerName("deviceIcon"));
+    Method mg = class_getInstanceMethod(c, sel_registerName("getDeviceIcon"));
+    if (mi) { gOrigImage = (id (*)(id, SEL))method_getImplementation(mi);
+        method_setImplementation(mi, (IMP)my_image); }
+    if (md) { gOrigDeviceIcon = (id (*)(id, SEL))method_getImplementation(md);
+        method_setImplementation(md, (IMP)my_deviceIcon); }
+    if (mg) { gOrigGetDeviceIcon = (id (*)(id, SEL))method_getImplementation(mg);
+        method_setImplementation(mg, (IMP)my_getDeviceIcon); }
+    if (mi) LOG("bt-icon: swizzled IOBluetoothDevice image/deviceIcon (device-tied MT2 icon)");
+}
+static void mt2_dyld_added(const struct mach_header *mh, intptr_t slide) {
+    (void)mh; (void)slide; install_device_icon_swizzle();
 }
 
 static void install_swizzle(void) {
@@ -749,13 +768,22 @@ static void install_swizzle(void) {
     gOrigDidSelect = (didSelect_t)method_getImplementation(m);
     method_setImplementation(m, (IMP)my_didSelect);
     LOG("swizzled -[NSPreferencePane didSelect]");
+    install_device_icon_swizzle();   /* device-tied BT-pane MT2 icon (if IOBluetooth already loaded) */
 }
 
-/* OSAX entry point named in Info.plist (OSAXHandlers Events MT2xload Handler). */
+/* OSAX entry point named in Info.plist (OSAXHandlers Events MT2xload Handler). Put a MARKER in the
+ * reply so the watcher can tell OUR handler ran (osax actually loaded) from System Prefs' default
+ * handler, which ALSO returns noErr when our handler isn't registered yet (the reinstall load race).
+ * Without this the watcher declares a false-positive "injected" and stops before the osax loads. */
+#define MT2_INJECT_MARKER 0x4D543258   /* 'MT2X' */
 OSErr MT2InjectHandler(const AppleEvent *evt, AppleEvent *reply, long refcon) {
-    (void)evt; (void)reply; (void)refcon;
+    (void)evt; (void)refcon;
     LOG("inject handler invoked");
     install_swizzle();
+    if (reply && reply->descriptorType != typeNull) {
+        SInt32 marker = MT2_INJECT_MARKER;
+        AEPutParamPtr(reply, keyDirectObject, typeSInt32, &marker, sizeof(marker));
+    }
     return noErr;
 }
 
@@ -765,8 +793,11 @@ __attribute__((constructor))
 static void mt2_image_loaded(void) {
     LOG("image loaded into pid %d", getpid());
     install_swizzle();
-    /* BT-pane icon + on-demand dump: an always-on tick over the front window (works for any pane,
-     * incl. Bluetooth — gPane only tracks Trackpad). */
+    /* Device-tied BT-pane icon: install the deviceIcon swizzle the moment IOBluetooth loads (the hook
+     * also replays already-loaded images), so it is in before the pane first reads deviceIcon. */
+    _dyld_register_func_for_add_image(&mt2_dyld_added);
+    /* Aux tick over the front window (works for any pane, incl. Bluetooth — gPane only tracks
+     * Trackpad): swizzle belt + the on-demand /tmp/mt2_pane_dump view-tree dump. */
     dispatch_async(dispatch_get_main_queue(), ^{ aux_tick_start(); });
     /* Handle the direct-open case (already on Trackpad): retry a proactive capture
      * on the main queue once the app/pane are up. didSelect still handles navigation. */
