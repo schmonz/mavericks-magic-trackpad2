@@ -170,14 +170,21 @@ static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
  * MT1-shaped voltage/chemistry model (getExtendedReport, which the MT2 can't answer -> "No extended
  * features"). setProperty is registry-lock-guarded, safe from this newDataIn context. Publish only on
  * change (avoids churning the registry if 0x90 repeats). */
+/* Publish dedup, keyed on BOTH the value AND the node instance. Each BT reconnect manual-starts a
+ * FRESH BNBTrackpadDevice (a brand-new registry node with no BatteryPercent); keying on value alone
+ * meant a same-value reconnect (e.g. 100 -> 100) skipped the setProperty on the fresh node, so the
+ * pane/menu read -1.0 (no info) after every reconnect. Keying on the node too forces a republish
+ * onto each new node. gLastBattBnb is reset in start()/stop() so a malloc-reused address can't
+ * false-match. */
+static int        gLastBattPct = -1;
+static IOService *gLastBattBnb = 0;
 static void mt2_publish_battery(IOService *bnb, uint8_t pct) {
     /* debug.mt2_batt override: force a value for prefpane UI testing (e.g. 0 to exercise the pane's
      * low-battery / Change-Batteries painting). -1 = off (use the real device value). */
     if (gMT2BattOverride >= 0 && gMT2BattOverride <= 100) pct = (uint8_t)gMT2BattOverride;
     if (pct > 100) return;                     /* capacity is 0-100; ignore out-of-range */
-    static int gLastBatt = -1;
-    if ((int)pct == gLastBatt) return;
-    gLastBatt = (int)pct;
+    if (bnb == gLastBattBnb && (int)pct == gLastBattPct) return;   /* same node + same value */
+    gLastBattPct = (int)pct; gLastBattBnb = bnb;
     OSNumber *n = OSNumber::withNumber((unsigned long long)pct, 32);
     if (n) { bnb->setProperty("BatteryPercent", n); n->release(); }
     MT2_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
@@ -433,6 +440,9 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
              * "BatteryPercent" off this same node (it does not consult the dict's contents). */
             OSDictionary *ef = OSDictionary::withCapacity(1);
             if (ef) { fManualBnb->setProperty("ExtendedFeatures", ef); ef->release(); }
+            /* Fresh node -> forget the prior battery so the next poll republishes onto it (else a
+             * same-value reconnect skips the publish and the pane/menu read -1.0). */
+            gLastBattPct = -1; gLastBattBnb = 0;
             bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, fManualBnb, 0, 0);
         } else {
             IOLog("MT2BTReader: manual BNBTrackpadDevice host start FAILED\n");
@@ -748,6 +758,7 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
      * async termination completes after release(). So: plain terminate() + release(), no wait. */
     if (fManualBnb) {
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
+        gLastBattBnb = 0;  /* forget the torn-down node so a reused address can't false-match */
         /* genuine_host ordered teardown: removeBnbGeometry (vtc_restore the geometry clone) BEFORE
          * terminate — so BNB tears down through Apple's own code, not our override — then release. */
         gh_stop(&fHost, &kBtAdapter);
