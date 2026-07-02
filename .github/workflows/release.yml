@@ -47,8 +47,19 @@ jobs:
       - name: Ensure Rosetta (x86_64 @ 10.9 tests run under it)
         run: softwareupdate --install-rosetta --agree-to-license || true
 
+      # Persist the fetched SDK across runs so releases don't depend on the phracker
+      # archive being up every time. Key is tied to the fetch script (URL + pinned
+      # SHA-256 live there), so bumping the SDK auto-invalidates the cache.
+      - name: Cache the MacOSX10.9 SDK
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.mt2-sdk-cache
+          key: macosx10.9-sdk-${{ hashFiles('cmake/fetch_10_9_sdk.sh') }}
+
       - name: Fetch + checksum-verify the MacOSX10.9 SDK
         id: sdk
+        env:
+          MT2_SDK_CACHE: ${{ github.workspace }}/.mt2-sdk-cache
         run: echo "path=$(sh cmake/fetch_10_9_sdk.sh)" >> "$GITHUB_OUTPUT"
 
       - name: Configure + build (x86_64 @ 10.9 userland + kext)
