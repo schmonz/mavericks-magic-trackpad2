@@ -396,6 +396,7 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
  * loadMainView only when the view type must change (NoTrackpad<->Trackpad), else just set the
  * battery via the real _magicTrackpadAction(connected). We OWN that selector (see my_magicAction),
  * so this is the only place it fires. */
+static void mt2_update_setup_button(id root);   /* fwd: re-repurpose the Set-Up button after a render */
 static void perform(psm_action_t a) {
     if (!gPane) return;
     switch (a) {
@@ -433,8 +434,11 @@ static void perform(psm_action_t a) {
      * async inside mt2_render_battery), so it lands in the SAME runloop turn as the render — no flash,
      * and the USB paint appears immediately instead of a tick later. The aux tick calls the same
      * function as the steady-state belt. */
-    if (a == PSM_ACT_RENDER_NONE || a == PSM_ACT_RENDER_BT || a == PSM_ACT_RENDER_USB)
+    if (a == PSM_ACT_RENDER_NONE || a == PSM_ACT_RENDER_BT || a == PSM_ACT_RENDER_USB) {
         mt2_render_battery(front_window_content());
+        mt2_update_setup_button(front_window_content());  /* loadMainView rebuilds the Set-Up button on a
+                                                           * reconnect -> re-repurpose it NOW, not on the tick */
+    }
 }
 
 static int gGen = 0;
@@ -928,6 +932,19 @@ static void dump_view_tree(id view, int depth) {
  * 8. AUX TICK — front-window belt (any pane, incl. Bluetooth; gPane only tracks Trackpad)
  * ============================================================================================ */
 
+/* Reassert everything we inject into WHATEVER pane is front — the BT-icon swizzle + rebind, and the
+ * Bluetooth device-list battery glyph. Called on every pane show (willSelect/didSelect) and once at
+ * startup, NOT only on the aux tick, so none of it waits up to a tick to appear. */
+static void aux_reassert(void) {
+    install_device_icon_swizzle("reassert");          /* belt: ensure the image swizzle is in */
+    kvo_refresh_mt2_icon(front_window_content(), 0);  /* re-read if swizzled after the pane bound it */
+    /* Bluetooth pane device-list battery glyph (the pane leaves it empty for the MT2). */
+    int ov = mt2_batt_override();
+    int gpct = (ov >= 0 && ov <= 100) ? ov : mt2_read_node_battery();
+    if (gpct >= 1 && gpct <= 100) gDevicePct = gpct;
+    if (gDevicePct >= 0) mt2_paint_bt_list_battery(front_window_content(), 0, (float)gDevicePct / 100.0f);
+}
+
 /* Keep the BT-icon swizzle installed + serviced, and run the on-demand view-tree dump for WHATEVER
  * pane is front. Distinct from capture_pane's 2s reconcile tick (which needs the captured pane). */
 static dispatch_source_t gAuxTick = NULL;
@@ -937,13 +954,7 @@ static void aux_tick_start(void) {
     dispatch_source_set_timer(gAuxTick, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC),
                               (uint64_t)(1.5 * NSEC_PER_SEC), (uint64_t)(0.25 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gAuxTick, ^{
-        install_device_icon_swizzle("auxtick");          /* belt: ensure the image swizzle is in */
-        kvo_refresh_mt2_icon(front_window_content(), 0);  /* re-read if swizzled after the pane bound it */
-        /* Feed the Bluetooth pane's device-list battery glyph (the pane leaves it empty for the MT2). */
-        { int ov = mt2_batt_override();
-          int gpct = (ov >= 0 && ov <= 100) ? ov : mt2_read_node_battery();
-          if (gpct >= 1 && gpct <= 100) gDevicePct = gpct;
-          if (gDevicePct >= 0) mt2_paint_bt_list_battery(front_window_content(), 0, (float)gDevicePct / 100.0f); }
+        aux_reassert();                                  /* belt for the front-window UI */
         if (access("/tmp/mt2_pane_dump", F_OK) == 0) {
             unlink("/tmp/mt2_pane_dump");
             /* Walk EVERY window's contentView (not just the front one) — the Bluetooth pane's device
@@ -1020,6 +1031,8 @@ static void capture_pane(id self) {
         dispatch_source_set_event_handler(tick, ^{ sm_reconcile(); hide_battery_button_now(); });
         dispatch_resume(tick);
     }
+    hide_battery_button_now();   /* run once NOW (button-hide + Set-Up->Check-for-Updates repurpose) so
+                                  * they don't wait up to 2 s for the first tick on a fresh pane open */
 }
 
 /* Swizzled -[NSPreferencePane willSelect] (fires BEFORE didSelect): install the image swizzle here,
@@ -1043,6 +1056,7 @@ static void my_didSelect(id self, SEL _cmd) {
     if (gOrigDidSelect) gOrigDidSelect(self, _cmd);
     const char *cn = object_getClassName(self);
     if (cn && strcmp(cn, "Trackpad") == 0) capture_pane(self);
+    aux_reassert();   /* any pane just appeared -> reassert the front-window UI NOW (icon + glyph), not on the next tick */
 }
 
 /* Capture-race fix: if System Preferences was ALREADY showing Trackpad when we injected (its
