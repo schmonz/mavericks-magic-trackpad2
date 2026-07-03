@@ -1,0 +1,28 @@
+#!/bin/sh
+# Pre-push guard: a release tag (v*) must match MT2_VERSION AND ship non-empty release notes, so a
+# push can never create a tag the release CI will reject (the same checks run in .github/workflows/
+# release.yml). Belt-and-suspenders + fast local feedback.
+#
+# Install once:  git config core.hooksPath .githooks
+set -eu
+
+VER=$(grep -m1 'set(MT2_VERSION' CMakeLists.txt | sed -E 's/.*"([^"]+)".*/\1/')
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha> per pushed ref.
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    case "$remote_ref" in
+    refs/tags/v*)
+        tag="${remote_ref#refs/tags/}"
+        if [ "$tag" != "v$VER" ]; then
+            echo "pre-push: tag $tag != v$VER (CMakeLists MT2_VERSION); keep them in sync" >&2
+            exit 1
+        fi
+        notes="docs/release-notes/$tag.md"
+        if [ ! -s "$notes" ]; then
+            echo "pre-push: missing/empty $notes -- release notes are required for $tag" >&2
+            exit 1
+        fi
+        ;;
+    esac
+done
+exit 0
