@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.schmonz.MavericksTrackpad2Updater</string>
+	<key>CFBundleName</key>
+	<string>MavericksTrackpad2Updater</string>
+	<key>CFBundleExecutable</key>
+	<string>MavericksTrackpad2Updater</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@MT2_VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@MT2_VERSION@</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.9</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml</string>
+	<!-- EdDSA public key. PLACEHOLDER until generate_keys provides the real one. -->
+	<key>SUPublicEDKey</key>
+	<string>REPLACE_WITH_generate_keys_PUBLIC_KEY</string>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+</dict>
+</plist>

@@ -114,3 +114,30 @@ add_custom_target(prefpane-uninstall
   COMMAND sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
   COMMAND ${CMAKE_COMMAND} -E echo "Removed osax + watcher + LaunchAgent - SIMBL untouched"
   COMMENT "Uninstalling the prefpane-refresh delivery (osax + watcher + LaunchAgent)")
+
+# ---- MavericksTrackpad2Updater.app (Sparkle 1.27 host) --------------------------------------------
+# Built only when a fetched Sparkle framework path is provided (MT2_SPARKLE_FRAMEWORK); otherwise the
+# rest of the tree still builds without the network fetch. Minimal-declaration main.m (no Sparkle
+# headers) -> builds on clang 6.0 (dev) and modern clang (CI).
+if(MT2_SPARKLE_FRAMEWORK)
+  set(UPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mt2_updater)
+  set(UPD_APP ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater.app)
+  configure_file(${UPD_DIR}/Info.plist.in ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater-Info.plist @ONLY)
+
+  add_executable(MavericksTrackpad2Updater ${UPD_DIR}/main.m)
+  set_target_properties(MavericksTrackpad2Updater PROPERTIES OUTPUT_NAME MavericksTrackpad2Updater)
+  target_compile_options(MavericksTrackpad2Updater PRIVATE -fobjc-arc)
+  target_link_libraries(MavericksTrackpad2Updater PRIVATE
+    "-F${MT2_SPARKLE_FRAMEWORK}/.."
+    "-framework Sparkle"
+    "-framework Cocoa"
+    "-Wl,-rpath,@executable_path/../Frameworks")
+
+  add_custom_command(TARGET MavericksTrackpad2Updater POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/MacOS
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/Frameworks
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:MavericksTrackpad2Updater> ${UPD_APP}/Contents/MacOS/MavericksTrackpad2Updater
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater-Info.plist ${UPD_APP}/Contents/Info.plist
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${MT2_SPARKLE_FRAMEWORK} ${UPD_APP}/Contents/Frameworks/Sparkle.framework
+    COMMENT "Assembling MavericksTrackpad2Updater.app")
+endif()
