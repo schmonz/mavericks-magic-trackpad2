@@ -399,39 +399,48 @@ static void find_battery_row(id view, int depth, id *ctl, id *pctField, id *stat
 }
 
 static int gUsbBattPainted = 0;   /* we unhid the row for USB (so we re-hide it on -> NoTrackpad) */
+static int gStripPending  = 0;   /* our "NN% (charging)" USB text is on the field -> strip it once BT
+                                  * shows the battery row. Survives a USB->NoTrackpad->BT hop (unlike
+                                  * gUsbBattPainted, which we clear on every leave-USB tick). */
 
 /* Called from the tick with the window root. state==PSM_USB: read (throttled 30 s) + paint.
- * Leaving USB (one-shot, gUsbBattPainted->0): ->NONE re-hides the row (NoTrackpad must not show
- * battery); ->BT strips our "NN% (charging)" USB text down to a clean "NN%". (Earlier this branch
- * assumed Apple re-renders the row on ->BT, but on a LIVE transport switch it does NOT — the pane
- * only re-lays-out the battery row on a full load — so our charging text lingered. On BT the device
- * is on battery, never charging, so "NN%" is correct and matches Apple's next full-load render.) */
+ * Leaving USB: ->NONE re-hides the row (NoTrackpad must not show battery); ->BT strips our
+ * "NN% (charging)" USB text down to a clean "NN%". Apple does NOT re-render the row on a LIVE
+ * transport switch (only on a full load), so our charging text would linger otherwise. The strip is
+ * keyed on gStripPending (not gUsbBattPainted) so it also fires on the usual USB->NoTrackpad->BT path
+ * — where the battery field only exists once BT brings the trackpad view back — and is retried each
+ * tick until that field appears. On BT the device is on battery, never charging, so "NN%" is right. */
 static void usb_battery_tick(id root) {
     static time_t lastRead = 0;
     static int pct = -1, charging = 0;
     if (gPsm != PSM_USB) {
-        if (gUsbBattPainted && gPsm != PSM_HOLD) {   /* HOLD: keep the display through the window */
-            id ctl = NULL, pf = NULL, sl = NULL;
-            find_battery_row(root, 0, &ctl, &pf, &sl);
-            if (gPsm == PSM_NONE) {
+        if (gPsm == PSM_HOLD) return;                /* keep the display through the removal window */
+        id ctl = NULL, pf = NULL, sl = NULL;
+        find_battery_row(root, 0, &ctl, &pf, &sl);
+        if (gPsm == PSM_NONE) {
+            /* NoTrackpad must not show a battery row; re-hide the one we unhid for USB. (Can't strip
+             * the '(charging)' text here — the field lives only in the trackpad view; gStripPending
+             * carries it to the BT case below.) */
+            if (gUsbBattPainted) {
                 id vs[3] = { ctl, pf, sl };
                 for (int i = 0; i < 3; i++) if (vs[i])
                     ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 1);
                 LOG("usb-battery: row re-hidden (left USB -> NoTrackpad)");
-            } else if (pf && pct >= 0) {             /* -> BT: strip the '(charging)' residue */
-                char label[48];
-                snprintf(label, sizeof(label), "%d%%", pct);
-                CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
-                if (s) {
-                    ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
-                    CFRelease(s);
-                    ((void (*)(id, SEL))objc_msgSend)(pf, sel_registerName("sizeToFit"));
-                }
-                if (ctl) ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)pct / 100.0f);
-                LOG("usb-battery: handed row to BT (stripped '(charging)', %s)", label);
             }
+        } else if (gStripPending && pf && pct >= 0) {   /* -> BT: strip the '(charging)' residue */
+            char label[48];
+            snprintf(label, sizeof(label), "%d%%", pct);
+            CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
+            if (s) {
+                ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
+                CFRelease(s);
+                ((void (*)(id, SEL))objc_msgSend)(pf, sel_registerName("sizeToFit"));
+            }
+            if (ctl) ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)pct / 100.0f);
+            gStripPending = 0;
+            LOG("usb-battery: stripped '(charging)' residue on BT (%s)", label);
         }
-        if (gPsm != PSM_HOLD) { gUsbBattPainted = 0; lastRead = 0; }
+        gUsbBattPainted = 0; lastRead = 0;   /* gStripPending persists until the BT strip above clears it */
         return;
     }
     time_t now = time(NULL);
@@ -462,6 +471,7 @@ static void usb_battery_tick(id root) {
     for (int i = 0; i < 3; i++)
         ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 0);
     if (!gUsbBattPainted) { gUsbBattPainted = 1; LOG("usb-battery: row painted (%s)", label); }
+    gStripPending = 1;   /* our text is on the field; strip it when we next reach BT (any path) */
 }
 
 /* On-demand RE aid: `touch /tmp/mt2_pane_dump` -> the next tick dumps the whole window view tree
