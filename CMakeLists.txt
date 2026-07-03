@@ -29,6 +29,9 @@ set(MT2_MACOSX_10_9_SDK "" CACHE PATH "MacOSX10.9 SDK root for kext cross-build 
 # Path to a fetched Sparkle 1.27.3 Sparkle.framework (x86_64, 10.9) for the updater helper.
 # Empty by default; set by the caller/CI (cmake -DMT2_SPARKLE_FRAMEWORK=$(sh cmake/fetch_sparkle.sh)).
 set(MT2_SPARKLE_FRAMEWORK "" CACHE PATH "Fetched Sparkle.framework for MavericksTrackpad2Updater.app")
+# Path to a fetched orlp/ed25519 src/ dir (the SAME lib Sparkle vendors) for the native EdDSA signer.
+# Empty by default; set by the caller/CI (cmake -DMT2_ED25519_SRC=$(sh cmake/fetch_ed25519.sh)).
+set(MT2_ED25519_SRC "" CACHE PATH "Fetched orlp/ed25519 src dir for the native mt2_sign_update signer")
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/sbin")

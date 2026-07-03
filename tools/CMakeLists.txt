@@ -148,3 +148,17 @@ if(MT2_SPARKLE_FRAMEWORK)
     COMMENT "Installing MavericksTrackpad2Updater.app")
   add_dependencies(updater-install MavericksTrackpad2Updater)
 endif()
+
+# ---- Native EdDSA signer + keygen (10.9-buildable Sparkle sign_update / generate_keys) -----------
+# Built only when a fetched orlp/ed25519 src dir is provided (MT2_ED25519_SRC = $(sh
+# cmake/fetch_ed25519.sh)). Uses the SAME ed25519 library Sparkle vendors, so signatures are
+# byte-identical to the official Swift sign_update and the framework accepts them -- but this builds
+# native on the 10.9 toolchain (plain C, no Swift). sign_update is habitual; keep it available locally.
+if(MT2_ED25519_SRC)
+  file(GLOB ED25519_SRCS "${MT2_ED25519_SRC}/*.c")
+  add_executable(mt2_sign_update   mt2_sign_update/sign_update.c   ${ED25519_SRCS})
+  add_executable(mt2_generate_keys mt2_sign_update/generate_keys.c ${ED25519_SRCS})
+  foreach(t mt2_sign_update mt2_generate_keys)
+    target_include_directories(${t} PRIVATE "${MT2_ED25519_SRC}" ${CMAKE_CURRENT_SOURCE_DIR}/mt2_sign_update)
+  endforeach()
+endif()

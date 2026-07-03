@@ -57,6 +57,10 @@ If you contributed and aren't listed (or want different wording/attribution), pl
   their Bluetooth name *on the device* and that it's host-writable (rename writes the device + restarts;
   a factory reset restores the default name) — the reference that the on-device name is a real, settable
   field. https://magicutilities.net/magic-mouse/help/device-config
+- **orlp/ed25519** (Orson Peters, public domain / zlib) — the ed25519 implementation Sparkle vendors
+  for its EdDSA update signatures. We fetch + build the same library so our native `mt2_sign_update` /
+  `mt2_generate_keys` produce byte-identical signatures the Sparkle framework accepts, buildable on the
+  10.9 toolchain (no Swift). https://github.com/orlp/ed25519
 
 ---
 
