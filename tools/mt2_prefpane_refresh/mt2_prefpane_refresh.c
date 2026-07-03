@@ -24,6 +24,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <sys/sysctl.h>
 #include <dispatch/dispatch.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
@@ -115,6 +116,8 @@ static int current_view_is_trackpad(void) {
  * battery via the real _magicTrackpadAction(connected). We OWN that selector (see my_magicAction),
  * so this is the only place it fires. */
 static void gOrigMagicAction_call(int connected);   /* fwd decl; defined with the swizzle */
+static void mt2_strip_charge_residue(id root);      /* fwd decl; sync '(charging)' strip on BT render */
+static id front_window_content(void);               /* fwd decl */
 static void install_device_icon_swizzle(const char *src);  /* fwd decl; device-tied BT-pane icon */
 static id (*gOrigDeviceIcon)(id, SEL) = NULL;        /* saved -[IOBluetoothDevice deviceIcon] */
 static id (*gOrigGetDeviceIcon)(id, SEL) = NULL;     /* saved -[IOBluetoothDevice getDeviceIcon] */
@@ -139,6 +142,10 @@ static void perform(psm_action_t a) {
             if (responds(gPane, lmv)) ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
         }
         gOrigMagicAction_call(a == PSM_ACT_RENDER_BT ? 1 : 0);
+        /* Strip our leftover USB "(charging)" text HERE, synchronously, in the same runloop turn the
+         * BT view is (re)rendered — so on the USB->NoTrackpad->BT path there is no <=1.5s flash before
+         * the aux tick catches it. No-op unless a strip is pending + the battery field is present. */
+        if (a == PSM_ACT_RENDER_BT) mt2_strip_charge_residue(front_window_content());
         LOG("perform: %s", a == PSM_ACT_RENDER_BT ? "RENDER_BT" : "RENDER_USB");
         break;
     }
@@ -402,63 +409,84 @@ static int gUsbBattPainted = 0;   /* we unhid the row for USB (so we re-hide it 
 static int gStripPending  = 0;   /* our "NN% (charging)" USB text is on the field -> strip it once BT
                                   * shows the battery row. Survives a USB->NoTrackpad->BT hop (unlike
                                   * gUsbBattPainted, which we clear on every leave-USB tick). */
+static int gUsbPct = -1, gUsbCharging = 0;   /* last USB battery read; file scope so perform() can
+                                              * strip synchronously on the BT render (mt2_strip...). */
+
+/* The debug.mt2_batt kext knob, read from the osax so a forced value applies on USB too (the kext
+ * only applies it on its own BT publish path). -1 = off, 0-100 = forced value. */
+static int mt2_batt_override(void) {
+    int v = -1; size_t sz = sizeof(v);
+    if (sysctlbyname("debug.mt2_batt", &v, &sz, NULL, 0) != 0) return -1;
+    return v;
+}
+
+/* Strip our leftover USB "NN% (charging)" text on the battery field to a clean "NN%" (on BT the
+ * device is on battery, never charging), applying the debug override. No-op unless a strip is
+ * pending, the last USB % is known, and the battery field is present. Called from the aux tick (belt)
+ * AND synchronously from perform() on the BT render — so the USB->NoTrackpad->BT path corrects the
+ * field in the SAME runloop turn Apple unhides it, with no <=1.5s flash. */
+static void mt2_strip_charge_residue(id root) {
+    if (!gStripPending || gUsbPct < 0) return;
+    id ctl = NULL, pf = NULL, sl = NULL;
+    find_battery_row(root, 0, &ctl, &pf, &sl);
+    if (!pf) return;                                  /* trackpad view not up yet; retried next tick */
+    int shown = gUsbPct; int ov = mt2_batt_override(); if (ov >= 0 && ov <= 100) shown = ov;
+    char label[48]; snprintf(label, sizeof(label), "%d%%", shown);
+    CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
+    if (s) {
+        ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
+        CFRelease(s);
+        ((void (*)(id, SEL))objc_msgSend)(pf, sel_registerName("sizeToFit"));
+    }
+    if (ctl) ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)shown / 100.0f);
+    gStripPending = 0;
+    LOG("usb-battery: stripped '(charging)' residue (%s)", label);
+}
 
 /* Called from the tick with the window root. state==PSM_USB: read (throttled 30 s) + paint.
  * Leaving USB: ->NONE re-hides the row (NoTrackpad must not show battery); ->BT strips our
- * "NN% (charging)" USB text down to a clean "NN%". Apple does NOT re-render the row on a LIVE
- * transport switch (only on a full load), so our charging text would linger otherwise. The strip is
- * keyed on gStripPending (not gUsbBattPainted) so it also fires on the usual USB->NoTrackpad->BT path
- * — where the battery field only exists once BT brings the trackpad view back — and is retried each
- * tick until that field appears. On BT the device is on battery, never charging, so "NN%" is right. */
+ * "NN% (charging)" text to a clean "NN%" (also done synchronously in perform() to avoid a flash). The
+ * strip is keyed on gStripPending (not gUsbBattPainted) so it also fires on the usual
+ * USB->NoTrackpad->BT path, retried each tick until the BT trackpad view brings the field back. */
 static void usb_battery_tick(id root) {
     static time_t lastRead = 0;
-    static int pct = -1, charging = 0;
     if (gPsm != PSM_USB) {
         if (gPsm == PSM_HOLD) return;                /* keep the display through the removal window */
-        id ctl = NULL, pf = NULL, sl = NULL;
-        find_battery_row(root, 0, &ctl, &pf, &sl);
         if (gPsm == PSM_NONE) {
             /* NoTrackpad must not show a battery row; re-hide the one we unhid for USB. (Can't strip
              * the '(charging)' text here — the field lives only in the trackpad view; gStripPending
-             * carries it to the BT case below.) */
+             * carries it to the BT case.) */
             if (gUsbBattPainted) {
+                id ctl = NULL, pf = NULL, sl = NULL;
+                find_battery_row(root, 0, &ctl, &pf, &sl);
                 id vs[3] = { ctl, pf, sl };
                 for (int i = 0; i < 3; i++) if (vs[i])
                     ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 1);
                 LOG("usb-battery: row re-hidden (left USB -> NoTrackpad)");
             }
-        } else if (gStripPending && pf && pct >= 0) {   /* -> BT: strip the '(charging)' residue */
-            char label[48];
-            snprintf(label, sizeof(label), "%d%%", pct);
-            CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
-            if (s) {
-                ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
-                CFRelease(s);
-                ((void (*)(id, SEL))objc_msgSend)(pf, sel_registerName("sizeToFit"));
-            }
-            if (ctl) ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)pct / 100.0f);
-            gStripPending = 0;
-            LOG("usb-battery: stripped '(charging)' residue on BT (%s)", label);
+        } else {                                     /* -> BT: strip (belt; perform() already did it sync) */
+            mt2_strip_charge_residue(root);
         }
-        gUsbBattPainted = 0; lastRead = 0;   /* gStripPending persists until the BT strip above clears it */
+        gUsbBattPainted = 0; lastRead = 0;   /* gStripPending persists until the strip clears it */
         return;
     }
     time_t now = time(NULL);
     if (!lastRead || now - lastRead >= 30) {
         int p, c;
         if (mt2_usb_read_battery(&p, &c)) {
-            if (p != pct || c != charging) LOG("usb-battery: read %d%% charging=%d", p, c);
-            pct = p; charging = c;
+            if (p != gUsbPct || c != gUsbCharging) LOG("usb-battery: read %d%% charging=%d", p, c);
+            gUsbPct = p; gUsbCharging = c;
         }
         lastRead = now;
     }
-    if (pct < 0) return;                                   /* nothing read yet — leave Apple's UI alone */
+    if (gUsbPct < 0) return;                                /* nothing read yet — leave Apple's UI alone */
+    int shown = gUsbPct; int ov = mt2_batt_override(); if (ov >= 0 && ov <= 100) shown = ov;
     id ctl = NULL, pf = NULL, sl = NULL;
     find_battery_row(root, 0, &ctl, &pf, &sl);
     if (!ctl || !pf || !sl) return;
-    ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)pct / 100.0f);
+    ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)shown / 100.0f);
     char label[48];
-    snprintf(label, sizeof(label), charging ? "%d%% (charging)" : "%d%%", pct);
+    snprintf(label, sizeof(label), gUsbCharging ? "%d%% (charging)" : "%d%%", shown);
     CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
     if (s) {
         ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
