@@ -77,11 +77,11 @@ add_custom_target(prefpane-refresh-simbl DEPENDS MT2PaneRefresh_simbl)
 add_custom_target(prefpane-refresh-install
   COMMAND sudo rm -rf /Library/ScriptingAdditions/MT2PaneRefresh.osax
   COMMAND sudo cp -R ${OSAX_OUT} /Library/ScriptingAdditions/
-  # Force OpenScripting to re-scan /Library/ScriptingAdditions so our (re)installed handler is
-  # registered BEFORE the next System Preferences launch. Without this the OSA additions cache is
-  # stale after a bundle change, our MT2x/load event falls to the default handler, and the osax
-  # doesn't load until a *later* launch (the "needs 2-3 relaunches" race).
-  COMMAND sh -c "osascript -e 'return 1' >/dev/null 2>&1 || true"
+  # Force an OpenScripting additions re-scan so our (re)installed handler is registered before the
+  # next System Preferences launch (avoids the "needs 2-3 relaunches" race). Native args only — the
+  # redirection + `|| true` live in the script (see the NOTE above: an inline `sh -c "…"` gets
+  # space-escaped by CMake and shreds the redirection, Error 127, aborting the make chain).
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/force_osa_rescan.sh
   COMMAND ${CMAKE_COMMAND} -E echo "Installed /Library/ScriptingAdditions/MT2PaneRefresh.osax"
   COMMENT "Installing MT2PaneRefresh.osax")
 add_dependencies(prefpane-refresh-install MT2PaneRefresh)
