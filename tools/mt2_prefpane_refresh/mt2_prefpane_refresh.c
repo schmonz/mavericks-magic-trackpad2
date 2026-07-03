@@ -62,6 +62,7 @@ static id gMagicArg  = NULL;   /* arg:  the object [arg armIterators] targets (t
 typedef void (*didSelect_t)(id, SEL);
 static didSelect_t     gOrigDidSelect = NULL;
 static didSelect_t     gOrigWillSelect = NULL;
+static void mt2_activate(const char *via);  /* fwd decl; THE single activation choke point */
 
 /* Original MTTrackpadController _checkBatteryTimer: — we call through then force the "Change
  * Batteries" button hidden (the MT2 has a sealed rechargeable battery; that AA-era control never
@@ -821,7 +822,7 @@ static void install_swizzle(void) {
 OSErr MT2InjectHandler(const AppleEvent *evt, AppleEvent *reply, long refcon) {
     (void)evt; (void)refcon;
     LOG("inject handler invoked");
-    install_swizzle();
+    mt2_activate("inject-handler");   /* same choke point as the constructor; inert if we lost the claim */
     if (reply && reply->descriptorType != typeNull) {
         SInt32 marker = MT2_INJECT_MARKER;
         AEPutParamPtr(reply, keyDirectObject, typeSInt32, &marker, sizeof(marker));
@@ -829,15 +830,22 @@ OSErr MT2InjectHandler(const AppleEvent *evt, AppleEvent *reply, long refcon) {
     return noErr;
 }
 
-/* Runs the instant our image loads into the host process (SIMBL [bundle load]).
- * Install the didSelect swizzle immediately; capture happens on the next select. */
-__attribute__((constructor))
-static void mt2_image_loaded(void) {
-    if (!mt2_claim_single_load()) {
-        LOG("single-load guard: another payload copy already active in pid %d — bailing", getpid());
+/* THE single activation choke point — the whole-payload owner decision, no per-swizzle granularity.
+ * The FIRST payload image to reach here (the SIMBL plugin via [bundle load], or the osax via its
+ * MT2InjectHandler) claims process-wide ownership via mt2_claim_single_load() and does EVERYTHING;
+ * any other image that later reaches ANY entry point finds the claim taken and stays FULLY inert.
+ * Idempotent within one image (gActivated). Because this is the only place activation lives and both
+ * entry points funnel through it, a new swizzle/feature added here (or inside install_swizzle) is
+ * automatically owned by exactly one image — nothing to remember to guard. */
+static int gActivated = 0;
+static void mt2_activate(const char *via) {
+    if (gActivated) return;                    /* already active in THIS image (idempotent) */
+    if (!mt2_claim_single_load()) {            /* another image already owns this process */
+        LOG("payload: lost the single-load claim (via %s) — staying inert", via);
         return;
     }
-    LOG("image loaded into pid %d", getpid());
+    gActivated = 1;
+    LOG("payload active in pid %d (via %s)", getpid(), via);
     install_swizzle();
     /* Device-tied BT-pane icon: install the deviceIcon swizzle the moment IOBluetooth loads (the hook
      * also replays already-loaded images), so it is in before the pane first reads deviceIcon. */
@@ -852,4 +860,10 @@ static void mt2_image_loaded(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delays[i] * NSEC_PER_MSEC),
                        dispatch_get_main_queue(), ^{ try_capture_current(); });
     }
+}
+
+/* Runs the instant our image loads into the host process (SIMBL [bundle load]). */
+__attribute__((constructor))
+static void mt2_image_loaded(void) {
+    mt2_activate("constructor");
 }
