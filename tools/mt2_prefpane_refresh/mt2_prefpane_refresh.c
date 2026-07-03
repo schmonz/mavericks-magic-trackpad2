@@ -213,11 +213,13 @@ static int mt2_usb_read_battery(int *pct, int *charging) {
     return got;
 }
 
-static int    gBattPainted    = 0;   /* we unhid + painted the battery row (either transport) -> hide on NONE */
-static int    gUsbPct         = -1;  /* last USB HID read % (cached; refreshed async) */
-static int    gUsbCharging    = 0;   /* last USB HID read charging flag */
-static time_t gLastUsbRead    = 0;   /* throttle the (slow) USB HID read */
-static int    gUsbReadInFlight = 0;  /* a dispatched USB HID read is pending (don't stack) */
+static int    gBattPainted   = 0;   /* we unhid + painted the battery row -> hide on NONE */
+static int    gDevicePct     = -1;  /* the device's battery %, best-known; updated by the USB HID read AND
+                                     * the BT node read, held across transports (one device either way) */
+static int    gLastShownPct  = -1;  /* last value we painted -> HOLD keeps the display through removal */
+static int    gLastShownChg  = 0;
+static time_t gLastUsbRead   = 0;   /* throttle the (slow) USB HID read */
+static int    gUsbReadInFlight = 0; /* a dispatched USB HID read is pending (don't stack) */
 
 /* The debug.mt2_batt kext knob, read from the osax so a forced value applies on BOTH transports (the
  * kext only applies it on its own BT publish). -1 = off, 0-100 = forced value. */
@@ -227,16 +229,8 @@ static int mt2_batt_override(void) {
     return v;
 }
 
-/* Current battery % for the ACTIVE transport (debug override wins). USB: the cached HID read. BT: the
- * BNBTrackpadDevice node's "BatteryPercent" (the same value the pane reads) — but re-read every render,
- * because the Bluetooth pane caches its own copy and never refreshes it after a power-cycle (shows a
- * stale 0). By reading + painting it ourselves, both transports share ONE path and the stale-0
- * self-heals. Returns -1 if unknown. *charging: USB can charge on the cable; BT is always on battery. */
-static int mt2_battery_now(int *charging) {
-    int ov = mt2_batt_override();
-    if (gPsm == PSM_USB) { *charging = gUsbCharging; return (ov >= 0 && ov <= 100) ? ov : gUsbPct; }
-    *charging = 0;
-    if (gPsm != PSM_BT) return (ov >= 0 && ov <= 100) ? ov : -1;
+/* Raw BNBTrackpadDevice node "BatteryPercent" (0-100), or -1 if absent (on USB the BT node is gone). */
+static int mt2_read_node_battery(void) {
     int pct = -1;
     io_service_t svc = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("BNBTrackpadDevice"));
     if (svc) {
@@ -244,27 +238,47 @@ static int mt2_battery_now(int *charging) {
         if (n) { CFNumberGetValue(n, kCFNumberIntType, &pct); CFRelease(n); }
         IOObjectRelease(svc);
     }
-    return (ov >= 0 && ov <= 100) ? ov : pct;
+    return pct;
 }
 
-/* Paint the battery row: gauge (setFloatValue) + "NN%[ (charging)]" text + unhide the three views. */
+/* The device's battery % + whether it's charging. The % is ONE value regardless of transport (same
+ * device), HELD so a transition shows it instantly; charging is a TRANSPORT property (on USB you're on
+ * the cable -> charging, or charged at 100%; on BT you're on battery), inferred from gPsm rather than
+ * waiting for the slow USB HID read. Debug override wins. A fresh BT node reads 0/absent until the
+ * kext's first poll — treat that as the un-polled sentinel and hold the last value (a truly 0% MT2 is
+ * dead + disconnected). Returns -1 only if the battery has never been known. */
+static int mt2_battery_now(int *charging) {
+    *charging = (gPsm == PSM_USB);
+    int ov = mt2_batt_override();
+    if (ov >= 0 && ov <= 100) return ov;
+    if (gPsm == PSM_BT) {
+        int pct = mt2_read_node_battery();
+        if (pct >= 1 && pct <= 100) gDevicePct = pct;
+    }
+    return gDevicePct;
+}
+
+/* Paint the battery row: gauge (setFloatValue) + "NN%[ (charging|charged)]" + unhide the three views.
+ * On the cable the device is "charging" below 100% and "charged" at 100% (Apple's wording). */
 static void mt2_paint_battery(id root, int pct, int charging) {
     id ctl = NULL, pf = NULL, sl = NULL;
     find_battery_row(root, 0, &ctl, &pf, &sl);
     if (!ctl || !pf || !sl) return;
     ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)pct / 100.0f);
+    const char *suffix = charging ? (pct >= 100 ? " (charged)" : " (charging)") : "";
     char label[48];
-    snprintf(label, sizeof(label), charging ? "%d%% (charging)" : "%d%%", pct);
+    snprintf(label, sizeof(label), "%d%%%s", pct, suffix);
     CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, label, kCFStringEncodingUTF8);
     if (s) {
         ((void (*)(id, SEL, id))objc_msgSend)(pf, sel_registerName("setStringValue:"), (id)s);
         CFRelease(s);
-        /* The nib sizes the field for "100%"; widen so " (charging)" isn't clipped. */
+        /* The nib sizes the field for "100%"; widen so " (charging)"/" (charged)" isn't clipped. */
         ((void (*)(id, SEL))objc_msgSend)(pf, sel_registerName("sizeToFit"));
     }
     id vs[3] = { ctl, pf, sl };
     for (int i = 0; i < 3; i++)
         ((void (*)(id, SEL, signed char))objc_msgSend)(vs[i], sel_registerName("setHidden:"), 0);
+    gLastShownPct = pct; gLastShownChg = charging;
     if (!gBattPainted) { gBattPainted = 1; LOG("battery: row painted (%s)", label); }
 }
 
@@ -278,9 +292,9 @@ static void mt2_refresh_usb_battery(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         gUsbReadInFlight = 0;
         int p, c;
-        if (mt2_usb_read_battery(&p, &c)) {
-            if (p != gUsbPct || c != gUsbCharging) LOG("usb-battery: read %d%% charging=%d", p, c);
-            gUsbPct = p; gUsbCharging = c;
+        if (mt2_usb_read_battery(&p, &c)) {          /* c (charging byte) is ignored — inferred from transport */
+            if (p >= 1 && p != gDevicePct) LOG("usb-battery: read %d%%", p);
+            if (p >= 1 && p <= 100) gDevicePct = p;
             if (gPsm == PSM_USB) { int ch; int pct = mt2_battery_now(&ch); if (pct >= 0) mt2_paint_battery(front_window_content(), pct, ch); }
         }
     });
@@ -297,7 +311,7 @@ static void mt2_refresh_usb_battery(void) {
  * Fast (BT read = a quick IOKit lookup; USB paints the cache), so perform() calls it synchronously —
  * the correct value lands in the SAME runloop turn as the render, so there is no flash. */
 static void mt2_render_battery(id root) {
-    if (gPsm == PSM_HOLD) return;
+    if (gPsm == PSM_HOLD) return;   /* removal window: the _checkBatteryTimer swizzle corrects any 0 in-flight */
     if (gPsm == PSM_NONE) {
         if (gBattPainted) {
             id ctl = NULL, pf = NULL, sl = NULL;
@@ -392,7 +406,7 @@ static void perform(psm_action_t a) {
              * brings the view back, so pre-cleaning it here means it's already a plain "NN%" on the BT
              * wake -> no flash. (The one irreducible pre-teardown step; mt2_render_battery on the BT
              * render then paints the live node value over it.) */
-            if (gUsbPct >= 0) mt2_paint_battery(front_window_content(), gUsbPct, 0);
+            if (gDevicePct >= 0) mt2_paint_battery(front_window_content(), gDevicePct, 0);
             SEL lmv = sel_registerName("loadMainView");
             if (responds(gPane, lmv)) ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
         }
@@ -583,8 +597,29 @@ static void walk_hide_battery_button(id view, int depth) {
  * this stack the connected device is always the MT2 (a co-connected genuine MT1 with AA batteries
  * would be a rare exception — future refinement could gate on the MT2 CoD minor 0x25). */
 static void my_checkBatteryTimer(id self, SEL _cmd, id timer) {
-    if (gOrigCheckBatteryTimer) gOrigCheckBatteryTimer(self, _cmd, timer);
+    if (gOrigCheckBatteryTimer) gOrigCheckBatteryTimer(self, _cmd, timer);   /* Apple reads batteryPercent + paints */
     hide_change_battery_button(self);
+    /* _checkBatteryTimer is the ONE method Apple uses to paint the battery (RE: _updateBTDevice + the
+     * connect/disconnect/state-change notifications all funnel here). It does setFloatValue: on
+     * mBTBatteryControl with batteryPercent — and on a BT power-off batteryPercent momentarily reads 0,
+     * so it paints an empty battery. Intercede IN-FLIGHT (same runloop turn as Apple's paint, so nothing
+     * draws in between): read the EXACT mBTBatteryControl ivar off self — reliable during teardown, no
+     * front-window/tree walk — and if Apple left it empty while we still hold a real value, restore ours
+     * on the control + its label. If Apple painted a real (non-zero) value, leave it (pass-through). */
+    if (gDevicePct >= 1) {
+        Ivar iv = class_getInstanceVariable(object_getClass(self), "mBTBatteryControl");
+        id ctl = iv ? object_getIvar(self, iv) : NULL;
+        if (ctl && ((double (*)(id, SEL))objc_msgSend)(ctl, sel_registerName("doubleValue")) <= 0.0) {
+            ((void (*)(id, SEL, float))objc_msgSend)(ctl, sel_registerName("setFloatValue:"), (float)gDevicePct / 100.0f);
+            Ivar lv = class_getInstanceVariable(object_getClass(self), "mBTBatteryControlLabel");
+            id lbl = lv ? object_getIvar(self, lv) : NULL;
+            if (lbl) {
+                char t[16]; snprintf(t, sizeof(t), "%d%%", gDevicePct);
+                CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, t, kCFStringEncodingUTF8);
+                if (s) { ((void (*)(id, SEL, id))objc_msgSend)(lbl, sel_registerName("setStringValue:"), (id)s); CFRelease(s); }
+            }
+        }
+    }
 }
 
 /* Install the _checkBatteryTimer swizzle. Called EARLY from willSelect (before the pane's one-shot
@@ -731,6 +766,36 @@ static int cell_is_mt2(id v, int depth) {
     return 0;
 }
 
+/* The MT2 row's battery glyph in the Bluetooth pane's device list is a BT_BatteryControl the pane
+ * SHOWS (hidden bound to objectValue.showBattery) but never feeds a value for our device — it sits at
+ * -1 (empty), the same stale pattern as the Trackpad pane's control (RE: the view-tree dump). We set
+ * it ourselves to the device's battery fraction, matched to the MT2 row by its "Magic Trackpad 2"
+ * label. Value scale matches the Trackpad control (0.0-1.0). */
+static void set_bt_battery_control(id view, int depth, float frac) {
+    if (!view || depth > 8) return;
+    if (strstr(object_getClassName(view), "BT_BatteryControl")) {
+        ((void (*)(id, SEL, float))objc_msgSend)(view, sel_registerName("setFloatValue:"), frac);
+        return;
+    }
+    id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+    unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
+    for (unsigned long i = 0; i < n; i++)
+        set_bt_battery_control(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1, frac);
+}
+static void mt2_paint_bt_list_battery(id view, int depth, float frac) {
+    if (!view || depth > 16) return;
+    Class cellCls = objc_getClass("NSTableCellView");
+    if (cellCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(view, sel_registerName("isKindOfClass:"), cellCls)
+        && cell_is_mt2(view, 0)) {
+        set_bt_battery_control(view, 0, frac);   /* the MT2 row — set its control, don't recurse further */
+        return;
+    }
+    id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+    unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
+    for (unsigned long i = 0; i < n; i++)
+        mt2_paint_bt_list_battery(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1, frac);
+}
+
 /* The image swizzle may install AFTER the pane already bound the row icons (the osax loads once the
  * pane is up), so the MT2 row shows the stale original the binding cached (reloadData + KVO pokes
  * don't re-fire it). Fix: re-establish the image view's "value" binding to the SAME device-tied
@@ -835,7 +900,22 @@ static void dump_view_tree(id view, int depth) {
             snprintf(imginfo, sizeof(imginfo), " IMG=%s", ns ? ns : "<anon>");
         }
     }
-    LOG("tree %s%s hidden=%d val=%.2f \"%s\"%s", pad, cn, hid, fv, txt ? txt : "", imginfo);
+    /* Binding hunt: what keypath does this view bind value/image/hidden to? Reveals what a glyph reads
+     * (e.g. the BT device-list battery indicator -> objectValue.device.<something>). */
+    char bindinfo[192]; bindinfo[0] = 0;
+    if (responds(view, sel_registerName("infoForBinding:"))) {
+        CFStringRef bkeys[3] = { CFSTR("value"), CFSTR("image"), CFSTR("hidden") };
+        const char  *bnames[3] = { "value", "image", "hidden" };
+        char *bp = bindinfo; int rem = (int)sizeof(bindinfo);
+        for (int b = 0; b < 3; b++) {
+            id info = ((id (*)(id, SEL, id))objc_msgSend)(view, sel_registerName("infoForBinding:"), (id)bkeys[b]);
+            if (!info) continue;
+            id kp = ((id (*)(id, SEL, id))objc_msgSend)(info, sel_registerName("objectForKey:"), (id)CFSTR("NSObservedKeyPath"));
+            const char *kps = kp ? ((const char *(*)(id, SEL))objc_msgSend)(kp, sel_registerName("UTF8String")) : NULL;
+            if (kps && rem > 4) { int w = snprintf(bp, (size_t)rem, " %s->%s", bnames[b], kps); if (w > 0) { bp += w; rem -= w; } }
+        }
+    }
+    LOG("tree %s%s hidden=%d val=%.2f \"%s\"%s%s", pad, cn, hid, fv, txt ? txt : "", imginfo, bindinfo);
     id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
     if (!subs) return;
     unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
@@ -859,10 +939,34 @@ static void aux_tick_start(void) {
     dispatch_source_set_event_handler(gAuxTick, ^{
         install_device_icon_swizzle("auxtick");          /* belt: ensure the image swizzle is in */
         kvo_refresh_mt2_icon(front_window_content(), 0);  /* re-read if swizzled after the pane bound it */
+        /* Feed the Bluetooth pane's device-list battery glyph (the pane leaves it empty for the MT2). */
+        { int ov = mt2_batt_override();
+          int gpct = (ov >= 0 && ov <= 100) ? ov : mt2_read_node_battery();
+          if (gpct >= 1 && gpct <= 100) gDevicePct = gpct;
+          if (gDevicePct >= 0) mt2_paint_bt_list_battery(front_window_content(), 0, (float)gDevicePct / 100.0f); }
         if (access("/tmp/mt2_pane_dump", F_OK) == 0) {
             unlink("/tmp/mt2_pane_dump");
-            id root = front_window_content();
-            if (root) { LOG("tree dump BEGIN (front window)"); dump_view_tree(root, 0); LOG("tree dump END"); }
+            /* Walk EVERY window's contentView (not just the front one) — the Bluetooth pane's device
+             * list can live in a window the front-window probe missed, which is why an earlier dump
+             * came up empty. Each window is labelled by title. */
+            LOG("tree dump BEGIN (all windows)");
+            Class appc = objc_getClass("NSApplication");
+            id nsapp = appc ? ((id (*)(Class, SEL))objc_msgSend)(appc, sel_registerName("sharedApplication")) : NULL;
+            id wins = nsapp ? ((id (*)(id, SEL))objc_msgSend)(nsapp, sel_registerName("windows")) : NULL;
+            unsigned long wn = wins ? ((unsigned long (*)(id, SEL))objc_msgSend)(wins, sel_registerName("count")) : 0;
+            for (unsigned long i = 0; i < wn; i++) {
+                id w = ((id (*)(id, SEL, unsigned long))objc_msgSend)(wins, sel_registerName("objectAtIndex:"), i);
+                const char *wt = "";
+                if (responds(w, sel_registerName("title"))) {
+                    id t = ((id (*)(id, SEL))objc_msgSend)(w, sel_registerName("title"));
+                    if (t) wt = ((const char *(*)(id, SEL))objc_msgSend)(t, sel_registerName("UTF8String"));
+                }
+                signed char vis = ((signed char (*)(id, SEL))objc_msgSend)(w, sel_registerName("isVisible"));
+                LOG("tree window[%lu] \"%s\" visible=%d", i, wt ? wt : "", vis);
+                id cv = ((id (*)(id, SEL))objc_msgSend)(w, sel_registerName("contentView"));
+                if (cv) dump_view_tree(cv, 0);
+            }
+            LOG("tree dump END");
         }
     });
     dispatch_resume(gAuxTick);
