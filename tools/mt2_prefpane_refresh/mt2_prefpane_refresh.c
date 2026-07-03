@@ -77,6 +77,17 @@ static int service_present(const char *cls) {
     return 0;
 }
 
+/* Launch the shared Sparkle updater helper on demand (one shared copy, same path for the osax + SIMBL
+ * routes). `open` returns immediately; the helper runs its own UI. Fired by the repurposed "Check for
+ * Updates" button (section 5). */
+static void mt2_launch_updater(void) {
+    const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
+    if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
+    pid_t pid = fork();
+    if (pid == 0) { execl("/usr/bin/open", "open", app, (char *)NULL); _exit(127); }
+    LOG("updater: launched %s", app);
+}
+
 /* The front window's contentView (any pane, incl. Bluetooth — gPane only tracks Trackpad). */
 static id front_window_content(void) {
     Class app = objc_getClass("NSApplication");
@@ -589,6 +600,67 @@ static void install_battery_timer_swizzle(const char *src) {
     LOG("swizzled MTTrackpadController _checkBatteryTimer: via %s (hide Change Batteries — sealed MT2)", src);
 }
 
+/* ---- Updater "Check for Updates" button (Phase 4) -------------------------------------------
+ * REUSE Apple's own "Set Up Bluetooth Trackpad…" button (bottom bar, action setupBTMouse:) instead of
+ * building + positioning a new view: on the trackpad view we relabel it "Check for Updates…" and
+ * re-point its action at our updater; on NoTrackpad the real Set-Up onboarding is left alone. The
+ * button keeps Apple's frame + styling. (Version label + GitHub link come next.) */
+
+/* The button's action IMP, installed on the pane class -> launch the shared updater helper. */
+static void mt2_check_updates_imp(id self, SEL _cmd, id sender) {
+    (void)self; (void)_cmd; (void)sender;
+    LOG("updater: Check-for-Updates clicked");
+    mt2_launch_updater();
+}
+
+/* Add -[<pane> mt2CheckForUpdates:] once — a real selector so the button's target/action reaches our
+ * C IMP (we can't @implementation under GC, but class_addMethod with an IMP is fine). */
+static int gUpdaterActionInstalled = 0;
+static void install_updater_action(void) {
+    if (gUpdaterActionInstalled || !gPane) return;
+    Class c = object_getClass(gPane);
+    class_addMethod(c, sel_registerName("mt2CheckForUpdates:"), (IMP)mt2_check_updates_imp, "v@:@");
+    gUpdaterActionInstalled = 1;
+    LOG("updater: installed mt2CheckForUpdates: on %s", class_getName(c));
+}
+
+/* Find the bottom-bar Set-Up/Check button by action — the original setupBTMouse: or, once repurposed,
+ * our mt2CheckForUpdates: (so it's located in either state). */
+static id find_setup_button(id view, int depth) {
+    if (!view || depth > 12) return NULL;
+    Class btnCls = objc_getClass("NSButton");
+    if (btnCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(view, sel_registerName("isKindOfClass:"), btnCls)) {
+        SEL a = ((SEL (*)(id, SEL))objc_msgSend)(view, sel_registerName("action"));
+        const char *an = a ? sel_getName(a) : "";
+        if (!strcmp(an, "setupBTMouse:") || !strcmp(an, "mt2CheckForUpdates:")) return view;
+    }
+    id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+    unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
+    for (unsigned long i = 0; i < n; i++) {
+        id r = find_setup_button(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
+        if (r) return r;
+    }
+    return NULL;
+}
+
+/* On the trackpad view (USB or BT) repurpose the Set-Up button into "Check for Updates…"; on
+ * NoTrackpad Apple's own Set-Up button (a separate view) is left untouched. Idempotent (skips if
+ * already ours). If NoTrackpad turns out to REUSE the same button instance, "Check for Updates" would
+ * show there too — the on-device check that decides whether a restore-on-NoTrackpad is also needed
+ * (the design expects separate buttons). */
+static void mt2_update_setup_button(id root) {
+    if (!current_view_is_trackpad()) return;
+    install_updater_action();
+    id btn = find_setup_button(root, 0);
+    if (!btn) return;
+    SEL a = ((SEL (*)(id, SEL))objc_msgSend)(btn, sel_registerName("action"));
+    if (a && !strcmp(sel_getName(a), "mt2CheckForUpdates:")) return;   /* already repurposed */
+    ((void (*)(id, SEL, id))objc_msgSend)(btn, sel_registerName("setTitle:"), (id)CFSTR("Check for Updates…"));
+    ((void (*)(id, SEL, id))objc_msgSend)(btn, sel_registerName("setTarget:"), gPane);
+    ((void (*)(id, SEL, SEL))objc_msgSend)(btn, sel_registerName("setAction:"), sel_registerName("mt2CheckForUpdates:"));
+    LOG("updater: repurposed Set-Up button -> Check for Updates");
+}
+
 /* Hide the button — called from our own 2s reconcile tick so it fires regardless of whether the
  * pane's battery timer re-runs. Walk from the pane's mainView (covers whichever controller/tab owns
  * the button right now), and refresh the battery row on the same tick (belt for the render owner). */
@@ -601,7 +673,7 @@ static void hide_battery_button_now(void) {
      * window contentView; fall back to mainView if the pane isn't in a window yet. */
     id win = ((id (*)(id, SEL))objc_msgSend)(mv, sel_registerName("window"));
     id root = win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : mv;
-    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mt2_render_battery(root); }
+    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mt2_render_battery(root); mt2_update_setup_button(root); }
     /* NB: the /tmp/mt2_pane_dump view-tree dump lives ONLY in the aux tick (front window) so it works
      * on any pane, incl. Bluetooth; a second trigger here would consume the flag first on the Trackpad
      * pane and dump the wrong window. */
@@ -896,23 +968,7 @@ static void try_capture_current(void) {
 }
 
 /* ============================================================================================
- * 10. UPDATER LAUNCH — the shared Sparkle helper (wired to the pane's control in Phase 4)
- * ============================================================================================ */
-
-/* Launch the shared updater helper (Sparkle host) on demand. Fixed absolute path — one shared copy,
- * same for the osax and SIMBL routes. `open` returns immediately; the helper runs its own UI.
- * Unused until Phase 4 wires it to the pane's "Check for Updates" control. */
-static void mt2_launch_updater(void) __attribute__((unused));
-static void mt2_launch_updater(void) {
-    const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
-    if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
-    pid_t pid = fork();
-    if (pid == 0) { execl("/usr/bin/open", "open", app, (char *)NULL); _exit(127); }
-    LOG("updater: launched %s", app);
-}
-
-/* ============================================================================================
- * 11. INJECTION + SINGLE-LOAD ACTIVATION — the entry points
+ * 10. INJECTION + SINGLE-LOAD ACTIVATION — the entry points
  * ============================================================================================ */
 
 /* Install the pane-navigation swizzles (willSelect fires before didSelect, so the icon swizzle is in
