@@ -45,3 +45,11 @@ else()
   add_test(NAME test_re_bats COMMAND ${CMAKE_COMMAND} -E echo "bats not installed")
   set_tests_properties(test_re_bats PROPERTIES SKIP_RETURN_CODE 0)
 endif()
+
+# Native EdDSA signer round-trip -- only when the signer is built (gated on MT2_ED25519_SRC, like the
+# tool targets in tools/CMakeLists.txt). Generator expressions resolve the built binary paths.
+if(MT2_ED25519_SRC)
+  add_test(NAME test_signer_roundtrip
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_signer_roundtrip.sh
+            $<TARGET_FILE:mt2_sign_update> $<TARGET_FILE:mt2_generate_keys>)
+endif()
