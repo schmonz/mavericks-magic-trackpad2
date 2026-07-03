@@ -24,9 +24,10 @@
 	<string>10.9</string>
 	<key>SUFeedURL</key>
 	<string>https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml</string>
-	<!-- EdDSA public key. PLACEHOLDER until generate_keys provides the real one. -->
+	<!-- EdDSA public key (from generate_keys; matching private key is CI secret SPARKLE_PRIVATE_KEY).
+	     Sparkle verifies every update against this. -->
 	<key>SUPublicEDKey</key>
-	<string>REPLACE_WITH_generate_keys_PUBLIC_KEY</string>
+	<string>E8ZTStxLUfSWtTDg24bwnanLII20R27NVm+RxZtElGs=</string>
 	<key>SUEnableAutomaticChecks</key>
 	<false/>
 </dict>
