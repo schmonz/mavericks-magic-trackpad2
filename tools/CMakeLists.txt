@@ -140,4 +140,11 @@ if(MT2_SPARKLE_FRAMEWORK)
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater-Info.plist ${UPD_APP}/Contents/Info.plist
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${MT2_SPARKLE_FRAMEWORK} ${UPD_APP}/Contents/Frameworks/Sparkle.framework
     COMMENT "Assembling MavericksTrackpad2Updater.app")
+
+  add_custom_target(updater-install
+    COMMAND sudo ${CMAKE_COMMAND} -E rm -rf /usr/local/lib/mt2d/MavericksTrackpad2Updater.app
+    COMMAND sudo ${CMAKE_COMMAND} -E copy_directory ${UPD_APP} /usr/local/lib/mt2d/MavericksTrackpad2Updater.app
+    COMMAND ${CMAKE_COMMAND} -E echo "Installed /usr/local/lib/mt2d/MavericksTrackpad2Updater.app"
+    COMMENT "Installing MavericksTrackpad2Updater.app")
+  add_dependencies(updater-install MavericksTrackpad2Updater)
 endif()

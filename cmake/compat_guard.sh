@@ -41,6 +41,18 @@ for b in $SHIPPED; do
   fi
 done
 
+# Updater binary: only present in Sparkle-enabled builds; skip silently if absent.
+UPD_BIN="$BUILD/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater"
+if [ -f "$UPD_BIN" ]; then
+  checked=$((checked + 1))
+  leak=$(nm -u "$UPD_BIN" 2>/dev/null | awk '{print $NF}' | grep -xE "($POST_10_9)" || true)
+  if [ -n "$leak" ]; then
+    echo "compat guard: post-10.9 symbol(s) in $UPD_BIN:" >&2
+    printf '  %s\n' $leak >&2
+    fail=1
+  fi
+fi
+
 # Fail closed: if we somehow measured nothing, that's a broken build, not a pass.
 [ "$checked" -gt 0 ] || { echo "compat guard: no shipped binaries found under $BUILD (fail-closed)" >&2; exit 2; }
 

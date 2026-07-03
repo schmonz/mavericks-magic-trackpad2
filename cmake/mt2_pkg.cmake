@@ -9,12 +9,25 @@ if(NOT MT2_PKG_VERSION)
   set(MT2_PKG_VERSION ${MT2_VERSION})
 endif()
 set(PKG_OUT ${CMAKE_BINARY_DIR}/mt2d-${MT2_PKG_VERSION}.pkg)
+# Updater app: staged into the pkg only when a Sparkle build is configured.
+# _UPD_PKG_STAGE expands to the copy COMMAND at configure time; empty otherwise.
+if(MT2_SPARKLE_FRAMEWORK)
+  set(_UPD_PKG_STAGE
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater.app
+      ${PKGROOT}/usr/local/lib/mt2d/MavericksTrackpad2Updater.app)
+  set(_UPD_PKG_DEP MavericksTrackpad2Updater)
+else()
+  set(_UPD_PKG_STAGE "")
+  set(_UPD_PKG_DEP "")
+endif()
 add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E remove_directory ${PKGROOT}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/lib/mt2d
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/sbin
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchDaemons
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/MT2Gesture.kext ${PKGROOT}/usr/local/lib/mt2d/MT2Gesture.kext
+  ${_UPD_PKG_STAGE}
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_reenumerate ${PKGROOT}/usr/local/sbin/
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_set_btname  ${PKGROOT}/usr/local/sbin/
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/mt2d-run        ${PKGROOT}/usr/local/sbin/
@@ -43,5 +56,5 @@ add_custom_target(pkg
           ${CMAKE_BINARY_DIR}/mt2d-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
-  DEPENDS kext mt2_reenumerate mt2_set_btname MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch
+  DEPENDS kext mt2_reenumerate mt2_set_btname MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
