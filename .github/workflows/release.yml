@@ -62,9 +62,23 @@ jobs:
           MT2_SDK_CACHE: ${{ github.workspace }}/.mt2-sdk-cache
         run: echo "path=$(sh cmake/fetch_10_9_sdk.sh)" >> "$GITHUB_OUTPUT"
 
-      - name: Configure + build (x86_64 @ 10.9 userland + kext)
+      # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for MavericksTrackpad2Updater.app. Cache keyed on
+      # the fetch script (URL + pinned SHA live there), so bumping Sparkle auto-invalidates the cache.
+      - name: Cache the Sparkle framework
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.mt2-sparkle-cache
+          key: sparkle-1.27.3-${{ hashFiles('cmake/fetch_sparkle.sh') }}
+
+      - name: Fetch + checksum-verify + thin Sparkle 1.27.3
+        id: sparkle
+        env:
+          MT2_SPARKLE_CACHE: ${{ github.workspace }}/.mt2-sparkle-cache
+        run: echo "path=$(sh cmake/fetch_sparkle.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure + build (x86_64 @ 10.9 userland + kext + updater)
         run: |
-          cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}"
+          cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}" -DMT2_SPARKLE_FRAMEWORK="${{ steps.sparkle.outputs.path }}"
           cmake --build build
           echo "userland slice:"; lipo -info build/sbin/mt2_reenumerate
           echo "kext:"; file build/MT2Gesture.kext/Contents/MacOS/MT2Gesture
