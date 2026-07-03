@@ -83,6 +83,19 @@ static int service_present(const char *cls) {
     return 0;
 }
 
+/* Launch the shared updater helper (Sparkle host) on demand. Fixed absolute path — one shared copy,
+ * same for the osax and SIMBL routes (see the single-load choke point). Phase 4 wires this to the
+ * pane's "Check for Updates" control; unused until then. `open` returns immediately; the helper runs
+ * its own UI. */
+static void mt2_launch_updater(void) __attribute__((unused));
+static void mt2_launch_updater(void) {
+    const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
+    if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
+    pid_t pid = fork();
+    if (pid == 0) { execl("/usr/bin/open", "open", app, (char *)NULL); _exit(127); }
+    LOG("updater: launched %s", app);
+}
+
 /* Is the pane currently showing the trackpad view (vs the no-device "NoTrackpad" view)?
  * The controller is a generic InputDeviceNibController for every view, so its class can't
  * tell them apart; the reliable signal is nibFileName — the no-device controller answers
