@@ -599,3 +599,34 @@ watcher (no SIMBL). The FULL clean-room matrix was re-run on-device through the 
 (Rows 1/2/1b/3a/3b/4a + the capture-race) — see `decisions.md` → "Task C.2 FULL matrix" and the
 runthrough/baseline in `prefpane-test-runthrough.md`. MAIN goal (reliable live USB detection) met; only-open
 = the cosmetic single-flash on a redraw (SECONDARY; Apple's `loadMainView` own rebuild, not our logic).
+
+## Three-finger-drag toggle: shown on BT, hidden on USB — mechanism RE'd, cause still open (2026-07-03)
+
+**User goal:** parity — expose the three-finger-drag toggle (and the working gesture) on USB as on BT.
+
+**Pane mechanism (proven, Trackpad.prefPane):** `-[BaseTrackPadController awakeFromNib]` sets
+`mBuildin3FDragAvailable = [self _isServiceAvailable:@"TrackpadThreeFingerDrag"]`. `_isServiceAvailable:@"X"`
+(`-[BaseTrackPadController _isServiceAvailable:]` @0x2ae8) = `IOServiceGetMatchingService({ IOPropertyMatch:
+{ X : kCFBooleanTrue } })` → YES iff SOME IOService in the registry carries top-level property `X=true`.
+Every gesture toggle gates the same way (`TrackpadSecondaryClickCorners`→mCornerClickAvailable,
+`TrackpadMomentumScroll`→mBuildinMomentumScrollAvailable, `TrackpadFourFingerGestures`, `TrackpadEditing`→
+mBuildinEditing). So the toggle shows iff a node publishes `TrackpadThreeFingerDrag=true`.
+
+**The twist (checked our own kext — do this BEFORE theorising from the pane side):**
+- USB `MT2USBReader.cpp:198-211` ALREADY seeds `TrackpadThreeFingerDrag=true` at the TOP LEVEL of the
+  genuine AppleUSBMultitouchDriver init props (`initp`) — plus Momentum/FourFinger/SecondaryClick — AND
+  inside `MultitouchPreferences` + `TrackpadUserPreferences`.
+- BT `MT2BTReader.cpp:364-366` (`bt_build_bnb_props`) seeds Momentum/SecondaryClick/FourFinger in
+  `DefaultMultitouchProperties` but **NOT** ThreeFingerDrag.
+- Yet the user sees **BT shows the toggle, USB hides it** — the INVERSE of "seed the top-level property →
+  toggle appears." So the availability query resolves true on BT / false on USB for a reason other than our
+  seed presence.
+
+**Hypotheses:** (a) our USB top-level seed doesn't survive onto a registry node
+`IOServiceGetMatchingService` matches (initp consumed/moved by the genuine driver's `start`); (b) BT's
+3FDrag comes from the genuine AMD's own defaults / MultitouchSupport-by-device-family, not from any props we
+set (createMultitouchHandler copies `DefaultMultitouchProperties`→AMD, but 3FDrag isn't in ours → it's
+Apple's). **REAL DIAGNOSTIC (on-device, BOTH transports):** `ioreg -l -w0 | grep -i -B25
+TrackpadThreeFingerDrag` — which node carries it top-level on BT (the one the pane finds), and does the USB
+node actually carry our seed at top level? THEN the fix = put the property on the matchable node/level on
+USB. There is NO off-device one-liner; the diagnostic must run first. (Memory: `mt2-three-finger-drag-usb-parity`.)

@@ -361,6 +361,18 @@ See `mt2-device-writable-name` (mechanism RE'd).
 [Earlier same-day note claiming
 "no writable field" was WRONG — it missed this EIR name field.]
 
+**Rename routing + the mirror (RE'd + built 2026-07-03).** The pane's device-list right-click **Rename**
+writes ONLY the host `displayName` alias — confirmed two ways: (1) "a manual Rename persisted" as
+`displayName` above; (2) the Bluetooth pane binary calls NEITHER `setDisplayName:` NOR `setDeviceName:` (it
+only reads `getDisplayName`); the write happens in `blued`/the prefs cache, and the pane's device menu is
+built by `DeviceMenuCreator` (`preferenceItemsForDevice:` adds only Option-gated debug rows). Evidence the
+rename never reaches onboard: the unit still advertises `02 01` despite past pane renames. **To make Rename
+follow the device onboard we MIRROR:** a `com.schmonz.mt2namemirror` LaunchAgent `WatchPaths` the BT prefs
+and runs `mt2_set_btname --mirror`, which reads the new `displayName` and pushes it onboard via
+`setDeviceName:` (idempotent — no-ops if unchanged). Built (commit `c7de7be`), ON-DEVICE UNTESTED. Staging
+plan: prove the `setDeviceName:` write lands, THEN relocate the ~15 mirror lines into the injected osax
+(which already edits the BT device list) and drop the standalone agent.
+
 ### Picture — ✅ FIXED 2026-07-02 (pane row = a VIEW, NOT the vault); vault RE below was the WRONG premise
 **REALITY CORRECTION (2026-07-02, mt2-prefpanery session — shipped, on-device verified).** The entire
 vault story below is real for the vault API, but it is **NOT how the Bluetooth PANE's device-row icon is
