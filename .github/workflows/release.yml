@@ -58,7 +58,7 @@ jobs:
       # archive being up every time. Key is tied to the fetch script (URL + pinned
       # SHA-256 live there), so bumping the SDK auto-invalidates the cache.
       - name: Cache the MacOSX10.9 SDK
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-sdk-cache
           key: macosx10.9-sdk-${{ hashFiles('cmake/fetch_10_9_sdk.sh') }}
@@ -72,7 +72,7 @@ jobs:
       # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for MavericksTrackpad2Updater.app. Cache keyed on
       # the fetch script (URL + pinned SHA live there), so bumping Sparkle auto-invalidates the cache.
       - name: Cache the Sparkle framework
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-sparkle-cache
           key: sparkle-1.27.3-${{ hashFiles('cmake/fetch_sparkle.sh') }}
@@ -87,7 +87,7 @@ jobs:
       # .pkg -- no Swift-binary dependency. Cache keyed on the fetch script (pinned commit + SHA live
       # there), so bumping the lib auto-invalidates the cache.
       - name: Cache orlp/ed25519
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-ed25519-cache
           key: ed25519-${{ hashFiles('cmake/fetch_ed25519.sh') }}
