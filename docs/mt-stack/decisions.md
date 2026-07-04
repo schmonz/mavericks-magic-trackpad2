@@ -22,6 +22,40 @@ Apple prefpane = mandatory**, and the pane matches `BNBTrackpadDevice`. Dropping
 pane. **Reopening criterion:** if "stock pane mandatory" were relaxed (e.g. an own-pane workstream
 shipped), REPLACE becomes viable again.
 
+**Accumulating genuine-reuse tax on USB (ammunition for REPLACE — don't relitigate these items
+individually; weigh them here).** BT hands us *clean seams*: `BNBTrackpadDevice` delegates through a
+`BluetoothMultitouchTransport` we can interpose, and we observe input frames independently of the AMD —
+so BT gets condition-waits and clean geometry answers. USB's `AppleUSBMultitouchDriver` is **monolithic**:
+it does its own USB `DeviceRequest`s through private, stripped, non-virtual helpers
+(`_getFeatureReportInfo`/`_deviceGetReport`/`configureDataMode`) and owns the interrupt pipe. No seam.
+That forces two cruder bridges, each a settled decision:
+
+1. **USB enable settle (`MT2_USB_ENABLE_SETTLE_MS = 50`) — KEEP, proven necessary (2026-07-04).** After
+   the multitouch-enable (which ACKs immediately but switches mode *async*), we must wait before starting
+   the AMD, or its `configureDataMode` storms a still-mouse-mode device with failing GET_REPORTs
+   (`0xe000404f`) — the substrate of the `!pageList phys_addr` panic. On-device evidence: reorder-only
+   (no settle) *reproduces* the storm (0x28 mouse packets + a 0xc8 retry loop, 24 vs 17 stalls); reorder
+   + 50 ms is clean. The *principled* fix is a condition-wait — exactly what BT reconnect-v2 does
+   (`retry-until-first-frame`, `gSteadyConn == gConnId`) — but on USB the first `0x31` frame arrives
+   *through* the pipe the AMD owns, so watching for it pre-AMD means claiming the interrupt pipe
+   ourselves first: more code + owning the pipe, for a 50 ms win. Not worth it under genuine-reuse;
+   *trivial* under REPLACE (we'd own the enable→configure→first-frame sequence natively). **Don't
+   re-propose deleting the settle.**
+
+2. **USB geometry-probe residual — LIVE WITH IT; interpose (Option B) declined (2026-07-04).** On USB the
+   AMD probes the device for geometry reports (`0xd0/d1/d3/d9/a1`) via `_getFeatureReportInfo`; the device
+   lacks them (`MaxFeatureReportSize = 1`) so they fail `0xe000404f` — harmless (we seed geometry via
+   `usb_build_init_props`, one source shared with BT's `mt2_fill_geometry_report`). BT interposes these
+   away on its transport; USB has no transport to interpose, so "answering" them would need
+   binary-patching a private fn or hooking the shared `IOUSBInterface` — more code + risk, no safety win.
+   Under REPLACE they'd simply never be issued.
+
+**The pattern (the real REPLACE ammunition):** every USB bridge is cruder than its BT twin because we
+reuse Apple's *monolithic* USB driver instead of a delegating one. The geometry *data* is already unified
+in `src/mt2_geometry.c`; the *injection/timing* can't be, because Apple's two drivers differ. Each new
+such tax (the settle, the geometry residual, and whatever comes next) is a data point that an OWNED USB
+driver would erase — weigh the ledger here, not the individual items.
+
 ### VID/PID match path (route-2 matching) — *not functioning*
 We hoped to get matched onto the device by advertising the MT2's IDs. The matcher reads the **real
 DID from the controller-side store**, not from our personality, so we can't win matching that way.
