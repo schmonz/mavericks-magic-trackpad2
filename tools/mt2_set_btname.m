@@ -25,6 +25,17 @@
 - (void)setDisplayName:(NSString *)name;
 @end
 
+/* BluetoothHIDDevice::setDeviceName: writes the ON-DEVICE friendly name — a HID feature-report write
+ * that persists ON the device and follows it across Macs/re-pairs (RE'd 2026-06-30, [[mt2-device-writable-name]])
+ * — vs setDisplayName:'s per-pairing HOST alias. Our unit's on-device name got clobbered to bytes 0x02
+ * 0x01 (our multitouch-enable payload); one clean setDeviceName: write fixes it at the source, so even a
+ * re-fetch/right-click "Update Name" shows it. withBluetoothDevice: may return nil if the device isn't
+ * BT-connected or its ExtendedFeatures gate isn't up (our kext publishes that); both private, declare. */
+@interface BluetoothHIDDevice : NSObject
++ (instancetype)withBluetoothDevice:(IOBluetoothDevice *)device;
+- (void)setDeviceName:(NSString *)name;
+@end
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         NSString *want = (argc > 1) ? @(argv[1]) : @"Magic Trackpad 2";
@@ -37,9 +48,18 @@ int main(int argc, const char *argv[]) {
                          [addr stringByReplacingOccurrencesOfString:@":" withString:@"-"]] != NSOrderedSame)
                 continue;
             if (!addr && [d getClassOfDevice] != MT2_COD) continue;
-            [d setDisplayName:want];
+            [d setDisplayName:want];   /* host-side per-pairing alias (what the pane's Rename sets) */
             printf("set displayName=\"%s\" on %s (CoD=0x%x)\n",
                    [want UTF8String], [[d addressString] UTF8String], (unsigned)[d getClassOfDevice]);
+            /* On-device name (persists on the device, un-clobbers the 0x02 0x01 we wrote). Best-effort:
+             * the HID wrapper is nil unless the MT2 is BT-connected + its ExtendedFeatures gate is up. */
+            BluetoothHIDDevice *hid = [BluetoothHIDDevice withBluetoothDevice:d];
+            if (hid) {
+                [hid setDeviceName:want];
+                printf("  + setDeviceName=\"%s\" on-device (BluetoothHIDDevice)\n", [want UTF8String]);
+            } else {
+                printf("  ! setDeviceName: skipped — HID wrapper nil (MT2 not BT-connected, or ExtendedFeatures gate down)\n");
+            }
             n++;
         }
         if (!n) {
