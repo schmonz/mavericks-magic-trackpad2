@@ -42,6 +42,9 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/MT2PaneRefresh.osax ${PKGROOT}/Library/ScriptingAdditions/MT2PaneRefresh.osax
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/libexec
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_pane_watch ${PKGROOT}/usr/local/libexec/
+  # USB->BT handoff daemon (wakes BT on cable unplug, no click): its watcher binary + a root LaunchDaemon.
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_usb_bt_handoff ${PKGROOT}/usr/local/libexec/
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2usbbthandoff.plist ${PKGROOT}/Library/LaunchDaemons/
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2panewatch.plist ${PKGROOT}/Library/LaunchAgents/
   # Stage the SIMBL plugin bundle in a holding area; postinstall copies it into the SIMBL Plugins
@@ -56,5 +59,5 @@ add_custom_target(pkg
           ${CMAKE_BINARY_DIR}/mt2d-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
-  DEPENDS kext mt2_reenumerate mt2_set_btname MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch ${_UPD_PKG_DEP}
+  DEPENDS kext mt2_reenumerate mt2_set_btname MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch mt2_usb_bt_handoff ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")

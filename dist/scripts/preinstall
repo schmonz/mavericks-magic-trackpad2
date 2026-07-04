@@ -3,6 +3,7 @@
 # stale kext from /Library/Extensions (older layout; it can't load there anyway
 # due to signing).
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
+launchctl unload /Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist 2>/dev/null || true
 kextunload -b com.schmonz.MT2Gesture 2>/dev/null || true
 kextunload -b com.schmonz.MT2USBClaim 2>/dev/null || true
 kextunload -b com.schmonz.MT2Claim 2>/dev/null || true   # legacy id from pre-rename installs
