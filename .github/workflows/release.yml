@@ -165,7 +165,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Pre-release ONLY if the tag has a -suffix (e.g. v0.2.0-beta1). A plain v0.x is now a FULL
           # release so GitHub's /releases/latest/ resolves to it -- which is what the updater's
