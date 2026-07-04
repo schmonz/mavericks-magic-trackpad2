@@ -23,6 +23,7 @@
  */
 #import <Foundation/Foundation.h>
 #import <IOBluetooth/IOBluetooth.h>
+#import <objc/runtime.h>   /* runtime introspection: adapt to whatever name-setter this box's IOBluetooth has */
 
 #define MT2_COD 0x594   /* Peripheral(5) + pointing + digitizer minor 0x25 — the MT2 over BT */
 
@@ -78,11 +79,31 @@ int main(int argc, const char *argv[]) {
             /* On-device name (persists on the device, un-clobbers the 0x02 0x01 we wrote; follows the
              * device across Macs). setDeviceName: no-ops if unchanged, so mirror fires are cheap.
              * Best-effort: the HID wrapper is nil unless the MT2 is BT-connected + ExtendedFeatures up. */
-            BluetoothHIDDevice *hid = [BluetoothHIDDevice withBluetoothDevice:d];
-            if (hid) {
+            id hid = [BluetoothHIDDevice withBluetoothDevice:d];
+            const char *tag = mirror ? "mirror:" : "  +";
+            if (hid && [hid respondsToSelector:@selector(setDeviceName:)]) {
                 [hid setDeviceName:name];
-                printf("%s setDeviceName=\"%s\" on-device (BluetoothHIDDevice)\n",
-                       mirror ? "mirror:" : "  +", [name UTF8String]);
+                printf("%s setDeviceName=\"%s\" on-device (%s)\n",
+                       tag, [name UTF8String], class_getName(object_getClass(hid)));
+            } else if (hid) {
+                /* The wrapper exists but does NOT respond to setDeviceName: — this is what crashed on the
+                 * target box. Almost certainly a framework-version mismatch: setDeviceName: exists in the
+                 * IOBluetooth we RE'd (the dev box) but not in the target's build. Instead of crashing,
+                 * report the REAL runtime class + every name-ish setter it DOES expose, so we learn what
+                 * this machine offers and adapt. (See mt2-kernelcache-re-workflow: running binary != on-disk.) */
+                Class c = object_getClass(hid);
+                printf("%s setDeviceName: NOT available on this box's %s — introspecting:\n",
+                       mirror ? "mirror:" : "  !", class_getName(c));
+                for (Class k = c; k && k != [NSObject class]; k = class_getSuperclass(k)) {
+                    unsigned mc = 0; Method *ms = class_copyMethodList(k, &mc);
+                    for (unsigned i = 0; i < mc; i++) {
+                        const char *s = sel_getName(method_getName(ms[i]));
+                        if (strcasestr(s, "name")) printf("      %s  -[%s %s]\n",
+                            [[NSString stringWithFormat:@"(%@)", NSStringFromClass(k)] UTF8String], class_getName(k), s);
+                    }
+                    if (ms) free(ms);
+                }
+                printf("      -> falling back to the host displayName alias only for this device\n");
             } else {
                 printf("%s setDeviceName: skipped — HID wrapper nil (MT2 not BT-connected, or ExtendedFeatures gate down)\n",
                        mirror ? "mirror:" : "  !");
