@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Root LaunchDaemon (not a per-user Agent): watches for the MT2's USB reader to
+         terminate (cable unplugged) and wakes the deep-idle Bluetooth link via openConnection,
+         so USB->BT handoff needs no physical click. Must be a Daemon so it runs regardless of
+         GUI session; needs root for IOBluetooth openConnection from outside an Aqua session. -->
+    <key>Label</key>
+    <string>com.schmonz.mt2usbbthandoff</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/mt2_usb_bt_handoff</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

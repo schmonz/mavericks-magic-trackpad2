@@ -17,6 +17,13 @@ foreach(t mt2_set_btname mt2_bt_bounce)
   target_link_libraries(${t} "-framework Foundation" "-framework IOBluetooth")
 endforeach()
 
+# mt2_usb_bt_handoff — the no-click USB->BT handoff daemon. Same ObjC/IOBluetooth base as bt_bounce
+# but also needs IOKit for the com_schmonz_MT2USBReader termination notification.
+add_executable(mt2_usb_bt_handoff mt2_usb_bt_handoff.m)
+target_compile_options(mt2_usb_bt_handoff PRIVATE -fobjc-arc)
+target_link_libraries(mt2_usb_bt_handoff
+  "-framework Foundation" "-framework IOBluetooth" "-framework IOKit" "-framework CoreFoundation")
+
 # mt2_pane_watch — Branch A launch-watcher (own process, normal ObjC/ARC + AppKit):
 # sends MT2x/load to System Preferences on launch so our osax loads (no SIMBL).
 add_executable(mt2_pane_watch mt2_prefpane_refresh/mt2_pane_watch.m)
@@ -126,6 +133,18 @@ add_dependencies(name-mirror-install mt2_set_btname)
 add_custom_target(name-mirror-uninstall
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_name_mirror.sh uninstall
   COMMENT "Uninstalling the BT-name mirror LaunchAgent")
+
+# USB->BT handoff LaunchDaemon: arms an IOKit termination notification on com_schmonz_MT2USBReader;
+# on cable-unplug it wakes the deep-idle BT MT2 via openConnection (no physical click). Root daemon
+# (runs regardless of GUI session). Reuses the mt2_usb_bt_handoff target (-> ${CMAKE_BINARY_DIR}/sbin).
+add_custom_target(usb-bt-handoff-install
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_usb_bt_handoff.sh install
+          ${CMAKE_BINARY_DIR}/sbin/mt2_usb_bt_handoff ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2usbbthandoff.plist
+  COMMENT "Installing + loading the USB->BT handoff LaunchDaemon")
+add_dependencies(usb-bt-handoff-install mt2_usb_bt_handoff)
+add_custom_target(usb-bt-handoff-uninstall
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_usb_bt_handoff.sh uninstall
+  COMMENT "Uninstalling the USB->BT handoff LaunchDaemon")
 
 # ---- MavericksTrackpad2Updater.app (Sparkle 1.27 host) --------------------------------------------
 # Built only when a fetched Sparkle framework path is provided (MT2_SPARKLE_FRAMEWORK); otherwise the
