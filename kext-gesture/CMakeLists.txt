@@ -36,14 +36,27 @@ else()
   set(MT2_KEXT_LIBDIR)
 endif()
 
-add_library(mt2gesture_objs OBJECT ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS})
-target_compile_options(mt2gesture_objs PRIVATE
+# The kext as a NORMAL target: CMake compiles AND links it, tracking every source -> object -> link
+# dependency automatically. That is the whole point here -- the old hand-rolled add_custom_command link
+# did NOT auto-track $<TARGET_OBJECTS>, so a recompiled object silently skipped the relink and we loaded a
+# stale kext (the "rm the binary to force relink" footgun). A real target has no such gap. The kext "link"
+# is just the c++ driver with freestanding-kernel flags, expressed via target_link_options.
+add_executable(mt2gesture_kext ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS})
+set_target_properties(mt2gesture_kext PROPERTIES
+  OUTPUT_NAME MT2Gesture
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+target_compile_options(mt2gesture_kext PRIVATE
   ${MT2_KEXT_SYSROOT_FLAGS}
   -mmacosx-version-min=10.9 -fapple-kext -fno-rtti -fno-exceptions
   -std=c++11 -Wno-deprecated-register)
-target_include_directories(mt2gesture_objs PRIVATE
+target_include_directories(mt2gesture_kext PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src
   ${MT2_KEXT_KHDRS})
+# Freestanding-kernel link: no CRT/stdlib, emit a KEXTBUNDLE Mach-O, link libkmod(c++). Same flags the
+# old custom_command used; now CMake owns the link (and thus the object dependencies).
+target_link_options(mt2gesture_kext PRIVATE
+  -arch x86_64 -mmacosx-version-min=10.9 ${MT2_KEXT_SYSROOT_FLAGS}
+  -nostdlib -Wl,-kext -Wl,-no_uuid ${MT2_KEXT_LIBDIR} -lkmodc++ -lkmod)
 
 # Compile the shared .c as C++ (kext mangling must match the .cpp callers; some shared
 # headers lack extern "C", so plain-C compilation would mismatch and fail to link).
@@ -55,25 +68,19 @@ set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/conn_trace.c
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
-# Link the kext Mach-O with the kext link flags.
-set(KEXT_BIN ${CMAKE_CURRENT_BINARY_DIR}/MT2Gesture)
-add_custom_command(OUTPUT ${KEXT_BIN}
-  COMMAND ${CMAKE_CXX_COMPILER} -arch x86_64 -mmacosx-version-min=10.9
-          ${MT2_KEXT_SYSROOT_FLAGS}
-          -nostdlib -Wl,-kext -Wl,-no_uuid ${MT2_KEXT_LIBDIR} -lkmodc++ -lkmod
-          $<TARGET_OBJECTS:mt2gesture_objs> -o ${KEXT_BIN}
-  DEPENDS mt2gesture_objs
-  COMMAND_EXPAND_LISTS
-  COMMENT "Linking MT2Gesture kext binary")
-
-# Assemble the .kext bundle.
+# Assemble the .kext bundle as a TRACKED output (not a fire-once POST_BUILD): it DEPENDS on the target's
+# binary file, so it regenerates whenever the binary relinks OR the bundle goes missing. CMake relinks the
+# binary whenever any source/object changed (the dependency it now tracks for us), so the bundle stays in
+# lockstep -- no stale bundle, no "deleted it and nothing rebuilt it" gap.
 set(KEXT_BUNDLE ${CMAKE_BINARY_DIR}/MT2Gesture.kext)
 add_custom_command(OUTPUT ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
-  DEPENDS ${KEXT_BIN} ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist
+  DEPENDS mt2gesture_kext $<TARGET_FILE:mt2gesture_kext> ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist
   COMMAND ${CMAKE_COMMAND} -E make_directory ${KEXT_BUNDLE}/Contents/MacOS
-  COMMAND ${CMAKE_COMMAND} -E copy ${KEXT_BIN} ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
+  COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mt2gesture_kext> ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist ${KEXT_BUNDLE}/Contents/Info.plist
   COMMENT "Assembling MT2Gesture.kext")
+
+# `kext` stays the public target name (reload / kext-load / pkg / characterize all depend on it).
 add_custom_target(kext ALL DEPENDS ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture)
 
 # Always characterize the freshly-built kext (sub-second; no need to remember).

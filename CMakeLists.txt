@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.13)  # kext link uses target_link_options (added in 3.13)
 
 # Single source of truth for the product version. May carry a pre-release suffix
 # (e.g. -pre.1 / -rc.1) that CMake's project(VERSION) can't hold, so keep the full
