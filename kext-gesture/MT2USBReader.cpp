@@ -32,8 +32,11 @@
 #define USB_HANDLEBUTTON_SLOT_INDEX  (0xb28 / sizeof(void *))
 #define USB_VTABLE_SPAN              0x2000
 /* Settle after the multitouch-enable, before starting Apple's AMD, so the device leaves mouse mode
- * before configureDataMode probes it (panic hardening, [[mt2-usb-bringup-getreport-panic]]). Tune via
- * the oracle: the getReportInfo/0xe000404f storm should be GONE on USB bring-up. */
+ * before configureDataMode probes it (panic hardening). PROVEN NECESSARY on-device 2026-07-04: the
+ * reorder ALONE is not enough — with enable-before-start but NO settle, the mouse-mode storm returns
+ * (0x28 packets + a 0xc8 configureDataMode retry loop, 24 vs 17 stalls). The enable ACKs immediately
+ * but the device's mode switch is async and gh_start is fast, so the AMD still probes a not-ready
+ * device. 50ms measured sufficient (reorder-only = storm; reorder + 50ms = clean). Don't delete it. */
 #define MT2_USB_ENABLE_SETTLE_MS     50
 
 static vtc_clone_t gUsbVtableClone;
