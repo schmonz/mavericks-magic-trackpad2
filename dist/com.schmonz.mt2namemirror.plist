@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- BT-name mirror. When the user renames the MT2 in the Bluetooth prefpane (right-click ->
+         Rename), the pane writes only the per-Mac host alias (displayName) into
+         /Library/Preferences/com.apple.Bluetooth.plist. This agent WatchPaths that file and runs
+         `mt2_set_btname --mirror`, which reads the (new) displayName and pushes it ONBOARD via
+         -[BluetoothHIDDevice setDeviceName:] -- so the rename follows the device across Macs/re-pairs.
+         setDeviceName: no-ops if unchanged, so the frequent BT-prefs writes (RSSI/connection state)
+         cost a cheap read + no-op. A LaunchAgent (not Daemon) so IOBluetooth runs in the Aqua
+         session; ProcessType Background (event-driven, no UI). RunAtLoad does one initial sync. -->
+    <key>Label</key>
+    <string>com.schmonz.mt2namemirror</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/mt2_set_btname</string>
+        <string>--mirror</string>
+    </array>
+    <key>WatchPaths</key>
+    <array>
+        <string>/Library/Preferences/com.apple.Bluetooth.plist</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

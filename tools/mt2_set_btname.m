@@ -14,6 +14,12 @@
  *   mt2_set_btname                       # name all CoD-0x594 paired devices "Magic Trackpad 2"
  *   mt2_set_btname "Magic Trackpad 2"    # explicit name, auto-detect device(s)
  *   mt2_set_btname "Magic Trackpad 2" 04-4b-ed-ec-02-07   # explicit name + address
+ *   mt2_set_btname --mirror [addr]       # MIRROR MODE: read the device's CURRENT displayName (what the
+ *                                        #   pane's right-click Rename wrote) and push it ONBOARD via
+ *                                        #   setDeviceName:, so a UI rename follows the device. Idempotent
+ *                                        #   (setDeviceName: no-ops if unchanged). Driven by a LaunchAgent
+ *                                        #   (dist/com.schmonz.mt2namemirror.plist) that WatchPaths the BT
+ *                                        #   prefs; fires on every rename. Does NOT rewrite the alias.
  */
 #import <Foundation/Foundation.h>
 #import <IOBluetooth/IOBluetooth.h>
@@ -23,6 +29,7 @@
 /* setDisplayName: is shipped in IOBluetooth but not in the public header; declare it. */
 @interface IOBluetoothDevice (MT2Private)
 - (void)setDisplayName:(NSString *)name;
+- (NSString *)getDisplayName;   /* current host alias — what the pane's Rename wrote (mirror source) */
 @end
 
 /* BluetoothHIDDevice::setDeviceName: writes the ON-DEVICE friendly name — a HID feature-report write
@@ -38,8 +45,11 @@
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        NSString *want = (argc > 1) ? @(argv[1]) : @"Magic Trackpad 2";
-        NSString *addr = (argc > 2) ? @(argv[2]) : nil;   /* optional, dash/colon address */
+        /* --mirror: source the name from each device's CURRENT displayName (the pane's Rename result)
+         * and push it onboard only. Otherwise: set the alias + onboard to an explicit/default name. */
+        BOOL mirror = (argc > 1 && strcmp(argv[1], "--mirror") == 0);
+        NSString *want = mirror ? nil : ((argc > 1) ? @(argv[1]) : @"Magic Trackpad 2");
+        NSString *addr = (argc > (mirror ? 2 : 2)) ? @(argv[2]) : nil;   /* optional, dash/colon address */
 
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         int n = 0;
@@ -48,17 +58,34 @@ int main(int argc, const char *argv[]) {
                          [addr stringByReplacingOccurrencesOfString:@":" withString:@"-"]] != NSOrderedSame)
                 continue;
             if (!addr && [d getClassOfDevice] != MT2_COD) continue;
-            [d setDisplayName:want];   /* host-side per-pairing alias (what the pane's Rename sets) */
-            printf("set displayName=\"%s\" on %s (CoD=0x%x)\n",
-                   [want UTF8String], [[d addressString] UTF8String], (unsigned)[d getClassOfDevice]);
-            /* On-device name (persists on the device, un-clobbers the 0x02 0x01 we wrote). Best-effort:
-             * the HID wrapper is nil unless the MT2 is BT-connected + its ExtendedFeatures gate is up. */
+
+            NSString *name = want;
+            if (mirror) {
+                /* The rename the user just made lives in the host alias; mirror THAT onboard. */
+                name = [d getDisplayName];
+                if (!name || name.length == 0) {
+                    printf("mirror: %s has no displayName yet — nothing to push onboard\n",
+                           [[d addressString] UTF8String]);
+                    n++;   /* matched the device; just nothing to do */
+                    continue;
+                }
+            } else {
+                [d setDisplayName:name];   /* host-side per-pairing alias (what the pane's Rename sets) */
+                printf("set displayName=\"%s\" on %s (CoD=0x%x)\n",
+                       [want UTF8String], [[d addressString] UTF8String], (unsigned)[d getClassOfDevice]);
+            }
+
+            /* On-device name (persists on the device, un-clobbers the 0x02 0x01 we wrote; follows the
+             * device across Macs). setDeviceName: no-ops if unchanged, so mirror fires are cheap.
+             * Best-effort: the HID wrapper is nil unless the MT2 is BT-connected + ExtendedFeatures up. */
             BluetoothHIDDevice *hid = [BluetoothHIDDevice withBluetoothDevice:d];
             if (hid) {
-                [hid setDeviceName:want];
-                printf("  + setDeviceName=\"%s\" on-device (BluetoothHIDDevice)\n", [want UTF8String]);
+                [hid setDeviceName:name];
+                printf("%s setDeviceName=\"%s\" on-device (BluetoothHIDDevice)\n",
+                       mirror ? "mirror:" : "  +", [name UTF8String]);
             } else {
-                printf("  ! setDeviceName: skipped — HID wrapper nil (MT2 not BT-connected, or ExtendedFeatures gate down)\n");
+                printf("%s setDeviceName: skipped — HID wrapper nil (MT2 not BT-connected, or ExtendedFeatures gate down)\n",
+                       mirror ? "mirror:" : "  !");
             }
             n++;
         }

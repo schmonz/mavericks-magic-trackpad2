@@ -115,6 +115,18 @@ add_custom_target(prefpane-uninstall
   COMMAND ${CMAKE_COMMAND} -E echo "Removed osax + watcher + LaunchAgent - SIMBL untouched"
   COMMENT "Uninstalling the prefpane-refresh delivery (osax + watcher + LaunchAgent)")
 
+# BT-name mirror LaunchAgent: WatchPaths the Bluetooth prefs; when the pane's Rename writes the host
+# `displayName` alias, `mt2_set_btname --mirror` pushes it ONBOARD via -[BluetoothHIDDevice setDeviceName:]
+# so the rename follows the device. Reuses the mt2_set_btname target (-> ${CMAKE_BINARY_DIR}/sbin).
+add_custom_target(name-mirror-install
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_name_mirror.sh install
+          ${CMAKE_BINARY_DIR}/sbin/mt2_set_btname ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2namemirror.plist
+  COMMENT "Installing + loading the BT-name mirror LaunchAgent")
+add_dependencies(name-mirror-install mt2_set_btname)
+add_custom_target(name-mirror-uninstall
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_name_mirror.sh uninstall
+  COMMENT "Uninstalling the BT-name mirror LaunchAgent")
+
 # ---- MavericksTrackpad2Updater.app (Sparkle 1.27 host) --------------------------------------------
 # Built only when a fetched Sparkle framework path is provided (MT2_SPARKLE_FRAMEWORK); otherwise the
 # rest of the tree still builds without the network fetch. Minimal-declaration main.m (no Sparkle
