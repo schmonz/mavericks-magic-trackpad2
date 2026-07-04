@@ -74,3 +74,93 @@ would fix it. ([[mt2-connect-disconnect-bezel-hud]])
    + whether we return a real value or a constant.
 
 Method + raw per-binary findings: the parallel `tools/re` comb `hid-device-identity-comb` (session workflow).
+
+---
+
+# Behavior & control surfaces (comb #2, 2026-07-04)
+
+A second parallel comb (10 binaries + the `MultitouchHID.plugin` recognizer) over five NEW surfaces:
+gesture, apple-genuineness, preferences, notifications, pairing/OOB. Method: `hid-multi-surface-comb`.
+
+## ⭐ Genuineness — the root icon lever (SEEDABLE)
+
+`-[IOBluetoothObject isAppleDevice]` (@0xcd80) = **`(PnPVendorIDSource==2/USB && PnPVendorID==0x05AC)` OR
+`(source==1/BT-SIG && PnPVendorID==0x004C)`**. This one boolean is what `_IOBluetoothGetGenericTypeStringForDeviceClasses`'s
+`isApple` flag ultimately reflects — i.e. **Apple-vs-generic art at every icon site (BT-pane row, menu extra,
+connect/disconnect bezel HUD) hinges on it.** Our unit IS genuine Apple hardware (vendor `0x05AC`), so this
+is *accurate to seed, not impersonation* — the icon is generic today only because `PnPVendorID`/`…Source`
+aren't reaching the node `isAppleDevice` reads. **Seed `PnPVendorID`=0x05AC (USB)/0x004C (BT) + `PnPVendorIDSource`
+on our node → `isApple` true → Apple trackpad art everywhere, no swizzle.** Closes the pane-picture + bezel-HUD
+items at the root. (Verify which node/path the bezel HUD actually resolves through — it showed a mouse image,
+so confirm CoD→trackpad + isApple on that path.) Sibling checks (`appleBluetoothMousePresent/HIDDevicePresent/
+KeyboardPresent`) instead match the IOKit service class `IOAppleBluetoothHIDDriver` + HID usage.
+
+## Gesture — the recognizer is a data-driven chord engine
+
+- **Recognizer** = `MultitouchHID.plugin` (`MTTrackpadHIDManager`). `determineHIDManagerSettings()`
+  (@0x1c390) reads two per-device dicts off our IOService node — **`TrackpadUserPreferences` +
+  `MultitouchPreferences`** — and pulls one enable-key per gesture into a settings struct:
+  `TrackpadThreeFingerDrag, TrackpadScroll, TrackpadHorizScroll, TrackpadPinch, TrackpadRotate,
+  TrackpadRightClick, TrackpadCornerSecondaryClick, Trackpad{Two,Three,Four,Five}Finger…Gesture,
+  TrackpadBasicMode, HIDScrollZoomModifierMask`. **Every gesture is enabled/blocked purely by its key** →
+  seed-a-property on the node.
+- **`MTTrackpadHIDManager::hwSupports3FDrag()` (@0x1dabc)** — the deeper three-finger-drag gate: a
+  **hardware-capability bit test (`test $0x2, 0xb0(rdi)`) AND** the `TrackpadThreeFingerDrag` node property.
+  This is the real gate behind the USB-parity item ([[mt2-three-finger-drag-usb-parity]]) — if USB ever lacks
+  it, it's this cap bit, not the pref.
+- **Gesture vocabulary** = a plist parsed by `PListGestureParser` (`Gesture Sets` / `Chord Mappings` /
+  `Action Events` / `Motion Sensitivities`; categories Swipe / Polar Swipe / **Edge Swipe** / Pinch / Rotate /
+  Scroll / ScrollPan / Drag / Tap / Zoom / Momentum / **Slide/BeginSlide**). This is the data-driven
+  definition of which gestures exist; `Slide/BeginSlide` + `Edge Swipe` are where the edge-clamp behavior
+  ([[mt2-cursor-edge-clamp]]) lives.
+- **Pane side** (`Trackpad.prefPane`): the full gesture list is `MTTrackpadGesture` subclasses (Click,
+  SecondaryClick, Lookup, Drag, Pinch, ScreenZoom, SmartZoom, Scroll, Dashboard, MissionControl, Launchpad,
+  NotificationCenter, ShowDesktop, Rotate, Navigation, AppExpose) + `MTTGestureBackEnd`; each toggle
+  read/writes `com.apple.trackpad.<name>Gesture` into BOTH driver domains and pushes to the kernel via
+  `BSKernelPreferenceChanged`. 4-finger rows are gated by `fourFingerGesturesAvailable` ← `magicTrackpadFound`.
+- Notification-Center edge gesture: `NotificationCenterGestureMode` / `AlwaysGenerateNotificationCenterGesture`
+  / `TwoFingerNotificationCenter`, gated on the NC process being alive.
+
+## Preferences — where every knob lives
+
+- **Per-device (the config seam):** `TrackpadUserPreferences` + `MultitouchPreferences` dicts published on our
+  IOService node — the recognizer reads these directly. This is how settings reach the gesture engine.
+- **Per-transport domains:** `com.apple.AppleMultitouchTrackpad` (USB) vs
+  `com.apple.driver.AppleBluetoothMultitouch.trackpad` (BT) — the pane writes toggles here; keep both in sync.
+- **Global hidden knobs — `com.apple.MultitouchSupport`:** `ForceSimpleParser` (kill gestures),
+  `ThumbZoneHeight`, `DispatchAllHIDEvents`, `NoPointing`, `ForceAutoOrientation`/`TrackpadOrientationMode`,
+  `ScrollMomentum`, `PointerInertia`, `DisableGestureStats`. **`com.apple.Bluetooth`:**
+  `BluetoothAutoSeekPointingDevice`/`…Keyboard` (auto-pair-on-plug). Debug flags seen: `Debug-ShowLowBatteryButton`,
+  our own `debug.mt2_batt`.
+
+## Notifications — connect/disconnect/wake (feeds the USB→BT handoff)
+
+- **Per-device BT:** `-[IOBluetoothObject registerForConnectNotifications:selector:]` +
+  `registerForDisconnectNotification:selector:` — the direct connect/disconnect hooks for a clean
+  click-free USB→BT handoff ([[mt2-usb-unplug-bt-handoff]]) and reconnect handling.
+- **Multitouch:** `MTSimpleEventDispatcher` posts distributed `com.apple.MultitouchSupport.HID.DeviceAdded`/
+  `…DeviceRemoved` on attach/detach; `MultitouchHID::registerForSleepWakeNotifications` (`IORegisterForSystemPower`)
+  for wake re-init.
+- **Panes:** distributed observers for `com.apple.Bluetooth` (pref refresh) + `com.apple.menuextra.added/removed`.
+
+## Pairing / OOB — "plug in once" is reachable on Broadcom hosts
+
+- `-[IOBluetoothHostController addHIDEmulationDevice:classOfDevice:linkKey:]` is a **STUB** (returns
+  `0xE00002C7`) on the base class — BUT **`-[BroadcomHostController addHIDEmulationDevice:…]` is a REAL impl**
+  via `_BluetoothHCIDispatchUserClientRoutine` (HCI vendor cmd). So OOB HID-emulation IS available if the host
+  controller is Broadcom — upgrades [[mt2-usb-oob-pairing-api]] from "stubbed on 10.9" to "stubbed on the base
+  class, real on Broadcom."
+- Real primitives confirmed: `BluetoothHCIWriteStoredLinkKey:inDeviceAddress:inLinkKey:` (host-side key store),
+  `-[AppleBluetoothHIDDevice connectToHost:linkKey:]` (device-side connect-back, writes an IORegistry CF prop),
+  `BluetoothHCIReadLocalOOBData`/`RemoteOOBDataRequestReply`, `pairSSPWithJustWorks:`/`…NumericComparison:`.
+  `IOBluetoothAutomaticDeviceSetup deviceSetupWithDelegate:…notifyWhenMousePluggedIn:` = the auto-pair-on-plug hook.
+
+## Top actionable unlocks (ranked)
+
+1. **Seed `PnPVendorID`=0x05AC/0x004C + `PnPVendorIDSource`** → `isApple` true → Apple art at ALL icon sites
+   (pane/menu/bezel), no swizzle. Verify our node currently lacks it; it's genuine so it's correct to seed.
+2. **Gestures are per-key on the node** (`TrackpadUserPreferences`/`MultitouchPreferences`) — full enable/tune
+   control by seeding; `hwSupports3FDrag` needs the `+0xb0` bit `0x2` cap set + the property.
+3. **Connect/disconnect hooks** (`registerForConnect/DisconnectNotification`) = the clean seam for the
+   click-free USB→BT handoff.
+4. **OOB onboarding is real on Broadcom** (`BroadcomHostController addHIDEmulationDevice` + `WriteStoredLinkKey`).
