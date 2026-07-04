@@ -150,6 +150,13 @@ static uint32_t bt_uptime_ms(void) {
  * debug.mt2_log>=1; `re/conn-trace <klog>` renders the per-connection timeline + STEADY/FAIL
  * verdict. Pure observation of the CURRENT flow — not yet the state-machine-driven connect. */
 static int gConnId = 0;
+/* The connId whose FIRST real multitouch frame we've seen (STEADY). Set by bt_interpose_shim on the first
+ * decoded frame; read by interposeTimerFired to gate the multitouch-enable RETRY. Keyed on gConnId, so a
+ * fresh connection (gConnId bumped) is automatically < STEADY until it produces a frame — no reset needed.
+ * This is the whole teardown-safety of the reconnect fix: we re-enable ONLY while gSteadyConn != gConnId
+ * (pre-first-frame bring-up), so a working device (already STEADY) powering off never triggers a re-enable
+ * during its teardown — which was exactly the v1 bug (v1 re-enabled on any mouse-mode report). */
+static volatile int gSteadyConn = -1;
 static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
                          const void *bnb, const void *deleg, int ret) {
     if (gMT2LogLevel < 1) return;   /* skip formatting when diagnostics are off */
@@ -235,9 +242,10 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
               length, length ? b[0] : 0, drc); } }
     if (drc != 0) return;                                                 /* not multitouch — drop */
 
-    /* STEADY: first real multitouch frame of this connection = the pad is streaming end-to-end. */
-    { static int gSteadyConn = -1; if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
-        bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, gGenuineBnb, 0, 0); } }
+    /* STEADY: first real multitouch frame of this connection = the pad is streaming end-to-end. Recording
+     * gSteadyConn here STOPS the enable-retry loop in interposeTimerFired (file-scope; see its decl). */
+    if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
+        bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, gGenuineBnb, 0, 0); }
 
     /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 X/Y + ts, to correlate the
      * faithful decoded position against the recognizer's norm.x (re/mt-contacts). If norm.x saturates
@@ -645,11 +653,17 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
         if (!gCtrlInterposedChannel && cg)
             cg->runAction(&com_schmonz_MT2BTReader::controlInterposeInGate, self->fChannel);
 
-        if (self->fReEnableCount < 8) {
-            /* Phase 2a: re-send the 0xF1 enable on the control channel a few times to force the
-             * device back into multitouch mode after BNB's handleStart knocked it to mouse mode
-             * (findings S2.11). self->fChannel is the control channel (the manual-start + this timer
-             * are armed only when fIsControl). */
+        /* Phase 2a: re-send the 0xF1 enable to force the device out of the basic HID mouse mode BNB's
+         * handleStart knocked it into (findings S2.11) — and KEEP re-sending until this connection's first
+         * real multitouch frame (gSteadyConn == gConnId). On a rapid/unstable reconnect the enable
+         * setReport can fail (channel-not-ready, 0xe00002bc) for the first few seconds; the old fixed
+         * 8-sends-then-give-up window would then miss it and leave the device stuck in mouse mode = no
+         * cursor until a manual tap ([[bt-reconnect-enable-fails]]). Retrying until the frame flows fixes
+         * that. TEARDOWN-SAFE: we only run while gSteadyConn != gConnId, so a device that already reached
+         * STEADY and is now powering off never re-enters this branch — that (re-enabling on a working
+         * device's power-off) was the v1 regression. Cadence: fast (250ms) for the initial push, then gentle
+         * (1s) so a genuinely-stuck-but-connected device isn't spammed. */
+        if (gSteadyConn != gConnId) {
             if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
             /* HANDLER_UP once the trigger has spawned BNB's AMD (visible at gGenuineBnb+0x1b0). */
             if (gGenuineBnb) {
@@ -658,16 +672,21 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
                 if (amd && gHandlerConn != gConnId) { gHandlerConn = gConnId;
                     bt_conntrace(CSM_HANDLER_UP, CSM_EV_HANDLER_SPAWNED, 0, gGenuineBnb, amd, 0); }
             }
-            if (++self->fReEnableCount == 8) {
-                IOLog("MT2BTReader: Path A re-enable phase done (%d sends)\n", self->fReEnableCount);
-                bt_conntrace(CSM_MT_MODE, CSM_EV_MT_MODE_CONFIRMED, self->fChannel, gGenuineBnb, 0, 0);
-            }
-            ts->setTimeoutMS(250);   /* ~2 s of re-enables, then transition to the battery poll */
+            self->fReEnableCount++;
+            if (self->fReEnableCount == 8)
+                IOLog("MT2BTReader: initial re-enable push done; retrying gently until first frame\n");
+            ts->setTimeoutMS(self->fReEnableCount < 8 ? 250 : 1000);
             return;
         }
 
-        /* Phase 2b (steady state): poll the battery. bt_control_shim catches the response and
-         * publishes "BatteryPercent" for the prefpane. Slow cadence — a battery moves slowly. */
+        /* First multitouch frame seen for this connection -> confirmed in multitouch mode. Announce once,
+         * then Phase 2b (steady state): poll the battery. bt_control_shim catches the GET_REPORT(0x90)
+         * response and publishes "BatteryPercent". Slow cadence — a battery moves slowly. */
+        if (self->fReEnableCount >= 0) {   /* -1 sentinel = already announced for this connection */
+            IOLog("MT2BTReader: multitouch confirmed (first frame after %d enables)\n", self->fReEnableCount);
+            bt_conntrace(CSM_MT_MODE, CSM_EV_MT_MODE_CONFIRMED, self->fChannel, gGenuineBnb, 0, 0);
+            self->fReEnableCount = -1;
+        }
         if (cg) cg->runAction(&com_schmonz_MT2BTReader::pollBatteryInGate, self);
         ts->setTimeoutMS(MT2_BATTERY_POLL_MS);
         return;
