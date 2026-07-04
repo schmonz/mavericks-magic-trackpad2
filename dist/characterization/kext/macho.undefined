@@ -5,6 +5,7 @@ _IOLockLock
 _IOLockUnlock
 _IOLog
 _IOMalloc
+_IOSleep
 __ZN10IOWorkLoop8workLoopEv
 __ZN11OSMetaClass18allocClassWithNameEPKc
 __ZN11OSMetaClass21_RESERVEDOSMetaClass0Ev

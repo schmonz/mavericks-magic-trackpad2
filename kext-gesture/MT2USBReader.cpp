@@ -31,6 +31,10 @@
  * lacks, so handleButton never fires; we call it ourselves with a button report (byte[15]=state). */
 #define USB_HANDLEBUTTON_SLOT_INDEX  (0xb28 / sizeof(void *))
 #define USB_VTABLE_SPAN              0x2000
+/* Settle after the multitouch-enable, before starting Apple's AMD, so the device leaves mouse mode
+ * before configureDataMode probes it (panic hardening, [[mt2-usb-bringup-getreport-panic]]). Tune via
+ * the oracle: the getReportInfo/0xe000404f storm should be GONE on USB bring-up. */
+#define MT2_USB_ENABLE_SETTLE_MS     50
 
 static vtc_clone_t gUsbVtableClone;
 static bool        gUsbVtableCloned = false;
@@ -254,6 +258,20 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     mt2_usb_reframe_reset();          /* fresh per-finger lifecycle history for this stream */
     gLastUsbButton = 0;               /* fresh physical-button edge state for this stream */
 
+    /* PANIC HARDENING (2026-07-04, [[mt2-usb-bringup-getreport-panic]]): send MT2's USB multitouch-
+     * enable and let the device leave mouse mode BEFORE starting Apple's AMD. If the AMD starts on a
+     * still-mouse-mode device, its configureDataMode floods the not-ready device with feature-report
+     * probes that all stall (0xe000404f) — the storm behind the !pageList panic. The enable is a
+     * control transfer on fIntf (valid since start(), independent of the AMD), so it's safe to send
+     * here, before gh_start. Bounded settle for the mode switch (tune MT2_USB_ENABLE_SETTLE_MS). */
+    IOUSBDevRequest en;
+    uint8_t payload[2] = {0x02, 0x01};
+    en.bmRequestType = 0x21; en.bRequest = 0x09;
+    en.wValue = 0x0302; en.wIndex = 1; en.wLength = sizeof(payload); en.pData = payload;
+    IOReturn enrc = fIntf->DeviceRequest(&en);
+    IOLog("MT2USBReader: multitouch-enable SET_REPORT rc=0x%08x (pre-start)\n", enrc);
+    IOSleep(MT2_USB_ENABLE_SETTLE_MS);   /* device switches out of mouse mode before the AMD probes */
+
     static const gh_config_t cfg = { "AppleUSBMultitouchDriver", "AppleUSBMultitouchDriver",
                                      usb_build_init_props };
     if (gh_start(&fHost, &cfg, &kUsbAdapter, this, fIntf) != 0) {
@@ -262,14 +280,6 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     }
     fGenuine = (IOService *)fHost.obj;
     (void)mt2_coordinator_activate(MT2_XPORT_USB, 0);   /* no-op seam (MT2 single-transport) */
-
-    /* The genuine driver doesn't send MT2's USB multitouch-enable; we do. */
-    IOUSBDevRequest en;
-    uint8_t payload[2] = {0x02, 0x01};
-    en.bmRequestType = 0x21; en.bRequest = 0x09;
-    en.wValue = 0x0302; en.wIndex = 1; en.wLength = sizeof(payload); en.pData = payload;
-    IOReturn enrc = fIntf->DeviceRequest(&en);
-    IOLog("MT2USBReader: multitouch-enable SET_REPORT rc=0x%08x\n", enrc);
 
     /* Post-liftoff absence-frame pump: a workloop timer that keeps a brief frame heartbeat alive after
      * the device falls silent, so deferred tap commits (2-finger TAP secondary click) fire instead of
