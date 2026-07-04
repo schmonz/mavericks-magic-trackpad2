@@ -39,9 +39,14 @@
  * 0x01 (our multitouch-enable payload); one clean setDeviceName: write fixes it at the source, so even a
  * re-fetch/right-click "Update Name" shows it. withBluetoothDevice: may return nil if the device isn't
  * BT-connected or its ExtendedFeatures gate isn't up (our kext publishes that); both private, declare. */
-@interface BluetoothHIDDevice : NSObject
+/* The name machinery (setDeviceName:/reportIDForReportKey:) lives on AppleBluetoothHIDDevice — it reads
+ * the subclass ivar _featureDict — NOT the base BluetoothHIDDevice. (RE 2026-07-04: setDeviceName:@0x43180
+ * and reportIDForReportKey:@0x441ff both touch _OBJC_IVAR_$_AppleBluetoothHIDDevice._featureDict.) This is
+ * the SAME class our battery reads use. Calling on the base class was the "unrecognized selector" crash. */
+@interface AppleBluetoothHIDDevice : NSObject
 + (instancetype)withBluetoothDevice:(IOBluetoothDevice *)device;
 - (void)setDeviceName:(NSString *)name;
+- (int)reportIDForReportKey:(NSString *)key;
 @end
 
 int main(int argc, const char *argv[]) {
@@ -79,13 +84,18 @@ int main(int argc, const char *argv[]) {
             /* On-device name (persists on the device, un-clobbers the 0x02 0x01 we wrote; follows the
              * device across Macs). setDeviceName: no-ops if unchanged, so mirror fires are cheap.
              * Best-effort: the HID wrapper is nil unless the MT2 is BT-connected + ExtendedFeatures up. */
-            id hid = [BluetoothHIDDevice withBluetoothDevice:d];
+            id hid = [AppleBluetoothHIDDevice withBluetoothDevice:d];
             const char *tag = mirror ? "mirror:" : "  +";
             if (hid && [hid respondsToSelector:@selector(setDeviceName:)]) {
                 [hid setDeviceName:name];
                 printf("%s setDeviceName=\"%s\" on-device (%s)\n",
                        tag, [name UTF8String], class_getName(object_getClass(hid)));
             } else if (hid) {
+                /* Bonus for the kext fallback: dump _featureDict so we harvest the report IDs (the
+                 * key->{id,min,max} map that reportIDForReportKey: reads) for a direct SET_REPORT write. */
+                Ivar fv = class_getInstanceVariable(object_getClass(hid), "_featureDict");
+                id fd = fv ? object_getIvar(hid, fv) : nil;
+                if (fd) printf("      _featureDict = %s\n", [[fd description] UTF8String]);
                 /* The wrapper exists but does NOT respond to setDeviceName: — this is what crashed on the
                  * target box. Almost certainly a framework-version mismatch: setDeviceName: exists in the
                  * IOBluetooth we RE'd (the dev box) but not in the target's build. Instead of crashing,
