@@ -26,7 +26,8 @@
 #define VTC_ALLOC(sz)  IOMalloc(sz)
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
-#include "mt2_usb_reframe.h"           /* mt2_usb_to_compactv4 (host-tested reframe) */
+#include "mt2_usb_decode.h"            /* mt2_usb_decode -> VoodooInputEvent (the decode seam) */
+#include "mt2_usb_reframe.h"           /* usb_assemble_compactv4 + button-edge/absence helpers */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
 #include "mt2_geometry.h"              /* MT2_SURFACE_WIDTH/HEIGHT — one knob shared with the BT report */
@@ -69,9 +70,11 @@ static uint32_t usb_ts_22bit(void) {
 }
 
 /* THE SEAM (the reframe splice): runs in place of the genuine driver's handleReport (usb_gh_interpose
- * points the vtable slot here). Read the raw MT2 0x02 report, reframe to Apple's CompactV4 packet
- * (mt2_usb_to_compactv4), wrap in a fresh descriptor, and chain the original; non-touch reports pass
- * through untouched. extern "C" free fn; first arg is `this`. */
+ * points the vtable slot here). Read the raw MT2 0x02 report, then — structurally mirroring the BT
+ * reader (mt2_bt_decode -> submitFrame) — DECODE to the VoodooInputEvent seam (mt2_usb_decode) and run
+ * the USB ASSEMBLY on it (usb_assemble_compactv4: drop-lifted + lifecycle + mt1_encode + checksum),
+ * wrap in a fresh descriptor, and chain the original; non-touch reports pass through untouched.
+ * extern "C" free fn; first arg is `this`. */
 extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report,
                                           IOHIDReportType type, IOOptionBits options) {
     if (!gOrigUsbHandleReport) return kIOReturnError;
@@ -93,8 +96,11 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
         if (hb) hb(self, btnrep);
     }
 
+    VoodooInputEvent frame;
+    if (mt2_usb_decode(mt2, (size_t)mn, &frame) != 0)          /* decode -> VoodooInputEvent (seam) */
+        return gOrigUsbHandleReport(self, report, type, options);
     size_t outlen = 0;
-    if (mt2_usb_to_compactv4(mt2, (size_t)mn, usb_ts_22bit(), out, sizeof(out), &outlen) != 0)
+    if (usb_assemble_compactv4(&frame, usb_ts_22bit(), out, sizeof(out), &outlen) != 0)  /* assembly */
         return gOrigUsbHandleReport(self, report, type, options);
 
     IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);

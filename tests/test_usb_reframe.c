@@ -1,5 +1,6 @@
 #include "test.h"
 #include "../src/mt2_usb_reframe.h"
+#include "../src/mt2_usb_decode.h"
 #include <string.h>
 
 static void test_checksum_trivial(void) {
@@ -73,6 +74,26 @@ static void test_reframe_lifecycle_make_then_drag(void) {
     CHECK_EQ(out[4 + 8] & 0xF0, 0x40);            /* same finger held -> Touching */
 }
 
+static void test_split_seam_composes_like_fused(void) {
+    /* The un-fused seam: mt2_usb_decode -> VoodooInputEvent -> usb_assemble_compactv4 must produce the
+       EXACT bytes the fused mt2_usb_to_compactv4 does. Run the same input through both (each after its
+       own reset, since the assembly lifecycle is stateful) and require byte-identical output. */
+    uint8_t mt2[21], fused[64], split[64]; size_t fl = 0, sl = 0;
+    make_mt2_one(mt2, 0x20, 0x06);
+
+    mt2_usb_reframe_reset();
+    CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0x12345, fused, sizeof(fused), &fl), 0);
+
+    VoodooInputEvent frame; memset(&frame, 0, sizeof frame);
+    CHECK_EQ(mt2_usb_decode(mt2, 21, &frame), 0);      /* decode -> seam */
+    CHECK_EQ(frame.contact_count, 1u);                 /* known input: one present finger */
+    mt2_usb_reframe_reset();
+    CHECK_EQ(usb_assemble_compactv4(&frame, 0x12345, split, sizeof(split), &sl), 0);  /* assembly */
+
+    CHECK_EQ(sl, fl);
+    CHECK_EQ(memcmp(split, fused, fl), 0);             /* split == fused, byte for byte */
+}
+
 static void test_reframe_rejects_non_touch_report(void) {
     uint8_t mt2[21], out[64]; size_t outlen = 0;
     mt2_usb_reframe_reset();
@@ -134,6 +155,7 @@ static void run_tests(void) {
     test_checksum_live_vector();
     test_reframe_emits_0x28_frame_with_valid_checksum();
     test_reframe_lifecycle_make_then_drag();
+    test_split_seam_composes_like_fused();
     test_reframe_rejects_non_touch_report();
     test_button_edge_press_fills_byte15();
     test_button_edge_no_change_no_dispatch();

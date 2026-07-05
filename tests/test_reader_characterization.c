@@ -90,6 +90,25 @@ static int usb_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out) {
     return (int)outlen;
 }
 
+/* ---- USB lifecycle SEQUENCE (make -> touch -> break) --------------------------------------------
+ * The single-frame USB goldens above each run after a fresh reset, so they pin the DECODE + encode
+ * but not the STATEFUL carry (mt2_drop_lifted + mt2_lifecycle_step) across frames. The un-fuse of
+ * mt2_usb_to_compactv4 restructures exactly that stateful path, so we freeze a full 3-frame run
+ * through the CURRENT function: same finger present twice (MakeTouch -> Touching) then lifted (its
+ * record size drops to 0, so drop_lifted removes it and lifecycle synthesizes BreakTouch at the last
+ * position). Fixed timestamp for determinism. */
+#define USB_SEQ_TS 0x33333u
+
+/* One 21-byte USB 0x02 report with a single finger record; size==0 marks a lifted slot. */
+static size_t make_usb_one(uint8_t *b, uint8_t size_b6, uint8_t id_b8) {
+    memset(b, 0, 21);
+    b[0] = 0x02;
+    for (int i = 1; i < 12; i++) b[i] = (uint8_t)(0xA0 + i);
+    b[12+0]=0x11; b[12+1]=0x12; b[12+2]=0x13; b[12+3]=0x00;
+    b[12+4]=0x44; b[12+5]=0x55; b[12+6]=size_b6; b[12+7]=0x77; b[12+8]=id_b8;
+    return 21;
+}
+
 static void dump(const char *tag, const uint8_t *b, int n) {
     printf("/* %-8s len=%d */ ", tag, n);
     for (int i = 0; i < n; i++) printf("0x%02x,", b[i]);
@@ -126,6 +145,18 @@ static const uint8_t GOLD_USB_1F[] = {
 static const uint8_t GOLD_USB_2F[] = {
     0x28,0x88,0x88,0x08,0xd9,0xa1,0x93,0x03,0x20,0x20,0xff,0x80,0x32,
     0x5a,0x44,0xa3,0x03,0x20,0x20,0xff,0x76,0x33,0x6d,0x08
+};
+/* USB make->touch->break sequence (same finger id, size 0x20 twice then 0x00). State nibble at 4+8
+ * advances 0x3x->0x4x->0x5x (MakeTouch->Touching->BreakTouch); the break carries the finger's last
+ * position, so its records differ from make/touch. Captured from the current build. */
+static const uint8_t GOLD_USB_SEQ_MAKE[]  = {
+    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x71,0x32,0x70,0x05
+};
+static const uint8_t GOLD_USB_SEQ_TOUCH[] = {
+    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x71,0x42,0x80,0x05
+};
+static const uint8_t GOLD_USB_SEQ_BREAK[] = {
+    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x44,0x55,0xa0,0x71,0x52,0xca,0x05
 };
 
 static void run_tests(void) {
@@ -171,5 +202,38 @@ static void run_tests(void) {
     CHECK_EQ(n, 4 + 9 + 9 + 2);                    /* header + two contacts + checksum */
     check_bytes("USB_2F", out, n, GOLD_USB_2F, (int)sizeof GOLD_USB_2F);
 #endif
+
+    /* USB stateful sequence: one finger MakeTouch -> Touching -> BreakTouch, one fresh reset up front. */
+    {
+        uint8_t mk[21], tc[21], br[21]; size_t ol = 0;
+        make_usb_one(mk, 0x20, 0x06);
+        make_usb_one(tc, 0x20, 0x06);
+        make_usb_one(br, 0x00, 0x06);   /* size 0 -> lifted -> BreakTouch synthesized */
+        mt2_usb_reframe_reset();
+        int nm = (mt2_usb_to_compactv4(mk, 21, USB_SEQ_TS, out, 64, &ol) == 0) ? (int)ol : -1;
+#if CHAR_CAPTURE
+        dump("USB_SEQ_MAKE", out, nm);
+#else
+        CHECK(nm > 0);
+        CHECK_EQ(out[4 + 8] & 0xf0, 0x30);         /* MakeTouch */
+        check_bytes("USB_SEQ_MAKE", out, nm, GOLD_USB_SEQ_MAKE, (int)sizeof GOLD_USB_SEQ_MAKE);
+#endif
+        int nt = (mt2_usb_to_compactv4(tc, 21, USB_SEQ_TS, out, 64, &ol) == 0) ? (int)ol : -1;
+#if CHAR_CAPTURE
+        dump("USB_SEQ_TOUCH", out, nt);
+#else
+        CHECK(nt > 0);
+        CHECK_EQ(out[4 + 8] & 0xf0, 0x40);         /* Touching */
+        check_bytes("USB_SEQ_TOUCH", out, nt, GOLD_USB_SEQ_TOUCH, (int)sizeof GOLD_USB_SEQ_TOUCH);
+#endif
+        int nb = (mt2_usb_to_compactv4(br, 21, USB_SEQ_TS, out, 64, &ol) == 0) ? (int)ol : -1;
+#if CHAR_CAPTURE
+        dump("USB_SEQ_BREAK", out, nb);
+#else
+        CHECK(nb > 0);
+        CHECK_EQ(out[4 + 8] & 0xf0, 0x50);         /* BreakTouch (finger lifted) */
+        check_bytes("USB_SEQ_BREAK", out, nb, GOLD_USB_SEQ_BREAK, (int)sizeof GOLD_USB_SEQ_BREAK);
+#endif
+    }
 }
 TEST_MAIN()

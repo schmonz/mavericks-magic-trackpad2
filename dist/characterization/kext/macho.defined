@@ -158,3 +158,4 @@ _mt2_usb_reframe_reset
 _mt2_usb_to_compactv4
 _sysctl__debug_mt2_batt
 _sysctl__debug_mt2_log
+_usb_assemble_compactv4

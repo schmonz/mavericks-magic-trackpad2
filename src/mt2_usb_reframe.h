@@ -2,10 +2,22 @@
 #define MT2_USB_REFRAME_H
 #include <stddef.h>
 #include <stdint.h>
+#include "voodoo_input.h"   /* VoodooInputEvent — the decode->assembly seam type */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* USB ASSEMBLY: the second half of the un-fused pipeline. Consumes the decoded seam contact-set
+ * (a VoodooInputEvent from mt2_usb_decode) and emits the genuine-USB CompactV4 frame: keep only real
+ * contacts (drop-lifted), synthesize the MakeTouch/Touching/BreakTouch lifecycle (STATEFUL — remembers
+ * the prior frame; call mt2_usb_reframe_reset() at stream start), mt1_encode to report 0x28, then
+ * append Apple's 2-byte checksum. MUTATES *frame in place. ts is a synthesized monotonic 22-bit
+ * timestamp. Writes to out (needs 4 + 9*N + 2 bytes); sets *outlen. Returns 0, or -1 if out too small.
+ * This is USB's private assembly (drop-lifted + g_lc + checksum); it is deliberately NOT unified with
+ * BT's mt2_session assembly (settle+liftoff, no checksum) — that reconciliation is a later task. */
+int usb_assemble_compactv4(VoodooInputEvent *frame, uint32_t ts,
+                           uint8_t *out, size_t out_cap, size_t *outlen);
 
 /* Overwrite the last two bytes of buf with Apple's 16-bit additive checksum:
  * low=byte[n-2], high=byte[n-1], where the sum is over bytes[0 .. n-3].
@@ -21,7 +33,11 @@ void mt2_apple_checksum(uint8_t *buf, size_t n);
  * Touching while held, BreakTouch (at last position) when it vanishes — which requires remembering the
  * prior frame, so this is STATEFUL. ts is a synthesized monotonic 22-bit timestamp from the caller.
  * Writes to out (needs 4 + 9*N + 2 bytes); sets *outlen. Returns 0, or -1 if not a 0x02 report / out
- * too small. Call mt2_usb_reframe_reset() when a new device stream starts. */
+ * too small. Call mt2_usb_reframe_reset() when a new device stream starts.
+ *
+ * Now a thin COMPOSE of mt2_usb_decode (decode -> VoodooInputEvent seam) + usb_assemble_compactv4
+ * (assembly); the reader calls those two halves itself, mirroring BT. Kept as one entry point for
+ * existing callers/tests. */
 int mt2_usb_to_compactv4(const uint8_t *mt2, size_t mt2_len, uint32_t ts,
                          uint8_t *out, size_t out_cap, size_t *outlen);
 

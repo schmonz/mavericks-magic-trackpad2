@@ -44,29 +44,39 @@ int mt2_usb_make_absence_frame(uint32_t ts, uint8_t *out, size_t out_cap, size_t
     return 0;
 }
 
-/* Genuine-USB feed = the SAME pipeline the working synthetic/BT paths use, then Apple's checksum.
- * mt1_encode already emits report 0x28 — the CompactV4 PATH frame type MultitouchSupport parses — with
- * the 4-byte CompactV4 timestamp header and the contact byte layout the recognizer drives the cursor
- * from (firm density, MakeTouch/Touching/BreakTouch via mt2_lifecycle). The only thing the genuine USB
- * driver needs that submitFrame doesn't is a valid checksum (handleReport::validateChecksum), so we
- * append it. (Earlier hand-built CompactV4 reframe was replaced after it became per-layer whack-a-mole;
- * reusing the proven encoder is the BT-analogous fix.) Non-0x02 reports are rejected (caller passes
- * them through untouched). */
-int mt2_usb_to_compactv4(const uint8_t *mt2, size_t mt2_len, uint32_t ts,
-                         uint8_t *out, size_t out_cap, size_t *outlen) {
+/* USB ASSEMBLY (the second half of the un-fused pipeline): given the decoded seam contact-set
+ * (a VoodooInputEvent from mt2_usb_decode — the same seam type the BT path submits), condition it
+ * and emit the genuine-USB frame. This is the USB analogue of BT's MT2Gesture session assembly, but
+ * kept SEPARATE on purpose: USB uses drop-lifted + a private per-finger lifecycle (g_lc) + Apple's
+ * checksum, where BT uses mt2_session's settle+liftoff and no checksum. Reconciling the two assemblies
+ * is a later task; here we only expose the seam. mt1_encode emits report 0x28 (the CompactV4 PATH frame
+ * type MultitouchSupport parses, 4-byte ts header + firm-density contacts the recognizer drives the
+ * cursor from); the genuine USB driver additionally requires a valid checksum (handleReport::
+ * validateChecksum), so we append it. NOTE: mutates frame in place (drop-lifted + lifecycle). */
+int usb_assemble_compactv4(VoodooInputEvent *frame, uint32_t ts,
+                           uint8_t *out, size_t out_cap, size_t *outlen) {
     if (!g_lc_ready) mt2_usb_reframe_reset();
 
-    VoodooInputEvent frame;
-    if (mt2_usb_decode(mt2, mt2_len, &frame) != 0) return -1;
-    mt2_drop_lifted(&frame);                       /* keep only real (size>0) contacts */
-    mt2_lifecycle_step(&g_lc, &frame);             /* synthesize MakeTouch/Touching/BreakTouch */
+    mt2_drop_lifted(frame);                        /* keep only real (size>0) contacts */
+    mt2_lifecycle_step(&g_lc, frame);              /* synthesize MakeTouch/Touching/BreakTouch */
 
     if (out_cap < 2) return -1;
-    int n = mt1_encode(&frame, out, out_cap - 2, ts);   /* the 0x28 CompactV4 frame */
+    int n = mt1_encode(frame, out, out_cap - 2, ts);    /* the 0x28 CompactV4 frame */
     if (n < 0) return -1;
 
     out[n] = out[n + 1] = 0;
     mt2_apple_checksum(out, (size_t)n + 2);
     if (outlen) *outlen = (size_t)n + 2;
     return 0;
+}
+
+/* Genuine-USB feed = decode-to-seam then USB assembly. Retained as the compose of the two halves so
+ * existing callers/tests keep one entry point; the reader (MT2USBReader::mt2_usb_handle_report) now
+ * calls mt2_usb_decode + usb_assemble_compactv4 in sequence itself, structurally mirroring BT's
+ * decode + submitFrame. Non-0x02 reports are rejected (caller passes them through untouched). */
+int mt2_usb_to_compactv4(const uint8_t *mt2, size_t mt2_len, uint32_t ts,
+                         uint8_t *out, size_t out_cap, size_t *outlen) {
+    VoodooInputEvent frame;
+    if (mt2_usb_decode(mt2, mt2_len, &frame) != 0) return -1;   /* decode -> VoodooInputEvent (seam) */
+    return usb_assemble_compactv4(&frame, ts, out, out_cap, outlen);
 }
