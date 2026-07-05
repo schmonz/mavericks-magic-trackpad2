@@ -929,6 +929,134 @@ static void dump_view_tree(id view, int depth) {
 }
 
 /* ============================================================================================
+ * 7b. NAME MIRROR — pane Rename -> on-device name (HID Feature report 0x55)
+ * ============================================================================================
+ * The Bluetooth pane's right-click Rename writes ONLY the host `displayName` alias (the pane binary
+ * never touches the device; blued persists the alias). To make a rename FOLLOW the device we mirror:
+ * watch the MT2's displayName; when the user changes it, push it onto the device as the persistent
+ * name and then clear the alias so the on-device name shows through. Mechanism (RE'd + proven on-device
+ * 2026-07-05, docs/mt-stack/explanation.md "Rename routing + the mirror"): the name store is the MT2's
+ * one declared Feature report, the 64-byte vendor report 0x55; SET_REPORT(Feature,0x55,[id][name])
+ * writes it verbatim (NVRAM, follows the device across hosts). remoteNameRequest: refreshes the host
+ * `Name` cache live; setDisplayName:nil clears the alias. The enable report is 0xF1 (untouched).
+ *
+ * SAFETY: the SET_REPORT runs inside System Preferences (the process in the 2026-07-04 getReport-panic
+ * backtrace). The write self-gates to a present BLUETOOTH-transport MT2 (mt2_name_write_onboard skips
+ * USB, which has no room anyway); since the MT2 drives ONE transport at a time (cabling USB drops BT),
+ * "a BT HID is present" means no USB bring-up storm is in flight. We additionally skip a known in-flight
+ * transition (gPsm==PSM_HOLD). So a single deliberate write never lands during transport churn. NB the
+ * gate is NOT gPsm==PSM_BT: renames happen on the Bluetooth pane, where the Trackpad-pane SM that drives
+ * gPsm may never have armed (gPsm==PSM_NONE) — BT presence is the correct, pane-independent signal. */
+
+/* The paired MT2 IOBluetoothDevice (CoD 0x594 = peripheral+pointing, digitizer minor 0x25), or NULL.
+ * IOBluetooth is resident whenever the BT pane has been shown (where Rename happens). */
+static id mt2_bt_device(void) {
+    Class c = objc_getClass("IOBluetoothDevice");
+    if (!c) return NULL;
+    id arr = ((id (*)(Class, SEL))objc_msgSend)(c, sel_registerName("pairedDevices"));
+    if (!arr) return NULL;
+    unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(arr, sel_registerName("count"));
+    for (unsigned long i = 0; i < n; i++) {
+        id d = ((id (*)(id, SEL, unsigned long))objc_msgSend)(arr, sel_registerName("objectAtIndex:"), i);
+        unsigned cod = ((unsigned (*)(id, SEL))objc_msgSend)(d, sel_registerName("getClassOfDevice"));
+        if (cod == 0x594) return d;
+    }
+    return NULL;
+}
+
+/* SET_REPORT(Feature, 0x55, [id][name]) onto the MT2 over Bluetooth (USB has no room:
+ * MaxFeatureReportSize==1). Returns 1 if the write landed. Mirrors tools/mt2_name_write.c. */
+static int mt2_name_write_onboard(const char *name) {
+    size_t nl = name ? strlen(name) : 0;
+    if (nl == 0 || nl > 63) return 0;
+    int ok = 0;
+    IOHIDManagerRef mgr = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+    if (!mgr) return 0;
+    { int pid = 0x0265;
+      CFNumberRef pidNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &pid);
+      CFMutableDictionaryRef mm = CFDictionaryCreateMutable(kCFAllocatorDefault, 1,
+                                      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+      if (mm && pidNum) CFDictionarySetValue(mm, CFSTR(kIOHIDProductIDKey), pidNum);
+      IOHIDManagerSetDeviceMatching(mgr, mm);
+      if (pidNum) CFRelease(pidNum);
+      if (mm) CFRelease(mm); }
+    IOHIDManagerOpen(mgr, kIOHIDOptionsTypeNone);
+    CFSetRef devs = IOHIDManagerCopyDevices(mgr);
+    if (devs) {
+        CFIndex n = CFSetGetCount(devs);
+        IOHIDDeviceRef stack[64];
+        if (n > 0 && n <= 64) {
+            CFSetGetValues(devs, (const void **)stack);
+            for (CFIndex i = 0; i < n && !ok; i++) {
+                CFStringRef tr = (CFStringRef)IOHIDDeviceGetProperty(stack[i], CFSTR(kIOHIDTransportKey));
+                if (!tr || CFStringCompare(tr, CFSTR("Bluetooth"), 0) != kCFCompareEqualTo) continue;
+                if (IOHIDDeviceOpen(stack[i], kIOHIDOptionsTypeNone) != kIOReturnSuccess) continue;
+                uint8_t buf[64]; memset(buf, 0, sizeof buf);
+                buf[0] = 0x55; memcpy(buf + 1, name, nl);
+                IOReturn r = IOHIDDeviceSetReport(stack[i], kIOHIDReportTypeFeature, 0x55, buf, (CFIndex)(1 + nl));
+                if (r == kIOReturnSuccess) ok = 1;
+                else LOG("name-mirror: SET_REPORT 0x55 error 0x%08x", r);
+                IOHIDDeviceClose(stack[i], kIOHIDOptionsTypeNone);
+            }
+        }
+        CFRelease(devs);
+    }
+    IOHIDManagerClose(mgr, kIOHIDOptionsTypeNone);
+    CFRelease(mgr);
+    return ok;
+}
+
+static char gLastDisplayName[128];   /* last displayName we've reconciled (baseline for change-detect) */
+static int  gNameMirrorInit = 0;     /* seeded the baseline (never act on the value first seen) */
+static int  gNameDeferLogged = 0;    /* logged a pending rename we're holding for BT (avoid spam) */
+
+/* One reconcile pass, called from the aux tick (~1.5s). Detects a user Rename (displayName change),
+ * pushes it onboard, refreshes the host name, and clears the alias. Read-only + idempotent otherwise. */
+static void mt2_name_mirror_tick(void) {
+    id d = mt2_bt_device();
+    if (!d) return;
+    id dn = ((id (*)(id, SEL))objc_msgSend)(d, sel_registerName("getDisplayName"));
+    const char *s = dn ? ((const char *(*)(id, SEL))objc_msgSend)(dn, sel_registerName("UTF8String")) : "";
+    if (!s) s = "";
+
+    if (!gNameMirrorInit) {                       /* first sight: baseline only, never act */
+        strlcpy(gLastDisplayName, s, sizeof gLastDisplayName);
+        gNameMirrorInit = 1;
+        return;
+    }
+    if (strcmp(s, gLastDisplayName) == 0) return; /* no change */
+
+    if (s[0] == 0) {                              /* cleared (probably by us after a push) — accept baseline */
+        strlcpy(gLastDisplayName, s, sizeof gLastDisplayName);
+        gNameDeferLogged = 0;
+        return;
+    }
+    /* A real user rename to a non-empty name. */
+    if (gPsm == PSM_HOLD) {                        /* known transport transition in flight — never write during churn */
+        if (!gNameDeferLogged) { LOG("name-mirror: pending rename \"%s\" (transition in flight) — waiting", s); gNameDeferLogged = 1; }
+        return;                                   /* leave baseline unchanged so we retry next tick */
+    }
+    /* Cap to the 63-byte report payload (0x55 is 64 bytes incl. the report id) on a UTF-8 char
+     * boundary — never split a multibyte char, and never let an over-long rename wedge us in an
+     * unwritable-forever retry. The host reads the full length back (no 32-char cap on read). */
+    char wname[64];
+    size_t wl = strlen(s);
+    if (wl > 63) { wl = 63; while (wl > 0 && ((unsigned char)s[wl] & 0xC0) == 0x80) wl--; }  /* back off a continuation byte */
+    memcpy(wname, s, wl); wname[wl] = 0;
+
+    LOG("name-mirror: displayName \"%s\" -> \"%s\"; writing onboard (0x55)", gLastDisplayName, wname);
+    if (mt2_name_write_onboard(wname)) {          /* self-gates to a present Bluetooth-transport MT2 */
+        ((int (*)(id, SEL, id))objc_msgSend)(d, sel_registerName("remoteNameRequest:"), NULL); /* refresh host name cache */
+        ((void (*)(id, SEL, id))objc_msgSend)(d, sel_registerName("setDisplayName:"), NULL);    /* clear alias -> on-device name shows */
+        strlcpy(gLastDisplayName, s, sizeof gLastDisplayName);   /* mark THIS displayName handled: if the clear ever fails, we won't rewrite in a loop */
+        gNameDeferLogged = 0;
+        LOG("name-mirror: pushed \"%s\" onboard + refreshed + cleared alias", wname);
+    } else {                                       /* no BT MT2 present (or error) — leave baseline, retry next tick */
+        if (!gNameDeferLogged) { LOG("name-mirror: no BT MT2 present or write failed — will retry"); gNameDeferLogged = 1; }
+    }
+}
+
+/* ============================================================================================
  * 8. AUX TICK — front-window belt (any pane, incl. Bluetooth; gPane only tracks Trackpad)
  * ============================================================================================ */
 
@@ -955,6 +1083,7 @@ static void aux_tick_start(void) {
                               (uint64_t)(1.5 * NSEC_PER_SEC), (uint64_t)(0.25 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gAuxTick, ^{
         aux_reassert();                                  /* belt for the front-window UI */
+        mt2_name_mirror_tick();                          /* pane Rename -> on-device name (report 0x55) */
         if (access("/tmp/mt2_pane_dump", F_OK) == 0) {
             unlink("/tmp/mt2_pane_dump");
             /* Walk EVERY window's contentView (not just the front one) — the Bluetooth pane's device
