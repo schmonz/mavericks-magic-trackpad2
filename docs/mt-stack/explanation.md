@@ -515,3 +515,85 @@ genuine-device Bluetooth-pane identity. The RE above is settled; the open work i
 multi-process delivery**, reusing our existing loader infra (`mt2-prefpane-osax-injection-mechanism`)
 rather than inventing a new one. (The `displayName` NAME fix is the already-clean half; the icon is the
 harder half worth doing.)
+
+## MT2BTReader bring-up: the load-bearing whys (RE detail)
+
+The reader keeps one-line pointers to this section next to the code; the full reasoning
+lives here so the `.cpp` stays legible.
+
+### Deferred 0xF1 multitouch enable (`setupInGate` / `reEnableInGate`)
+
+Firing the 0xF1 SET_REPORT(feature) enable on the control channel (PSM 17) *before* the
+channel reaches OPEN makes `sendTo` block ~14 s; the device tears the link down meanwhile
+(it never got the genuine `listenAt` + `waitForChannelState(OPEN)` acceptance) → channel
+inactive → BNB attach fails → connection flap (root-caused 2026-06-21, RE §6). So we let
+BNB's `handleStart` accept PSM 17 first and DEFER the enable: the phase-2 timer
+(`interposeTimerFired` → `reEnableInGate`) sends 0xF1 after both channels are OPEN. The MT2
+uses the 0xF1 command; Apple's stock BNB sends the MT1 0xD7 and so never completes the
+enable, which is why the pad is unreachable over stock BT.
+
+### Reconnect re-enable: retry-until-first-frame, teardown-safe (`gSteadyConn`)
+
+BNB's `handleStart` leaves the device in basic-HID mouse mode (report 0x02) after our
+initial enable, so phase-2a re-sends 0xF1 to force multitouch mode (report 0x31). On a
+rapid/unstable reconnect the enable setReport can fail (channel-not-ready, 0xe00002bc) for
+the first few seconds; the old fixed "8 sends then give up" window missed it and left the
+device stuck in mouse mode = no cursor until a manual tap (`bt-reconnect-enable-fails`). Fix:
+KEEP re-sending until this connection's first real multitouch frame flows. Cadence: fast
+(250 ms) for the initial push, then gentle (1 s) so a genuinely-stuck-but-connected device
+isn't spammed.
+
+The teardown-safety is the whole point of `gSteadyConn`: `bt_interpose_shim` records
+`gSteadyConn = gConnId` on the first decoded frame, and phase-2a re-enables ONLY while
+`gSteadyConn != gConnId` (pre-first-frame bring-up). So a device that already reached STEADY
+and is now powering off never re-enters the re-enable branch — re-enabling on a working
+device's power-off was exactly the v1 regression (v1 re-enabled on any mouse-mode report).
+`gSteadyConn` is keyed on `gConnId` (bumped on each control-channel open), so a fresh
+connection is automatically `< STEADY` until it produces a frame — no reset needed.
+
+### Battery: publish on the BNB node + the ExtendedFeatures presence gate
+
+The MT2 reports battery as the standard Apple Power-Device INPUT report id 0x90 =
+`[0x90][status flags][capacity 0-100]` (capacity = Usage 0x65; byte[1] bit = charging;
+verified live both transports, e.g. `90 05 64` = 100%). It never streams 0x90 — only answers
+a GET_REPORT — so the control reader polls it (`pollBatteryInGate`, 30 s cadence) and
+`bt_control_shim` catches the response. We publish the capacity as the `BatteryPercent`
+OSNumber on the genuine BNB node — exactly the property the Trackpad pane reads
+(`-[AppleBluetoothHIDDevice batteryPercent]` → `IORegistryEntryCreateCFProperty(node,
+"BatteryPercent")`). This bypasses BNB's MT1-shaped voltage/chemistry model (getExtendedReport,
+which the MT2 can't answer).
+
+Publish dedup is keyed on BOTH the value AND the node instance: each BT reconnect
+manual-starts a FRESH BNBTrackpadDevice (a brand-new registry node with no BatteryPercent);
+keying on value alone meant a same-value reconnect (100 → 100) skipped the setProperty on the
+fresh node, so the pane/menu read −1.0 after every reconnect. `gLastBattBnb` is reset in
+`start()`/`stop()` so a malloc-reused address can't false-match.
+
+The display GATE (seeded in `start()`): the pane reads battery via
+`-[AppleBluetoothHIDDevice withBluetoothDevice:]`, whose `initWithHIDDevice:` (IOBluetooth
+@0x114d8) does `if (IORegistryEntryCreateCFProperty(node,"ExtendedFeatures")==nil){dealloc;
+return nil;}` — so with no ExtendedFeatures the wrapper is nil and batteryPercent returns 0
+REGARDLESS of our published BatteryPercent (RE'd 2026-07-01, `tools/mt2_panebattery_probe`).
+Genuine MT1 sets it from real extended feature reports; the MT2 has none. We publish a
+present-but-empty dict purely to pass that presence gate — batteryPercent then reads our
+`BatteryPercent` off the same node (it does not consult the dict's contents).
+
+### Product re-seed after IOHIDDevice::start (`start()`)
+
+Do NOT seed "Product" in the BNB init dict: IOHIDDevice::start (BNB's superclass) overwrites
+it from the empty HID product string AFTER the dict is applied (verified live: node
+Product="" despite the seed). So we set Product post-start, once `fManualBnb` exists. This is
+distinct from the device's persistent BT name (HID Feature report 0x55). USB needs no
+equivalent — there the genuine AMD copies the device's real USB iProduct descriptor.
+
+### stop(): plain terminate + release, NO waitQuiet
+
+The manually-started BNB sits at busyState=1 for its ENTIRE life — its genuine connect
+lifecycle never completes (deviceReady is never reached in our hybrid flow; the 5 s "Forcing
+MT restart" watchdog cycles), so the start-time busy is never balanced. terminate() can't
+drop it: probe showed busy=1 before terminate and still busy=1 after a full 8 s waitQuiet
+(AMD child busy=0, so it's BNB's own). A waitQuiet here can therefore NEVER succeed — it only
+stalls every disconnect for the full bound (RE'd 2026-06-23, see open-questions.md). Unload
+safety rests on the in-gate delegate + vtable restores that run BEFORE the teardown (not on
+quiescence); the async termination completes after release(). So: plain terminate() +
+release(), no wait.

@@ -1,13 +1,15 @@
-/* MT2BTReader — in-kernel Bluetooth transport for the Magic Trackpad 2.
+/* MT2BTReader — the Bluetooth transport reader for the Magic Trackpad 2.
  *
- * A thin decoder. The MT2's multitouch frames are unreachable over BT from userspace
- * (the BT HID descriptor is boot-mouse-only; see the BT findings doc). We bind the
- * L2CAP channel directly, enable
- * multitouch with the 0xF1 SET_REPORT (the MT2's command; Apple's stock
- * BNBTrackpadDevice sends the MT1 0xD7 and so never completes), decode each frame
- * (mt2_bt_decode), and push the VoodooInputEvent to the MT2Gesture nub via
- * submitFrame(MT2_EVENT_DRIVEN). The shared mt2_session owns the settle gate,
- * lift-drop, deceleration/clean-lift, and click — there is no decision logic here.
+ * Two halves. PER-TRANSPORT (the ~3%): bind the L2CAP channels, decode each raw MT2 0x31
+ * frame (mt2_bt_decode), and declare BT config — BNB props, sensor geometry, the 0xF1
+ * enable. SHARED ENGINE (the ~97%) is what it feeds. There is ONE seam: bt_interpose_shim
+ * decodes to a VoodooInputEvent and hands it to gActiveMT2Gesture->submitFrame; the shared
+ * session conditions it, mt1_encode's report 0x28, and drives Apple's own genuine
+ * BNBTrackpadDevice (manual-started here). No decision logic lives in this file.
+ *
+ * Dirty tricks, named where used: bt_interpose_shim (L2CAP delegate-callback splice),
+ * installBnbGeometry (instance-scoped vtable clone), the deferred 0xF1 multitouch enable.
+ * Load-bearing RE prose is in docs/mt-stack/explanation.md; the code keeps one-line pointers.
  */
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
@@ -60,10 +62,10 @@ extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 
-/* The shipped architecture (design 2026-06-20-bnb-pathA-interpose-seam): on the control channel we
- * manual-start a genuine BNBTrackpadDevice, YIELD the interrupt-channel data delegate so BNB's own
- * listenAt succeeds (removing the §S2.5 panic vector), then interpose our MT2->MT1 shim on the
- * channel's delegate-callback slot. Apple's BNB drives cursor/gestures/prefpane; we condition + inject. */
+/* Path A architecture: manual-start a genuine BNBTrackpadDevice on the control channel, YIELD the
+ * interrupt-channel delegate to BNB (its listenAt must succeed or §S2.5 panics), then splice our
+ * MT2->MT1 shim onto that channel's delegate-callback slot. Apple's BNB drives cursor/gestures/
+ * prefpane; we condition + inject. See explanation.md "End-to-end data flow (full-BNB)". */
 
 /* Field offsets: canonical values + re/ commands live in ../src/mt2_stack.h. These are readable
  * local aliases so the numbers exist in exactly one place (no doc/build drift). */
@@ -71,16 +73,13 @@ OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 #define L2CAP_DELEGATE_CB_OFF       MT2_OFF_L2CAP_DELEGATE_CB     /* L2CAP delegate cb (+8 = target)*/
 #define BNB_INTERRUPT_CHANNEL_OFF   MT2_OFF_BNB_INTERRUPT_CHANNEL /* BNBDevice::_interruptChannel    */
 
-/* The genuine BNBTrackpadDevice the control reader manual-starts (Path A). The interpose
- * installer reads it (via +0xf0) to find BNB's interrupt channel, where it pokes our shim onto
- * the delegate-callback slot. Single device, single instance — a global mirrors the pattern of
+/* The genuine BNBTrackpadDevice the control reader manual-starts (Path A). The interpose installer
+ * reads it (via +0xf0) to find BNB's interrupt channel. Single device → one global, like
  * gActiveMT2Gesture. NULL when no genuine device is up. */
 IOService *gGenuineBnb = 0;
 
-/* The PSM-19 (interrupt) reader instance — the session's active frame source (it calls
- * connectionEstablished(self)). The interpose shim feeds decoded frames through
- * gActiveMT2Gesture->submitFrame(gInterruptReader, ...), conditioned by the shared session and
- * routed to BNB's own spawned AMD (setBnbTarget). */
+/* The PSM-19 (interrupt) reader instance — the session's active frame source. bt_interpose_shim
+ * feeds decoded frames through gActiveMT2Gesture->submitFrame(gInterruptReader, ...). */
 static IOService *gInterruptReader = 0;
 
 /* Saved BNB delegate: triggerInGate injects the handler-create trigger through it (spawning BNB's
@@ -89,11 +88,9 @@ static void *gOrigCb = 0;
 static IOService *gOrigTarget = 0;
 static IOBluetoothL2CAPChannel *gInterposedChannel = 0;
 
-/* Battery poll: the CONTROL channel (PSM 17) delegate, interposed SEPARATELY from the interrupt one
- * so the interrupt shim's gOrigCb (used to forward touch frames / inject the create-trigger) is never
- * clobbered. Our control shim forwards EVERY control PDU to BNB's original (the control plane must stay
- * intact) and only peeks report 0x90 responses to our GET_REPORT(0x90) poll. Single genuine device, so
- * file-static globals mirror gGenuineBnb/gOrigCb. */
+/* Battery poll: the CONTROL channel (PSM 17) delegate, interposed SEPARATELY from the interrupt one so
+ * the interrupt shim's gOrigCb is never clobbered. The control shim forwards EVERY PDU to BNB's original
+ * (the control plane must stay intact) and only peeks report 0x90 responses. Single device → globals. */
 static void *gCtrlOrigCb = 0;
 static IOService *gCtrlOrigTarget = 0;
 static IOBluetoothL2CAPChannel *gCtrlInterposedChannel = 0;
@@ -102,12 +99,10 @@ static IOBluetoothL2CAPChannel *gCtrlInterposedChannel = 0;
 static vtc_clone_t gBnbVtableClone;
 static bool        gBnbVtableCloned = false;
 
-/* Replacement for BluetoothMultitouchTransport::getMultitouchReport on OUR transport instance.
- * staticGetReportHandler tail-calls this as
- *   getMultitouchReport(transport, uchar reportId, uchar* buf, uint* len, int count)
- * (buf = reportStruct+1, len = reportStruct+0x204). We answer the geometry D-reports from the
- * shared source and report every other id as unsupported — so BNB's AMD's bring-up
- * cacheDeviceProperties publishes real geometry and the MTDevice is born with correct dims. */
+/* getMultitouchReport override on OUR transport instance (vtable slot 0xcc8). ABI:
+ *   getMultitouchReport(transport, uchar reportId, uchar* buf, uint* len, int count).
+ * Answer the geometry D-reports from the shared source, everything else unsupported — so BNB's AMD
+ * bring-up (cacheDeviceProperties) publishes real geometry and the MTDevice is born with right dims. */
 extern "C" int mt2_bnb_get_multitouch_report(void *transport, unsigned char reportId,
                                              unsigned char *buf, unsigned int *len, int count) {
     (void)transport; (void)count;
@@ -121,10 +116,9 @@ extern "C" int mt2_bnb_get_multitouch_report(void *transport, unsigned char repo
 }
 
 /* getMultitouchReportInfo override (transport vtable slot 0xcd8). _deviceGetReportWithLookUp probes
- * the report LENGTH via this BEFORE the data fetch; the original transport stub returns unsupported,
- * which short-circuits the whole query before getMultitouchReport (0xcc8) is ever reached. We answer
- * the geometry ids with their payload length so the flow proceeds to the data fetch. Same signature
- * (transport, reportId, buf, uint* len, count) per ABM staticReportInfoHandler @0x1356. */
+ * the report LENGTH via this BEFORE the data fetch, so the stock unsupported stub short-circuits the
+ * whole query before getMultitouchReport (0xcc8) is reached — we must answer LENGTH here too. Same
+ * signature as getMultitouchReport (per ABM staticReportInfoHandler @0x1356). */
 extern "C" int mt2_bnb_get_multitouch_report_info(void *transport, unsigned char reportId,
                                                   unsigned char *buf, unsigned int *len, int count) {
     (void)transport; (void)buf; (void)count;
@@ -144,18 +138,13 @@ static uint32_t bt_uptime_ms(void) {
     return (uint32_t)(s * 1000 + u / 1000);
 }
 
-/* Connect-flap measurement: each connection attempt gets an id (bumped when a control channel
- * comes up), and we emit one canonical CONNTRACE line per observed transition through the SHARED
- * conn_trace_format() (so the kernel emit and re/conn-trace parsing can't drift). Gated at
- * debug.mt2_log>=1; `re/conn-trace <klog>` renders the per-connection timeline + STEADY/FAIL
- * verdict. Pure observation of the CURRENT flow — not yet the state-machine-driven connect. */
+/* Connect-flap measurement: each connection attempt gets an id (bumped on control-channel open); we
+ * emit one canonical CONNTRACE line per transition through the SHARED conn_trace_format() (kernel emit
+ * and `re/conn-trace` parsing can't drift). Gated at debug.mt2_log>=1. */
 static int gConnId = 0;
-/* The connId whose FIRST real multitouch frame we've seen (STEADY). Set by bt_interpose_shim on the first
- * decoded frame; read by interposeTimerFired to gate the multitouch-enable RETRY. Keyed on gConnId, so a
- * fresh connection (gConnId bumped) is automatically < STEADY until it produces a frame — no reset needed.
- * This is the whole teardown-safety of the reconnect fix: we re-enable ONLY while gSteadyConn != gConnId
- * (pre-first-frame bring-up), so a working device (already STEADY) powering off never triggers a re-enable
- * during its teardown — which was exactly the v1 bug (v1 re-enabled on any mouse-mode report). */
+/* The connId whose FIRST real multitouch frame we've seen (STEADY). Set by bt_interpose_shim; read by
+ * interposeTimerFired to gate the enable RETRY — re-enable ONLY while gSteadyConn != gConnId. This is
+ * the reconnect fix's whole teardown-safety; see explanation.md "Reconnect re-enable ... teardown-safe". */
 static volatile int gSteadyConn = -1;
 static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
                          const void *bnb, const void *deleg, int ret) {
@@ -168,21 +157,12 @@ static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
     if (conn_trace_format(buf, sizeof(buf), &r) > 0) MT2_DLOG(1, "%s", buf);
 }
 
-/* Battery bridge. The MT2 reports battery as the standard Apple Power-Device INPUT report id 0x90 =
- * [id 0x90][status flags][capacity 0-100] (Usage Page 0x84 Power Device / 0x85 Battery System, capacity
- * = Usage 0x65). Verified live on both transports (e.g. `90 05 64` = 100%; byte[1] bit = charging).
- * Publish the capacity as the "BatteryPercent" OSNumber (0-100) on the genuine BNB node — EXACTLY the
- * property the Trackpad pane reads: -[AppleBluetoothHIDDevice batteryPercent] does
- * IORegistryEntryCreateCFProperty(node,"BatteryPercent")->unsignedLongValue. This bypasses BNB's own
- * MT1-shaped voltage/chemistry model (getExtendedReport, which the MT2 can't answer -> "No extended
- * features"). setProperty is registry-lock-guarded, safe from this newDataIn context. Publish only on
- * change (avoids churning the registry if 0x90 repeats). */
-/* Publish dedup, keyed on BOTH the value AND the node instance. Each BT reconnect manual-starts a
- * FRESH BNBTrackpadDevice (a brand-new registry node with no BatteryPercent); keying on value alone
- * meant a same-value reconnect (e.g. 100 -> 100) skipped the setProperty on the fresh node, so the
- * pane/menu read -1.0 (no info) after every reconnect. Keying on the node too forces a republish
- * onto each new node. gLastBattBnb is reset in start()/stop() so a malloc-reused address can't
- * false-match. */
+/* Battery bridge: publish the report-0x90 capacity as the "BatteryPercent" OSNumber on the genuine
+ * BNB node — exactly the property the Trackpad pane reads. setProperty is registry-lock-guarded, safe
+ * from this newDataIn context. Dedup is keyed on BOTH value AND node instance (each reconnect makes a
+ * fresh node; value-only dedup missed the republish → pane read -1.0). gLastBattBnb is reset in
+ * start()/stop() so a malloc-reused address can't false-match. See explanation.md "Battery: publish on
+ * the BNB node + the ExtendedFeatures presence gate". */
 static int        gLastBattPct = -1;
 static IOService *gLastBattBnb = 0;
 static void mt2_publish_battery(IOService *bnb, uint8_t pct) {
@@ -217,9 +197,11 @@ static void mt2_diag_report_id(uint8_t id) {
     MT2_DLOG(1, "shim saw report id 0x%02x", (unsigned)id);
 }
 
-/* IOBluetoothL2CAPChannel delegate callback: translate the raw MT2 0x31 report to MT1 and
- * hand it to BNB's original callback, so Apple's genuine parse path consumes MT1 it
- * understands. Runs in the channel's BT workloop (newDataIn context), same as Apple's own. */
+/* THE SEAM (dirty trick #1: L2CAP delegate-callback splice). This runs in place of BNB's own data
+ * callback on the interrupt channel (interposeInGate swaps it in). It decodes the raw MT2 0x31 report
+ * to a VoodooInputEvent and hands that ONE object across to the shared engine
+ * (gActiveMT2Gesture->submitFrame); everything downstream (condition → mt1_encode → drive Apple's AMD)
+ * is shared. Runs in the channel's BT workloop (newDataIn context), same as Apple's own. */
 static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
                               unsigned short length, void *data) {
     (void)target;
@@ -228,10 +210,8 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     size_t rlen = length;
     if (length > 0 && b[0] == 0xA1) { rep = b + 1; rlen = length - 1; }   /* strip transport byte */
 
-    /* Battery: the MT2 does NOT stream report 0x90 on the interrupt channel (proven — this never
-     * fired), so battery is polled on the CONTROL channel (bt_control_shim + the poll timer). This
-     * peek is kept as a cheap safety net in case a firmware ever pushes it here; distinct id from the
-     * multitouch stream (0x31), so it never disturbs the touch decode below. */
+    /* Battery is polled on the CONTROL channel (the MT2 never streams 0x90 here — proven); this peek
+     * is a cheap safety net, distinct id from the 0x31 stream so it never disturbs the decode. */
     if (rlen > 0) mt2_diag_report_id(rep[0]);
     mt2_maybe_publish_battery(rep, rlen);
 
@@ -242,22 +222,18 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
               length, length ? b[0] : 0, drc); } }
     if (drc != 0) return;                                                 /* not multitouch — drop */
 
-    /* STEADY: first real multitouch frame of this connection = the pad is streaming end-to-end. Recording
-     * gSteadyConn here STOPS the enable-retry loop in interposeTimerFired (file-scope; see its decl). */
+    /* STEADY: first real frame of this connection = the pad streams end-to-end. Recording gSteadyConn
+     * here STOPS the enable-retry loop in interposeTimerFired (teardown-safety; see gSteadyConn decl). */
     if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
         bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, gGenuineBnb, 0, 0); }
 
-    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 X/Y + ts, to correlate the
-     * faithful decoded position against the recognizer's norm.x (re/mt-contacts). If norm.x saturates
-     * to 0/1 while decoded x is still moving -> a downstream clamp band (in MultitouchSupport's
-     * report-X -> position step, using our published geometry). Smooth no-dwell sweep; tail = edge. */
+    /* Edge-clamp probe (debug.mt2_log>=2): decoded contact-0 X/Y vs the recognizer's norm.x, to catch
+     * a downstream saturation band (re/mt-contacts). Diagnostic only. */
     if (tf.contact_count > 0)
         MT2_DLOG(2, "edge x=%d y=%d ts=%u", tf.transducers[0].currentCoordinates.x, tf.transducers[0].currentCoordinates.y, bt_uptime_ms());
 
-    /* Feed: route through the SHARED mt2_session — drop-lifted, MakeTouch/Touching/BreakTouch
-     * lifecycle, liftoff — with the session sink targeting BNB's own spawned AMD (setBnbTarget). A
-     * raw direct feed (mt1_encode -> handleTouchFrame, no lifecycle states) janked the cursor: the
-     * recognizer never saw proper contact-start/lift transitions. */
+    /* Cross the seam: hand the decoded frame to the SHARED session (drop-lifted + lifecycle + liftoff),
+     * sink targeting BNB's own spawned AMD. A raw feed with no lifecycle states janked the cursor. */
     if (gActiveMT2Gesture && gInterruptReader) {
         void *amd = gGenuineBnb ? *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF) : 0;
         gActiveMT2Gesture->setBnbTarget(amd);
@@ -296,13 +272,10 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     IOLog("MT2BTReader: [diag] entered setupInGate PSM=%u isInactive=%d\n",
           psm, self->fChannel->isInactive());
 
-    /* Arm the shared session from bind time: it owns the settle window (drops the
-     * connect-transition contact burst) and all post-decode logic. Only the INTERRUPT
-     * channel (PSM 19 = 0x13) delivers touch frames, so only it registers as the
-     * session's active frame source. BT binds two L2CAP channels (control 0x11 +
-     * interrupt 0x13) as two separate reader instances; if the control reader claimed
-     * the source instead, the session's single-active guard would reject the interrupt
-     * reader's frames (== dead cursor). The control channel only sends the enable below. */
+    /* Arm the shared session from bind time (it owns the settle window + post-decode logic). Only the
+     * INTERRUPT channel (PSM 19 = 0x13) delivers touch frames, so only it registers as the session's
+     * active frame source — the two L2CAP channels bind as two reader instances, and the session's
+     * single-active guard would reject the interrupt frames if the control reader claimed the source. */
     if (psm == 0x13) {
         gInterruptReader = self;   /* the session source; the Path A hybrid shim feeds frames as this */
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
@@ -310,29 +283,23 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
             gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
     }
 
-    /* PSM 19 (interrupt): genuine BNBTrackpadDevice owns this channel's delegate (its handleStart
-     * listenAt's it). We do NOT listen on it ourselves — if we held it, BNB's listenAt would return
-     * 0xe00002bc -> forced teardown -> panic (findings §S2.5/§S2.6). We interpose BNB's delegate later
-     * (interposeInGate) instead of owning the channel. */
+    /* PSM 19 (interrupt): genuine BNB owns this channel's delegate; we do NOT listen on it ourselves
+     * (holding it makes BNB's listenAt return 0xe00002bc → forced teardown → panic, §S2.5/§S2.6). We
+     * interpose BNB's delegate later (interposeInGate) instead of owning the channel. */
     self->fIsControl = (psm == 0x11);
-    /* DEFER the 0xF1 multitouch enable (root cause 2026-06-21): firing 0xF1 on PSM 17 BEFORE the
-     * channel reaches OPEN makes sendTo block ~14s; the device tears the link down meanwhile (it never
-     * got the genuine listenAt + waitForChannelState(OPEN) acceptance) -> channel inactive -> BNB
-     * attach fails -> flap. So we let BNB's handleStart accept PSM 17 first; the phase-2 reEnable timer
-     * sends 0xF1 after both channels are OPEN (RE §6). */
+    /* The 0xF1 multitouch enable is DEFERRED to the phase-2 reEnable timer (firing it before the
+     * channel is OPEN flaps the link) — see explanation.md "Deferred 0xF1 multitouch enable". */
     IOLog("MT2BTReader: setup on PSM=%u\n", psm);
     /* A control channel coming up starts a new connection attempt — bump the id and mark CONTROL_UP. */
     if (psm == 0x11) { gConnId++; bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0); }
     return kIOReturnSuccess;
 }
 
-/* B1: build the OSDictionary passed to BNBTrackpadDevice::init. multitouchProperties() does
- * getProperty("DefaultMultitouchProperties"), so init's property table must carry that key with the
- * genuine config — parser-type 1000 + the MultitouchHID plugin IOCFPlugInTypes — so the AppleMultitouchDevice
- * BNB spawns is recognized by MultitouchSupport (gets a user client, drives the cursor). Mirrors the
- * BNBTrackpadDriver personality (re/plist AppleBluetoothMultitouch). Caller inits with it, then releases.
- * Returns NULL on alloc failure. Returns the dict as void* (the gh_config_t build_props signature;
- * gh_default_init_attach casts back). */
+/* Build the OSDictionary passed to BNBTrackpadDevice::init. multitouchProperties() reads
+ * "DefaultMultitouchProperties", so the table must carry the genuine config (parser-type 1000 + the
+ * MultitouchHID plugin) so the AMD BNB spawns is recognized by MultitouchSupport and drives the cursor.
+ * Mirrors the BNBTrackpadDriver personality. Returns the dict as void* (the cfg.build_props signature),
+ * NULL on alloc failure. */
 static void *bt_build_bnb_props(void) {
     OSDictionary *top    = OSDictionary::withCapacity(1);
     OSDictionary *mt     = OSDictionary::withCapacity(9);
@@ -354,26 +321,20 @@ static void *bt_build_bnb_props(void) {
     mt->setObject("TrackpadMomentumScroll", kOSBooleanTrue);
     mt->setObject("TrackpadSecondaryClickCorners", kOSBooleanTrue);
     mt->setObject("TrackpadFourFingerGestures", kOSBooleanTrue);
-    /* Physical-click reliability: BNB's createMultitouchHandler copies these DefaultMultitouchProperties
-     * keys onto the spawned AMD before AMD::start, which reads getProperty("ExtractAndPostDeviceButtonState")
-     * to set the S+9 device-button gate. Without it, handlePointerEventFromDevice (our click sink) posts
-     * are dropped on BNB's AMD -> only recognizer tap-to-click survives. Mirrors the fDevice path
-     * (MT2Gesture.cpp setProperty before start). */
+    /* Physical-click reliability: BNB copies this key onto the spawned AMD, which reads it to open the
+     * device-button gate — without it our click-sink posts are dropped (only tap-to-click survives). */
     mt->setObject(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
     top->setObject("DefaultMultitouchProperties", mt);
-    /* NB: do NOT seed "Product" in the init dict — IOHIDDevice::start (BNB's superclass) overwrites it
-     * from the empty HID product string AFTER this dict is applied (verified live: node Product="" despite
-     * the seed). We set Product post-start instead, in start() once fManualBnb exists. */
+    /* Do NOT seed "Product" here — IOHIDDevice::start overwrites it after; we set it post-start
+     * (seedBnbIdentity). See explanation.md "Product re-seed after IOHIDDevice::start". */
     plpath->release(); ptype->release(); popts->release();
     plugin->release(); mt->release();
     return top;
 }
 
-/* ---- genuine_host adapter: the seven generic ops are the shared gh_default_* (gh_default_adapter.h),
- * with bt_build_bnb_props supplied via cfg.build_props; BT supplies only interpose (the geometry vtable
- * clone) + restore. The L2CAP delegate poke (the input seam) is NOT here — it is installed async by
- * interposeTimerFired after BNB's interrupt channel appears. interpose/restore call the reader's
- * installBnbGeometry/removeBnbGeometry, so they read h->ctx. ---- */
+/* genuine_host adapter: 7 of 9 ops are the shared gh_default_* (props via cfg.build_props); BT supplies
+ * only interpose (the geometry vtable clone) + restore. NB the L2CAP delegate splice is NOT here — that
+ * input seam is installed async by interposeTimerFired after BNB's interrupt channel appears. */
 static int bt_gh_interpose(gh_host_t *h) {
     ((com_schmonz_MT2BTReader *)h->ctx)->installBnbGeometry(h->obj);  /* geometry vtable clone (class-gated) */
     return gBnbVtableCloned ? 0 : -1;       /* all-or-nothing: a failed clone is an interpose failure */
@@ -388,22 +349,40 @@ static const gh_adapter_t kBtAdapter = {
 
 bool com_schmonz_MT2BTReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
-
-    fIsControl = false;
-    fManualBnb = 0;
-    fInterposeTimer = 0;
-    fInterposeTries = 0;
-    fReEnableCount = 0;
+    resetTransportState();
 
     /* Our provider is the matched IOBluetoothL2CAPChannel. */
     fChannel = (IOBluetoothL2CAPChannel *)provider;
     IOLog("MT2BTReader: [diag] start() PSM=%u chan->isInactive=%d\n",
           fChannel->getPSM(), fChannel->isInactive());
 
-    /* IOBluetoothFamily REQUIREs every IOBluetoothObject call to run inside its
-     * workloop gate (mWorkLoop->inGate()) — calling sendTo/listenAt directly from this
-     * start() thread panics ("NOT called in IOWorkLoop"). Marshal onto the channel's
-     * own command gate, which enters that workloop. */
+    /* The main flow, as a sequence of named steps: */
+    if (!marshalSetupInGate()) return false;    /* bind channel + arm session, in-gate */
+    if (fIsControl) {                           /* Path A runs only on the control channel */
+        if (manualStartGenuineBnb())            /* host a genuine BNBTrackpadDevice */
+            seedBnbIdentity();                  /* Product + battery-display gate on its node */
+        if (fManualBnb)
+            armInterposeTimer();                /* async: splice our shim once BNB's chan appears */
+    }
+
+    IOLog("MT2BTReader: bound L2CAP channel, enabled multitouch (0xF1), listening\n");
+    registerService();
+    return true;
+}
+
+/* Step: zero the per-connection fields (extracted from start()). */
+void com_schmonz_MT2BTReader::resetTransportState() {
+    fIsControl = false;
+    fManualBnb = 0;
+    fInterposeTimer = 0;
+    fInterposeTries = 0;
+    fReEnableCount = 0;
+}
+
+/* Step: run setupInGate on the channel's command gate. IOBluetoothFamily REQUIREs every
+ * IOBluetoothObject call to run inside its workloop gate (calling sendTo/listenAt from this start()
+ * thread panics "NOT called in IOWorkLoop"). Returns false if the channel has no gate. */
+bool com_schmonz_MT2BTReader::marshalSetupInGate() {
     IOCommandGate *gate = fChannel->getCommandGate();
     if (!gate) {
         IOLog("MT2BTReader: channel has no command gate; cannot enable\n");
@@ -414,70 +393,59 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
     gate->runAction(&com_schmonz_MT2BTReader::setupInGate, this);
     IOLog("MT2BTReader: [diag] runAction(setupInGate) returned (isInactive=%d)\n",
           fChannel->isInactive());
+    return true;
+}
 
-    /* PATH A (manual-start the genuine BNBTrackpadDevice + interpose translation): on the control
-     * channel, manually build a genuine BNBTrackpadDevice on this
-     * real L2CAP channel — bypassing IOKit matching (which can't be tricked). Done from this normal
-     * start() thread, NOT in the channel command gate: the BT-HID start chain can block waiting for
-     * channel handshakes, and blocking while holding the gate would deadlock. start() runs the full
-     * IOHIDDevice chain on a real provider, so the IOHIDDevice state initializes (no publish-handler
-     * panic). Best-effort; failure leaves our reader untouched. */
-    if (fIsControl) {
-        /* Host a genuine BNBTrackpadDevice via the shared genuine_host core: manual-start + class-gate +
-         * geometry vtable interpose (live BEFORE start, so the AMD bring-up's first cacheDeviceProperties
-         * sees real geometry) + start. gh_start fully unwinds on any failure (restore-before-terminate). */
-        static const gh_config_t cfg = { "BNBTrackpadDevice", "BNBTrackpadDevice", bt_build_bnb_props };
-        if (gh_start(&fHost, &cfg, &kBtAdapter, this, fChannel) == 0) {
-            fManualBnb = (IOService *)fHost.obj;
-            gGenuineBnb = fManualBnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
-            (void)mt2_coordinator_activate(MT2_XPORT_BT, 0);   /* no-op seam (MT2 single-transport) */
-            IOLog("MT2BTReader: manual BNBTrackpadDevice start OK\n");
-            /* IOHIDDevice::start clobbered Product to the empty HID product string; re-set it now so
-             * System Report / any Product reader shows the genuine name. (Distinct from the device's
-             * persistent BT name — HID Feature report 0x55 — which the user sets via a pane Rename; see
-             * docs/mt-stack "Rename routing + the mirror".) USB needs no equivalent: there the
-             * genuine AMD copies the device's real USB iProduct descriptor ("Magic Trackpad"). */
-            OSString *prod = OSString::withCString("Magic Trackpad 2");
-            if (prod) { fManualBnb->setProperty("Product", prod); prod->release(); }
-            /* Battery display gate: the Trackpad pane reads battery via
-             * -[AppleBluetoothHIDDevice withBluetoothDevice:], whose initWithHIDDevice: (IOBluetooth
-             * @0x114d8) does `if (IORegistryEntryCreateCFProperty(node,"ExtendedFeatures")==nil){dealloc;
-             * return nil;}` — so with no ExtendedFeatures the wrapper is nil and batteryPercent returns 0
-             * REGARDLESS of our published BatteryPercent (RE'd 2026-07-01, tools/mt2_panebattery_probe).
-             * Genuine MT1 sets it from real extended feature reports; the MT2 has none. Publish a
-             * present-but-empty dict purely to pass that presence gate — batteryPercent then reads our
-             * "BatteryPercent" off this same node (it does not consult the dict's contents). */
-            OSDictionary *ef = OSDictionary::withCapacity(1);
-            if (ef) { fManualBnb->setProperty("ExtendedFeatures", ef); ef->release(); }
-            /* Fresh node -> forget the prior battery so the next poll republishes onto it (else a
-             * same-value reconnect skips the publish and the pane/menu read -1.0). */
-            gLastBattPct = -1; gLastBattBnb = 0;
-            bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, fManualBnb, 0, 0);
-        } else {
-            IOLog("MT2BTReader: manual BNBTrackpadDevice host start FAILED\n");
-        }
+/* Step: manual-start a genuine BNBTrackpadDevice on this real L2CAP channel via the shared
+ * genuine_host core (manual-start + class-gate + geometry vtable interpose live BEFORE start + start;
+ * gh_start fully unwinds on failure). Run from this normal start() thread, NOT in the channel gate:
+ * the BT-HID start chain can block on handshakes and blocking in-gate would deadlock. IOKit matching
+ * can't be tricked, hence the manual start. Returns true (and sets fManualBnb) on success. */
+bool com_schmonz_MT2BTReader::manualStartGenuineBnb() {
+    static const gh_config_t cfg = { "BNBTrackpadDevice", "BNBTrackpadDevice", bt_build_bnb_props };
+    if (gh_start(&fHost, &cfg, &kBtAdapter, this, fChannel) != 0) {
+        IOLog("MT2BTReader: manual BNBTrackpadDevice host start FAILED\n");
+        return false;
+    }
+    fManualBnb = (IOService *)fHost.obj;
+    gGenuineBnb = fManualBnb;   /* publish for the interrupt reader + MT2Gesture sink (Phase 2) */
+    (void)mt2_coordinator_activate(MT2_XPORT_BT, 0);   /* no-op seam (MT2 single-transport) */
+    IOLog("MT2BTReader: manual BNBTrackpadDevice start OK\n");
+    return true;
+}
 
-        if (fManualBnb) {
-            /* BNB's interrupt channel arrives ASYNCHRONOUSLY (publish notification), so poll
-             * for it on our workloop and install the interpose once it (and BNB's listenAt)
-             * are in place. */
-            fInterposeTries = 0;
-            IOWorkLoop *wl = getWorkLoop();
-            if (wl) {
-                fInterposeTimer = IOTimerEventSource::timerEventSource(
-                    this, &com_schmonz_MT2BTReader::interposeTimerFired);
-                if (fInterposeTimer) {
-                    if (wl->addEventSource(fInterposeTimer) == kIOReturnSuccess)
-                        fInterposeTimer->setTimeoutMS(100);
-                    else { fInterposeTimer->release(); fInterposeTimer = 0; }   /* invariant: fInterposeTimer != 0 => attached */
-                }
-            }
+/* Step: seed the genuine node's identity now that fManualBnb exists. */
+void com_schmonz_MT2BTReader::seedBnbIdentity() {
+    /* Re-set Product post-start (IOHIDDevice::start clobbered it to the empty HID string) — see
+     * explanation.md "Product re-seed after IOHIDDevice::start". */
+    OSString *prod = OSString::withCString("Magic Trackpad 2");
+    if (prod) { fManualBnb->setProperty("Product", prod); prod->release(); }
+    /* Battery display gate: the Trackpad pane's initWithHIDDevice: returns nil (→ 0%) if the node has
+     * no "ExtendedFeatures" property, REGARDLESS of BatteryPercent. Publish a present-but-empty dict
+     * purely to pass that presence gate — see explanation.md "the ExtendedFeatures presence gate". */
+    OSDictionary *ef = OSDictionary::withCapacity(1);
+    if (ef) { fManualBnb->setProperty("ExtendedFeatures", ef); ef->release(); }
+    /* Fresh node → forget the prior battery so the next poll republishes onto it (else a same-value
+     * reconnect skips the publish and the pane/menu read -1.0). */
+    gLastBattPct = -1; gLastBattBnb = 0;
+    bt_conntrace(CSM_BNB_FORMED, CSM_EV_BNB_LISTENING, fChannel, fManualBnb, 0, 0);
+}
+
+/* Step: arm the async poll for BNB's interrupt channel. It arrives ASYNCHRONOUSLY (publish
+ * notification), so interposeTimerFired polls for it and installs the interpose once it (and BNB's
+ * listenAt) are in place. Invariant: fInterposeTimer != 0 => it is attached to the workloop. */
+void com_schmonz_MT2BTReader::armInterposeTimer() {
+    fInterposeTries = 0;
+    IOWorkLoop *wl = getWorkLoop();
+    if (wl) {
+        fInterposeTimer = IOTimerEventSource::timerEventSource(
+            this, &com_schmonz_MT2BTReader::interposeTimerFired);
+        if (fInterposeTimer) {
+            if (wl->addEventSource(fInterposeTimer) == kIOReturnSuccess)
+                fInterposeTimer->setTimeoutMS(100);
+            else { fInterposeTimer->release(); fInterposeTimer = 0; }
         }
     }
-
-    IOLog("MT2BTReader: bound L2CAP channel, enabled multitouch (0xF1), listening\n");
-    registerService();
-    return true;
 }
 
 /* In-gate: null our listenAt callback. newDataIn bails when the callback (channel+0x110)
@@ -598,10 +566,10 @@ IOReturn com_schmonz_MT2BTReader::triggerInGate(OSObject * /*owner*/, void *arg0
     return kIOReturnSuccess;
 }
 
-/* Clone OUR transport instance's vtable and override the getMultitouchReport slot with our
- * geometry answerer. Must run BEFORE the create trigger so BNB's AMD's bring-up query is answered.
- * Instance-scoped: only this transport's vtable pointer changes; the shared class vtable (and a
- * co-connected genuine MT1's transport) is untouched. */
+/* Dirty trick #2 (instance-scoped vtable clone): clone OUR transport instance's vtable and override
+ * the getMultitouchReport slot with our geometry answerer. Instance-scoped, so only this transport's
+ * vtable pointer changes — the shared class vtable (and a co-connected genuine MT1's transport) is
+ * untouched. Must run BEFORE the create trigger so BNB's AMD bring-up query is answered. */
 void com_schmonz_MT2BTReader::installBnbGeometry(void *transport) {
     if (!transport || gBnbVtableCloned) return;
     /* Safety gate: we clone THIS object's vtable and write slot 0xcc8, valid only if it really is
@@ -654,16 +622,10 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
         if (!gCtrlInterposedChannel && cg)
             cg->runAction(&com_schmonz_MT2BTReader::controlInterposeInGate, self->fChannel);
 
-        /* Phase 2a: re-send the 0xF1 enable to force the device out of the basic HID mouse mode BNB's
-         * handleStart knocked it into (findings S2.11) — and KEEP re-sending until this connection's first
-         * real multitouch frame (gSteadyConn == gConnId). On a rapid/unstable reconnect the enable
-         * setReport can fail (channel-not-ready, 0xe00002bc) for the first few seconds; the old fixed
-         * 8-sends-then-give-up window would then miss it and leave the device stuck in mouse mode = no
-         * cursor until a manual tap ([[bt-reconnect-enable-fails]]). Retrying until the frame flows fixes
-         * that. TEARDOWN-SAFE: we only run while gSteadyConn != gConnId, so a device that already reached
-         * STEADY and is now powering off never re-enters this branch — that (re-enabling on a working
-         * device's power-off) was the v1 regression. Cadence: fast (250ms) for the initial push, then gentle
-         * (1s) so a genuinely-stuck-but-connected device isn't spammed. */
+        /* Phase 2a: re-send the 0xF1 enable to force the device back to multitouch mode, retrying until
+         * this connection's first frame (gSteadyConn == gConnId) — teardown-safe because it runs only
+         * while gSteadyConn != gConnId. Cadence: fast (250ms) then gentle (1s). See explanation.md
+         * "Reconnect re-enable: retry-until-first-frame, teardown-safe". */
         if (gSteadyConn != gConnId) {
             if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
             /* HANDLER_UP once the trigger has spawned BNB's AMD (visible at gGenuineBnb+0x1b0). */
@@ -766,16 +728,9 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
         gCtrlOrigCb = 0; gCtrlOrigTarget = 0;
     }
     /* Path A: tear down the manually-started genuine BNBTrackpadDevice before we go away, or it
-     * outlives the channel it was started on.
-     *
-     * NO waitQuiet (RE'd 2026-06-23, see docs/mt-stack/open-questions.md): the manually-started BNB
-     * sits at busyState=1 for its ENTIRE life — its genuine connect lifecycle never completes
-     * (deviceReady is never reached in our hybrid flow; the 5s "Forcing MT restart" watchdog cycles),
-     * so the start-time busy is never balanced. terminate() can't drop it: probe showed busy=1 before
-     * terminate and still busy=1 after a full 8s waitQuiet (AMD child busy=0, so it's BNB's own). A
-     * waitQuiet here can therefore NEVER succeed — it only stalls every disconnect for the full bound.
-     * Unload safety rests on the in-gate delegate + vtable restores ABOVE (not on quiescence); the
-     * async termination completes after release(). So: plain terminate() + release(), no wait. */
+     * outlives the channel it was started on. Plain terminate() + release(), NO waitQuiet — the BNB
+     * never balances its start-time busy so a wait can never succeed; unload safety rests on the
+     * in-gate restores ABOVE. See explanation.md "stop(): plain terminate + release, NO waitQuiet". */
     if (fManualBnb) {
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
         gLastBattBnb = 0;  /* forget the torn-down node so a reused address can't false-match */

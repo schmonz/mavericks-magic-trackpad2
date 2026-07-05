@@ -69,5 +69,13 @@ public:
      * create trigger; removeBnbGeometry() restores the original vtable on stop. */
     void installBnbGeometry(void *transport);
     void removeBnbGeometry(void *transport);
+
+private:
+    /* start() split into named steps (extract-method only; call order preserved). */
+    void resetTransportState();       /* zero the per-connection fields */
+    bool marshalSetupInGate();        /* run setupInGate on the channel gate; false = no gate */
+    bool manualStartGenuineBnb();     /* gh_start the genuine BNB (control channel); false = failed */
+    void seedBnbIdentity();           /* Product + ExtendedFeatures gate + battery-forget on the node */
+    void armInterposeTimer();         /* arm the async poll for BNB's interrupt channel */
 };
 #endif
