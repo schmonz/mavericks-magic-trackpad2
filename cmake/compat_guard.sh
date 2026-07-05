@@ -21,7 +21,6 @@ POST_10_9='_clock_gettime|_clock_gettime_nsec_np|_IORegistryEntryCopyPath|_IOMai
 # The binaries the .pkg actually ships (mirror cmake/mt2_pkg.cmake).
 SHIPPED="
 $BUILD/sbin/mt2_reenumerate
-$BUILD/sbin/mt2_set_btname
 $BUILD/sbin/mt2_pane_watch
 $BUILD/MT2PaneRefresh.osax/Contents/MacOS/MT2PaneRefresh
 $BUILD/MT2PaneRefresh.bundle/Contents/MacOS/MT2PaneRefresh

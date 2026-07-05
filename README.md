@@ -50,7 +50,6 @@ honest as the device connects, disconnects, or switches transport.
         /Library/ScriptingAdditions/MT2PaneRefresh.osax \
         /usr/local/libexec/mt2_pane_watch \
         /usr/local/sbin/mt2d-run /usr/local/sbin/mt2_reenumerate \
-        /usr/local/sbin/mt2_set_btname \
         /usr/local/lib/mt2d /var/db/mt2d-boot.state /var/log/mt2d.log
 
 ## Develop
@@ -76,7 +75,7 @@ honest as the device connects, disconnects, or switches transport.
   `MT2BTReader` transport readers that manual-start + interpose Apple's genuine
   drivers, and the `MT2Gesture` nub that hosts the shared session and feeds the
   conditioned stream to Apple's spawned `AppleMultitouchDevice`.
-- `tools/` — dev/diagnostic helpers. `mt2_reenumerate` and `mt2_set_btname` ship,
+- `tools/` — dev/diagnostic helpers. `mt2_reenumerate` ships,
   as does the prefpane-refresh component in `mt2_prefpane_refresh/` (the
   `MT2PaneRefresh.osax` + `mt2_pane_watch` agent); the rest are reverse-engineering
   probes (`tools/re` is the RE toolkit). `tools/spikes/` holds one-off probes.

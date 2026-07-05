@@ -29,7 +29,6 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/MT2Gesture.kext ${PKGROOT}/usr/local/lib/mt2d/MT2Gesture.kext
   ${_UPD_PKG_STAGE}
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_reenumerate ${PKGROOT}/usr/local/sbin/
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_set_btname  ${PKGROOT}/usr/local/sbin/
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/mt2d-run        ${PKGROOT}/usr/local/sbin/
   COMMAND chmod +x ${PKGROOT}/usr/local/sbin/mt2d-run
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2d.plist ${PKGROOT}/Library/LaunchDaemons/
@@ -59,5 +58,5 @@ add_custom_target(pkg
           ${CMAKE_BINARY_DIR}/mt2d-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
-  DEPENDS kext mt2_reenumerate mt2_set_btname MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch mt2_usb_bt_handoff ${_UPD_PKG_DEP}
+  DEPENDS kext mt2_reenumerate MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch mt2_usb_bt_handoff ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")

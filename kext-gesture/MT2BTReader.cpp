@@ -433,8 +433,9 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
             (void)mt2_coordinator_activate(MT2_XPORT_BT, 0);   /* no-op seam (MT2 single-transport) */
             IOLog("MT2BTReader: manual BNBTrackpadDevice start OK\n");
             /* IOHIDDevice::start clobbered Product to the empty HID product string; re-set it now so
-             * System Report / any Product reader shows the genuine name. (Distinct from the BT-pane
-             * displayName, which blued owns — set by mt2_set_btname.) USB needs no equivalent: there the
+             * System Report / any Product reader shows the genuine name. (Distinct from the device's
+             * persistent BT name — HID Feature report 0x55 — which the user sets via a pane Rename; see
+             * docs/mt-stack "Rename routing + the mirror".) USB needs no equivalent: there the
              * genuine AMD copies the device's real USB iProduct descriptor ("Magic Trackpad"). */
             OSString *prod = OSString::withCString("Magic Trackpad 2");
             if (prod) { fManualBnb->setProperty("Product", prod); prod->release(); }
