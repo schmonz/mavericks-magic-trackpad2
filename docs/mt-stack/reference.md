@@ -243,11 +243,17 @@ absent, so they coexist unconditionally (no `kFullBnb` gate). Oracle: `tools/re 
 `IOBluetooth.framework`/`blued` on 10.9 — mixed: the name write is real+callable; the USB-OOB pairing is
 **declared but STUBBED**. See `mt2-device-writable-name`, `mt2-usb-oob-pairing-api`.
 
-- **Write the device's stored BT name — REAL, callable.** `-[AppleBluetoothHIDDevice setDeviceName:]`
-  (@0x43180): HID **Feature** reports via `reportIDForReportKey:` — a single `"LongDeviceName"` (bounded by
-  `getMaxDeviceNameLength`) or `"DeviceName1".."DeviceName4"` (4×8-byte) + a `"DeviceNameChange"` commit —
-  then `remoteNameRequest:` (refresh) + `setDisplayName:` (alias). Wrapper: `+[IOBluetoothDevicePair
-  setAppleDeviceName:]`. (Our unit's name got mis-written to `02 01` = our enable payload; one call fixes it.)
+- **Write the device's stored BT name — ✅ SOLVED + on-device proven 2026-07-05.** NOT via
+  `-[AppleBluetoothHIDDevice setDeviceName:]` (@0x43180) — that maps report ids from `ExtendedFeatures`,
+  which is EMPTY on the MT2 under 10.9, so it silently no-ops here (the MT2 declares no
+  `LongDeviceName`/`DeviceName1..4`). The real store is the device's one declared Feature report, the
+  **64-byte vendor report `0x55`** (usage page `0xff02`): `SET_REPORT(Feature,0x55,[id][raw name])` writes
+  it verbatim (NVRAM-backed, follows the device across hosts — verified on Tahoe), then
+  `-[IOBluetoothDevice remoteNameRequest:]` refreshes the host `Name` cache LIVE (no power cycle). Clear the
+  host alias with `setDisplayName:nil`. Tools: `tools/re mt2-name` (read), `tools/re mt2-name-write` (write),
+  `tools/mt2_set_btname --clear/--refresh`. Enable is a different report (`0xF1`), untouched by name writes.
+  (Our unit's name was mis-written to `02 01` in early dev; `mt2-name-write` fixes it.) See
+  [[mt2-device-writable-name]] and `explanation.md` "Rename routing + the mirror".
 - **USB out-of-band auto-pairing ("HID Emulation" = plug-in-once → BT-paired) — STUBBED on 10.9 (post-10.9
   feature).** The symbols exist but the device-side bodies are unsupported stubs:
   `-[IOBluetoothHostController addHIDEmulationDevice:classOfDevice:linkKey:]` (@0x5cada) →

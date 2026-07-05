@@ -361,17 +361,44 @@ See `mt2-device-writable-name` (mechanism RE'd).
 [Earlier same-day note claiming
 "no writable field" was WRONG — it missed this EIR name field.]
 
-**Rename routing + the mirror (RE'd + built 2026-07-03).** The pane's device-list right-click **Rename**
-writes ONLY the host `displayName` alias — confirmed two ways: (1) "a manual Rename persisted" as
-`displayName` above; (2) the Bluetooth pane binary calls NEITHER `setDisplayName:` NOR `setDeviceName:` (it
-only reads `getDisplayName`); the write happens in `blued`/the prefs cache, and the pane's device menu is
-built by `DeviceMenuCreator` (`preferenceItemsForDevice:` adds only Option-gated debug rows). Evidence the
-rename never reaches onboard: the unit still advertises `02 01` despite past pane renames. **To make Rename
-follow the device onboard we MIRROR:** a `com.schmonz.mt2namemirror` LaunchAgent `WatchPaths` the BT prefs
-and runs `mt2_set_btname --mirror`, which reads the new `displayName` and pushes it onboard via
-`setDeviceName:` (idempotent — no-ops if unchanged). Built (commit `c7de7be`), ON-DEVICE UNTESTED. Staging
-plan: prove the `setDeviceName:` write lands, THEN relocate the ~15 mirror lines into the injected osax
-(which already edits the BT device list) and drop the standalone agent.
+**✅ SOLVED + PROVEN ON-DEVICE 2026-07-05 — the `setDeviceName:` lead above was the WRONG path for THIS
+device; the real writer is a direct SET_REPORT to Feature report `0x55`.** `-[BluetoothHIDDevice
+setDeviceName:]` builds its report-id map from `ExtendedFeatures`, which is EMPTY on the MT2 under 10.9
+(predates the MT2), so it silently no-ops here — the MT2 declares no `LongDeviceName`/`DeviceName1..4`
+report. What it DOES declare (135-byte BT HID descriptor) is exactly one Feature report: the 64-byte
+**vendor report `0x55`** (usage page `0xff02`). That IS the name store. Proof chain (`tools/re mt2-name`
+read, `tools/re mt2-name-write` write):
+- `GET_REPORT(Feature,0x55)` returned `02 01` — the SAME two bytes showing as the device's corrupted
+  name on macOS Tahoe. That match identified `0x55`.
+- `SET_REPORT(Feature,0x55,[id][raw name bytes])` (no header/terminator; payload stored verbatim) wrote
+  a canary → read back → **survived a full power cycle** (NVRAM) → **Tahoe displayed the canary** as the
+  device name and it followed the unit across hosts. Then wrote the real name `"Mavericks Trackpad 2"`.
+- The enable report is a DIFFERENT report (`0xF1`), so name writes never touch multitouch-enable; and no
+  kext code interposes `0x55`, so the userland SET/GET reach the device directly.
+- The `02 01` was an accidental early-dev write, not the current enable path (which targets `0xF1`).
+
+**Host-cache / live-refresh behavior (validated 2026-07-05):** 10.9 is NOT blind to the on-device name —
+it lands in the BT plist `Name` cache (`/Library/Preferences/com.apple.Bluetooth.plist`, per device) and
+the pane shows it; the pane just prefers the `displayName` override when set (the old interim alias).
+`-[IOBluetoothDevice remoteNameRequest:]` (what blued does after a name write) refreshes the cache LIVE —
+**no power cycle** (proven: wrote a test name → remoteNameRequest → `[d name]` + the plist both updated
+instantly). Clean update sequence: **SET_REPORT(0x55,name) → remoteNameRequest: → setDisplayName:nil**
+(clear the alias so the on-device name shows through). Tools now carry `--clear`/`--refresh`
+(`tools/mt2_set_btname`).
+
+**Rename routing + the mirror (RE'd 2026-07-03; corrected + de-risked 2026-07-05).** The pane's device-list
+right-click **Rename** writes ONLY the host `displayName` alias — the Bluetooth pane binary calls NEITHER
+`setDisplayName:` NOR `setDeviceName:` (it only reads `getDisplayName`); the write lands in `blued`/the
+prefs cache, and the device menu is built by `DeviceMenuCreator` (`preferenceItemsForDevice:` = Option-gated
+debug rows only). So there is **no pane selector to swizzle**. **To make Rename follow the device onboard we
+MIRROR**, folded into the osax already injected into System Prefs (`mt2_prefpane_refresh.c`, aux tick
+~1.5 s): each tick read the MT2's `displayName`; if it CHANGED (user renamed) →
+`SET_REPORT(Feature,0x55,newName)` → `remoteNameRequest:` → `setDisplayName:nil` (auto-clear, user's
+choice). **GATE** the write to `gPsm==PSM_BT` + no transport transition in flight, keeping the
+in-System-Prefs SET_REPORT out of the getReport-panic scenario (`docs/mt-stack/open-questions.md` /
+`mt2-usb-bringup-getreport-panic`). All four primitives are validated on-device; only the ~40-line osax
+integration + a gated System-Prefs reload/test remain. This SUPERSEDES the standalone
+`com.schmonz.mt2namemirror` LaunchAgent (`c7de7be`), which used the dead `setDeviceName:` path.
 
 ### Picture — ✅ FIXED 2026-07-02 (pane row = a VIEW, NOT the vault); vault RE below was the WRONG premise
 **REALITY CORRECTION (2026-07-02, mt2-prefpanery session — shipped, on-device verified).** The entire

@@ -136,10 +136,10 @@ backup pointer is live; the updated package is deployed (`cmake --build cmake-bu
    (USB) — expect `"Magic Trackpad 2"`. If still empty, the genuine driver overrides `Product` from the
    device and init-dict seeding doesn't stick for that key (revert the two seeds).
 
-3. **Does `mt2_set_btname` work from root@launchd at boot?** First clear the override:
-   `sudo /usr/libexec/PlistBuddy -c "Delete :DeviceCache:<addr>:displayName" /Library/Preferences/com.apple.Bluetooth.plist`
-   (or rename the device to junk), reboot, then check the Bluetooth pane shows "Magic Trackpad 2" and
-   `defaults read /Library/Preferences/com.apple.Bluetooth DeviceCache | grep -iA22 <addr> | grep displayName`.
-   If it did NOT get set, IOBluetooth `setDisplayName:` needs a user session → move the invocation from
-   `dist/mt2d-run` (root LaunchDaemon) to a per-user LaunchAgent. (Running the tool by hand in a user
-   shell is known to work + live-update the pane.)
+3. **Does a Bluetooth-pane Rename land on the device?** Right-click the MT2 row → Rename → type a
+   distinctive name → Enter. The injected osax mirrors it onto the device: watch
+   `grep name-mirror /var/log/system.log` for `writing onboard (0x55)` + `pushed … + cleared alias`,
+   then confirm with `tools/re mt2-name` (report `0x55` = the typed name) and the Bluetooth pane showing
+   it. It persists across power-cycles and follows the device to other Macs. Nothing writes the name
+   unrequested — there is no boot-time or install-time name write. (See docs/mt-stack/explanation.md
+   "Rename routing + the mirror".)

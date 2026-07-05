@@ -1,5 +1,16 @@
 # Runbook: write the persistent on-device name of a Magic Trackpad 2
 
+> **✅ SOLVED + SHIPPED 2026-07-05 — this runbook is kept only as the RE trail.**
+> The mechanism turned out to be simpler than the macOS-26 handoff below guessed: the MT2 declares
+> **no** `DeviceName1..4`/`LongDeviceName` report. Its persistent name lives in its **one** declared
+> HID Feature report — the 64-byte vendor report **`0x55`** — written verbatim via
+> `SET_REPORT(Feature, 0x55, [id][name bytes])`. Proven on-device (read-back, survives power-cycle,
+> shows on Tahoe + follows the device). The product writes it **only on an explicit user Rename in the
+> Bluetooth pane**, mirrored onto the device by the injected osax (`mt2_prefpane_refresh.c` §7b). The
+> read probe below (`tools/re mt2-name`) still stands; the standalone write tool was removed (the osax
+> owns the only write path — we never write the name unrequested). Authoritative write-up:
+> `docs/mt-stack/explanation.md` "✅ SOLVED …" + "Rename routing + the mirror".
+
 **Goal (job to be done):** from the Mavericks target, write the name string that
 the MT2 stores *in its own hardware* (the one that persists when the device is
 paired to another computer) — not the host-side Bluetooth alias.
