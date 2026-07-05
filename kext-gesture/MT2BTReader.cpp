@@ -5,7 +5,7 @@
  * L2CAP channel directly, enable
  * multitouch with the 0xF1 SET_REPORT (the MT2's command; Apple's stock
  * BNBTrackpadDevice sends the MT1 0xD7 and so never completes), decode each frame
- * (mt2_bt_decode), and push the touch_frame_t to the MT2Gesture nub via
+ * (mt2_bt_decode), and push the VoodooInputEvent to the MT2Gesture nub via
  * submitFrame(MT2_EVENT_DRIVEN). The shared mt2_session owns the settle gate,
  * lift-drop, deceleration/clean-lift, and click — there is no decision logic here.
  */
@@ -235,7 +235,7 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     if (rlen > 0) mt2_diag_report_id(rep[0]);
     mt2_maybe_publish_battery(rep, rlen);
 
-    touch_frame_t tf;
+    VoodooInputEvent tf;
     int drc = mt2_bt_decode(rep, rlen, &tf);
     { static bool once = false; if (!once) { once = true;
         IOLog("MT2BTReader: [diag] first shim hit len=%u b0=0x%02x decode=%d\n",
@@ -251,8 +251,8 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
      * faithful decoded position against the recognizer's norm.x (re/mt-contacts). If norm.x saturates
      * to 0/1 while decoded x is still moving -> a downstream clamp band (in MultitouchSupport's
      * report-X -> position step, using our published geometry). Smooth no-dwell sweep; tail = edge. */
-    if (tf.ntouches > 0)
-        MT2_DLOG(2, "edge x=%d y=%d ts=%u", tf.touches[0].x, tf.touches[0].y, bt_uptime_ms());
+    if (tf.contact_count > 0)
+        MT2_DLOG(2, "edge x=%d y=%d ts=%u", tf.transducers[0].currentCoordinates.x, tf.transducers[0].currentCoordinates.y, bt_uptime_ms());
 
     /* Feed: route through the SHARED mt2_session — drop-lifted, MakeTouch/Touching/BreakTouch
      * lifecycle, liftoff — with the session sink targeting BNB's own spawned AMD (setBnbTarget). A

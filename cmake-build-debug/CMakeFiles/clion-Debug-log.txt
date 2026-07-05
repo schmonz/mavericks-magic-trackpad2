@@ -1,0 +1,5 @@
+/Users/schmonz/Applications/CLion.app/Contents/bin/cmake/mac/aarch64/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" -S /Volumes/code/trees/mavericks-magic-trackpad2 -B /Volumes/code/trees/mavericks-magic-trackpad2/cmake-build-debug
+-- MT2 compiler check OK: AppleClang 21.0.0.21000101 (/usr/bin/cc), host Darwin 25.5.0
+-- Configuring done (0.3s)
+-- Generating done (39.3s)
+-- Build files have been written to: /Volumes/code/trees/mavericks-magic-trackpad2/cmake-build-debug

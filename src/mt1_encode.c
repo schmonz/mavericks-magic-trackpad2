@@ -38,9 +38,9 @@ static int scale(int v, int inMin, int inMax, int outMin, int outMax) {
     return (int)s;
 }
 
-int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t timestamp) {
+int mt1_encode(const VoodooInputEvent *frame, uint8_t *buf, size_t cap, uint32_t timestamp) {
     if (!frame || !buf) return -1;
-    int nt = frame->ntouches;
+    int nt = frame->contact_count;
     if (nt < 0) nt = 0;
     if (nt > MAX_TOUCHES) nt = MAX_TOUCHES;
     size_t need = MT1_HEADER + (size_t)nt * MT1_RECSZ;
@@ -59,16 +59,16 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
      * tracks real time AND inter-frame deltas survive (cursor motion intact). */
     uint32_t ts = timestamp & 0x3fffff;
     buf[0] = MT1_REPORT_ID;
-    buf[1] = (uint8_t)((frame->button & 0x01) | ((ts & 0x3f) << 2));
+    buf[1] = (uint8_t)((frame->isPhysicalButtonDown & 0x01) | ((ts & 0x3f) << 2));
     buf[2] = (uint8_t)((ts >> 6) & 0xff);
     buf[3] = (uint8_t)((ts >> 14) & 0xff);
 
     for (int i = 0; i < nt; i++) {
-        const touch_t *in = &frame->touches[i];
+        const VoodooInputTransducer *in = &frame->transducers[i];
         uint8_t *t = buf + MT1_HEADER + i * MT1_RECSZ;
 
-        int x1 = scale(in->x, MT2_MIN_X, MT2_MAX_X, MT1_MIN_X, MT1_MAX_X);
-        int y1 = scale(in->y, MT2_MIN_Y, MT2_MAX_Y, MT1_MIN_Y, MT1_MAX_Y);
+        int x1 = scale(in->currentCoordinates.x, MT2_MIN_X, MT2_MAX_X, MT1_MIN_X, MT1_MAX_X);
+        int y1 = scale(in->currentCoordinates.y, MT2_MIN_Y, MT2_MAX_Y, MT1_MIN_Y, MT1_MAX_Y);
 
         unsigned X = (unsigned)x1 & 0x1fff;        /* 13-bit two's complement */
         unsigned V = (unsigned)(-y1) & 0x1fff;     /* y stored negated */
@@ -100,7 +100,7 @@ int mt1_encode(const touch_frame_t *frame, uint8_t *buf, size_t cap, uint32_t ti
          * leaves density below threshold and no tap ever commits. Report a firm size
          * (the full 6-bit field) for a present finger so the density gate passes; a
          * lifting contact (TS_END) keeps its natural decaying size. */
-        int sz6 = (in->state == TS_END) ? (in->size & 0x3f) : 0x3f;
+        int sz6 = (in->state == TS_END) ? (in->currentCoordinates.pressure & 0x3f) : 0x3f;
 
         /* The same density = size*400/radii gate divides by the touch radii (major/minor).
          * size is force-maxed above, but the RAW MT2 radii were passed through -- and MT2's

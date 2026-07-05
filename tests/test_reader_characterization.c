@@ -62,7 +62,7 @@ static const uint8_t USB_2F[] = {
 typedef struct { uint8_t buf[64]; int len; int nfeed; } bt_cap_t;
 static void bt_click(void *c, unsigned m){ (void)c; (void)m; }
 static void bt_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
-static void bt_feed (void *c, const touch_frame_t *f){
+static void bt_feed (void *c, const VoodooInputEvent *f){
     bt_cap_t *cap = (bt_cap_t *)c;
     int n = mt1_encode(f, cap->buf, sizeof cap->buf, BT_TS);   /* mirrors MT2Gesture.cpp:61 */
     if (n > 0) { cap->len = n; }
@@ -75,7 +75,7 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
     bt_cap_t cap; memset(&cap, 0, sizeof cap);
     mt2_session_sink_t sink = { bt_click, bt_feed, bt_arm, &cap };
     mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, /*now*/1000);
-    touch_frame_t tf; memset(&tf, 0, sizeof tf);
+    VoodooInputEvent tf; memset(&tf, 0, sizeof tf);
     if (mt2_bt_decode(raw, rawlen, &tf) != 0) return -1;
     mt2_session_frame(&s, 0xB7, &tf, /*now*/1000, &sink);
     memcpy(out, cap.buf, cap.len);

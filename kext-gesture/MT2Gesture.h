@@ -28,7 +28,7 @@ class com_schmonz_MT2Gesture : public IOService {
 
     /* Sink callbacks (ctx = this): translate session effects into IOKit calls. */
     static void sink_post_click(void *ctx, unsigned mask);
-    static void sink_feed_frame(void *ctx, const touch_frame_t *frame);
+    static void sink_feed_frame(void *ctx, const VoodooInputEvent *frame);
     static void sink_arm_timer(void *ctx, uint32_t ms);
 public:
     virtual bool start(IOService *provider) override;
@@ -38,9 +38,9 @@ public:
     void setBnbTarget(void *amd) { fBnbTarget = amd; }
 
     /* Session-backed transport path: a reader arms a connection, then submits decoded
-     * touch_frame_t frames; the session decides what reaches the device via the sink. */
+     * VoodooInputEvent frames; the session decides what reaches the device via the sink. */
     void connectionEstablished(IOService *source, mt2_transport_mode_t mode);
-    void submitFrame(IOService *source, const touch_frame_t *tf);
+    void submitFrame(IOService *source, const VoodooInputEvent *tf);
     static void idleTimeout(OSObject *owner, IOTimerEventSource *sender);
 
     /* DEBUG/TEST seam: the user client routes injected encoded 0x28 bytes here, straight

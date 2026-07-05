@@ -12,14 +12,14 @@ static void mt1_decode_record(const uint8_t *t, int *id, int *x, int *y, int *st
 }
 
 static void run_tests(void) {
-    touch_frame_t f = {0};
-    f.button = 1;
-    f.ntouches = 1;
-    f.touches[0].id = 9;
-    f.touches[0].state = TS_TOUCHING;
-    f.touches[0].x = 752;   /* MT2-space coordinates (from a real frame) */
-    f.touches[0].y = 556;
-    f.touches[0].size = 23;
+    VoodooInputEvent f = {0};
+    f.isPhysicalButtonDown = 1;
+    f.contact_count = 1;
+    f.transducers[0].id = 9;
+    f.transducers[0].state = TS_TOUCHING;
+    f.transducers[0].currentCoordinates.x = 752;   /* MT2-space coordinates (from a real frame) */
+    f.transducers[0].currentCoordinates.y = 556;
+    f.transducers[0].currentCoordinates.pressure = 23;
 
     uint8_t buf[256];
     int n = mt1_encode(&f, buf, sizeof(buf), 0x25abc /* 18-bit ts */);
@@ -49,7 +49,7 @@ static void run_tests(void) {
      * transition; without a distinct first frame the contact reads as already
      * Touching and a tap never commits. (state nibble verified vs the 10.9.5
      * CompactV4 decode: 0x30 -> MTTouchState MakeTouch(3).) */
-    f.touches[0].state = TS_START;
+    f.transducers[0].state = TS_START;
     n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
     CHECK_EQ(n, 4 + 9);
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
@@ -57,20 +57,20 @@ static void run_tests(void) {
 
     /* A lifting contact is TS_END and must encode to BreakTouch (0x50): the
      * recognizer needs the MakeTouch->...->BreakTouch transition to commit a tap. */
-    f.touches[0].state = TS_END;
+    f.transducers[0].state = TS_END;
     n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
     CHECK_EQ(n, 4 + 9);
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
     CHECK_EQ(state, 0x50);        /* lift -> BreakTouch */
-    f.touches[0].state = TS_TOUCHING;  /* restore for later cases */
+    f.transducers[0].state = TS_TOUCHING;  /* restore for later cases */
 
     /* Native tap-to-click gates on contact DENSITY = size*400/radii, which must exceed
      * 0.75 (RE'd: MTChordCycling::tapHasValidTimingAndStrength reads MTContact+0x5c, fed
      * by t[6]&0x3f). MT2 size units are far smaller than the MT1 recognizer expects, so a
      * tap never reaches the strength threshold. A present (touching) contact must report a
      * firm size for the gate to pass -- independent of the small MT2-derived value. */
-    f.touches[0].state = TS_TOUCHING;
-    f.touches[0].size = 3;                 /* small MT2-derived size */
+    f.transducers[0].state = TS_TOUCHING;
+    f.transducers[0].currentCoordinates.pressure = 3;                 /* small MT2-derived size */
     n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
     CHECK_EQ(n, 4 + 9);
     CHECK_EQ(buf[4 + 6] & 0x3f, 0x3f);     /* boosted to full strength for the density gate */
@@ -82,7 +82,7 @@ static void run_tests(void) {
     CHECK(y > -2456 && y < 2565);
 
     /* No-touch frame still yields a valid header-only report. */
-    touch_frame_t e = {0};
+    VoodooInputEvent e = {0};
     int m = mt1_encode(&e, buf, sizeof(buf), 0);
     CHECK_EQ(m, 4);
     CHECK_EQ(buf[0], 0x28);

@@ -31,9 +31,9 @@ int mt2_usb_button_edge(const uint8_t *mt2, size_t mt2_len, uint8_t *last, uint8
 
 /* Zero-contact absence frame (post-liftoff pump). See header. */
 int mt2_usb_make_absence_frame(uint32_t ts, uint8_t *out, size_t out_cap, size_t *outlen) {
-    touch_frame_t empty;
-    empty.ntouches = 0;
-    empty.button = 0;
+    VoodooInputEvent empty;
+    empty.contact_count = 0;
+    empty.isPhysicalButtonDown = 0;
     empty.timestamp = 0;
     if (out_cap < 2) return -1;
     int n = mt1_encode(&empty, out, out_cap - 2, ts);   /* 0x28 CompactV4 frame, no contacts */
@@ -56,7 +56,7 @@ int mt2_usb_to_compactv4(const uint8_t *mt2, size_t mt2_len, uint32_t ts,
                          uint8_t *out, size_t out_cap, size_t *outlen) {
     if (!g_lc_ready) mt2_usb_reframe_reset();
 
-    touch_frame_t frame;
+    VoodooInputEvent frame;
     if (mt2_usb_decode(mt2, mt2_len, &frame) != 0) return -1;
     mt2_drop_lifted(&frame);                       /* keep only real (size>0) contacts */
     mt2_lifecycle_step(&g_lc, &frame);             /* synthesize MakeTouch/Touching/BreakTouch */

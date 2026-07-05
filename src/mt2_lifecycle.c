@@ -5,7 +5,7 @@ void mt2_lifecycle_reset(mt2_lifecycle_t *lc) {
     /* last[] need not be cleared: it is only read for ids set in prev_ids. */
 }
 
-void mt2_lifecycle_step(mt2_lifecycle_t *lc, touch_frame_t *frame) {
+void mt2_lifecycle_step(mt2_lifecycle_t *lc, VoodooInputEvent *frame) {
     uint32_t now_ids = 0;
 
     /* Pass 1: state by PRESENCE, not by the device's per-frame state bits. The MT2
@@ -14,12 +14,12 @@ void mt2_lifecycle_step(mt2_lifecycle_t *lc, touch_frame_t *frame) {
      * commits a tap. A contact that is present here (it survived mt2_drop_lifted, which
      * keys on size) is touching: its first frame for an id is TS_START (MakeTouch),
      * later frames are TS_TOUCHING. Only a VANISHED contact (pass 2) is a real lift. */
-    for (int i = 0; i < frame->ntouches; i++) {
-        int id = frame->touches[i].id & 0x0f;
+    for (int i = 0; i < (int)frame->contact_count; i++) {
+        int id = frame->transducers[i].id & 0x0f;
         uint32_t bit = (uint32_t)1u << id;
-        frame->touches[i].state = (lc->prev_ids & bit) ? TS_TOUCHING : TS_START;
+        frame->transducers[i].state = (lc->prev_ids & bit) ? TS_TOUCHING : TS_START;
         now_ids |= bit;
-        lc->last[id] = frame->touches[i];
+        lc->last[id] = frame->transducers[i];
     }
 
     /* Pass 2: append a BreakTouch (TS_END) for every id present last frame but gone
@@ -27,10 +27,10 @@ void mt2_lifecycle_step(mt2_lifecycle_t *lc, touch_frame_t *frame) {
     for (int id = 0; id < MAX_TOUCHES; id++) {
         uint32_t bit = (uint32_t)1u << id;
         if ((lc->prev_ids & bit) && !(now_ids & bit)) {
-            if (frame->ntouches < MAX_TOUCHES) {
-                touch_t end = lc->last[id];
+            if (frame->contact_count < MAX_TOUCHES) {
+                VoodooInputTransducer end = lc->last[id];
                 end.state = TS_END;
-                frame->touches[frame->ntouches++] = end;
+                frame->transducers[frame->contact_count++] = end;
             }
         }
     }
@@ -39,17 +39,17 @@ void mt2_lifecycle_step(mt2_lifecycle_t *lc, touch_frame_t *frame) {
     lc->prev_ids = now_ids;
 }
 
-int mt2_lifecycle_flush(mt2_lifecycle_t *lc, touch_frame_t *out) {
-    out->ntouches = 0;
-    out->button = 0;
+int mt2_lifecycle_flush(mt2_lifecycle_t *lc, VoodooInputEvent *out) {
+    out->contact_count = 0;
+    out->isPhysicalButtonDown = 0;
     out->timestamp = 0;
     for (int id = 0; id < MAX_TOUCHES; id++) {
         if (lc->prev_ids & ((uint32_t)1u << id)) {
-            touch_t end = lc->last[id];
+            VoodooInputTransducer end = lc->last[id];
             end.state = TS_END;
-            out->touches[out->ntouches++] = end;
+            out->transducers[out->contact_count++] = end;
         }
     }
     lc->prev_ids = 0;
-    return out->ntouches > 0;
+    return out->contact_count > 0;
 }

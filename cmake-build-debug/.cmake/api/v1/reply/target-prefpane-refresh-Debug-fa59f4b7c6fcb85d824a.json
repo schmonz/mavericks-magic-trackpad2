@@ -1,0 +1,95 @@
+{
+	"backtrace" : 1,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_custom_target"
+		],
+		"files" : 
+		[
+			"tools/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 75,
+				"parent" : 0
+			}
+		]
+	},
+	"codemodelVersion" : 
+	{
+		"major" : 2,
+		"minor" : 9
+	},
+	"dependencies" : 
+	[
+		{
+			"id" : "mt2_pane_arm::@b9a00e55f22b3d77656c"
+		},
+		{
+			"id" : "MT2PaneRefresh::@b9a00e55f22b3d77656c"
+		},
+		{
+			"id" : "MT2PaneRefresh_dylib::@b9a00e55f22b3d77656c"
+		}
+	],
+	"id" : "prefpane-refresh::@b9a00e55f22b3d77656c",
+	"name" : "prefpane-refresh",
+	"orderDependencies" : 
+	[
+		{
+			"id" : "mt2_pane_arm::@b9a00e55f22b3d77656c"
+		},
+		{
+			"id" : "MT2PaneRefresh::@b9a00e55f22b3d77656c"
+		},
+		{
+			"id" : "MT2PaneRefresh_dylib::@b9a00e55f22b3d77656c"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "tools",
+		"source" : "tools"
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "",
+			"sourceIndexes" : 
+			[
+				0
+			]
+		},
+		{
+			"name" : "CMake Rules",
+			"sourceIndexes" : 
+			[
+				1
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 1,
+			"isGenerated" : true,
+			"path" : "cmake-build-debug/tools/CMakeFiles/prefpane-refresh",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "cmake-build-debug/tools/CMakeFiles/prefpane-refresh.rule",
+			"sourceGroupIndex" : 1
+		}
+	],
+	"type" : "UTILITY"
+}

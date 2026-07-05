@@ -1,0 +1,11 @@
+{
+	"InstallScripts" : 
+	[
+		"/Volumes/code/trees/mavericks-magic-trackpad2/cmake-build-debug/cmake_install.cmake",
+		"/Volumes/code/trees/mavericks-magic-trackpad2/cmake-build-debug/src/cmake_install.cmake",
+		"/Volumes/code/trees/mavericks-magic-trackpad2/cmake-build-debug/tools/cmake_install.cmake",
+		"/Volumes/code/trees/mavericks-magic-trackpad2/cmake-build-debug/kext-gesture/cmake_install.cmake",
+		"/Volumes/code/trees/mavericks-magic-trackpad2/cmake-build-debug/tests/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

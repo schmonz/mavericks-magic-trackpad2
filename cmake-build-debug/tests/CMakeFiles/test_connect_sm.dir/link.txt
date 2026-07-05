@@ -1,0 +1,1 @@
+/usr/bin/cc -g -arch x86_64 -mmacosx-version-min=10.9 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test_connect_sm.dir/test_connect_sm.c.o -o ../sbin/test_connect_sm  ../src/libmt2core.a

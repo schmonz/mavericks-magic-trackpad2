@@ -3,15 +3,15 @@ int mt2_settle_passed(uint32_t now_ms, uint32_t settle_until_ms) {
     return now_ms >= settle_until_ms ? 1 : 0;
 }
 
-void mt2_drop_lifted(touch_frame_t *frame) {
+void mt2_drop_lifted(VoodooInputEvent *frame) {
     int kept = 0;
-    for (int i = 0; i < frame->ntouches; i++) {
-        if (frame->touches[i].size > 0) {
-            if (kept != i) frame->touches[kept] = frame->touches[i];
+    for (int i = 0; i < (int)frame->contact_count; i++) {
+        if (frame->transducers[i].currentCoordinates.pressure > 0) {
+            if (kept != i) frame->transducers[kept] = frame->transducers[i];
             kept++;
         }
     }
-    frame->ntouches = kept;
+    frame->contact_count = kept;
 }
 
 int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
@@ -23,11 +23,11 @@ int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
     return 1;
 }
 
-void mt2_decel_arm(mt2_decel_t *d, const touch_frame_t *held) {
+void mt2_decel_arm(mt2_decel_t *d, const VoodooInputEvent *held) {
     d->held = *held;
     d->step = 0;
 }
-void mt2_decel_step(mt2_decel_t *d, touch_frame_t *out,
+void mt2_decel_step(mt2_decel_t *d, VoodooInputEvent *out,
                     int *out_has_frame, uint32_t *out_rearm_ms) {
     if (d->step < 2) {
         *out = d->held;
@@ -35,7 +35,7 @@ void mt2_decel_step(mt2_decel_t *d, touch_frame_t *out,
         *out_rearm_ms = MT2_DECEL_MS;
         d->step++;
     } else if (d->step == 2) {
-        out->ntouches = 0; out->button = 0; out->timestamp = 0;
+        out->contact_count = 0; out->isPhysicalButtonDown = 0; out->timestamp = 0;
         *out_has_frame = 1;
         *out_rearm_ms = 0;
         d->step = 3;

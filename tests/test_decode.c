@@ -13,25 +13,25 @@ static const uint8_t FRAME_2F[] = {
 };
 
 static void run_tests(void) {
-    touch_frame_t f = {0};
+    VoodooInputEvent f = {0};
     int rc = mt2_usb_decode(FRAME_1F, sizeof(FRAME_1F), &f);
     CHECK_EQ(rc, 0);
-    CHECK_EQ(f.ntouches, 1);
+    CHECK_EQ(f.contact_count, 1);
     /* Golden values hand-derived from the trackpad2-USB bit packing. */
-    CHECK_EQ(f.touches[0].id, 9);
-    CHECK_EQ(f.touches[0].x, 752);
-    CHECK_EQ(f.touches[0].y, 556);
-    CHECK_EQ(f.touches[0].size, 23);
-    CHECK(f.touches[0].state == TS_TOUCHING);
+    CHECK_EQ(f.transducers[0].id, 9);
+    CHECK_EQ(f.transducers[0].currentCoordinates.x, 752);
+    CHECK_EQ(f.transducers[0].currentCoordinates.y, 556);
+    CHECK_EQ(f.transducers[0].currentCoordinates.pressure, 23);
+    CHECK(f.transducers[0].state == TS_TOUCHING);
     /* Coordinates must be within the MT2 device range. */
-    CHECK(f.touches[0].x > -3678 && f.touches[0].x < 3934);
-    CHECK(f.touches[0].y > -2478 && f.touches[0].y < 2587);
+    CHECK(f.transducers[0].currentCoordinates.x > -3678 && f.transducers[0].currentCoordinates.x < 3934);
+    CHECK(f.transducers[0].currentCoordinates.y > -2478 && f.transducers[0].currentCoordinates.y < 2587);
 
     /* Two-finger frame: two distinct contacts. */
-    touch_frame_t f2 = {0};
+    VoodooInputEvent f2 = {0};
     CHECK_EQ(mt2_usb_decode(FRAME_2F, sizeof(FRAME_2F), &f2), 0);
-    CHECK_EQ(f2.ntouches, 2);
-    CHECK(f2.touches[0].id != f2.touches[1].id);
+    CHECK_EQ(f2.contact_count, 2);
+    CHECK(f2.transducers[0].id != f2.transducers[1].id);
 
     /* Malformed input is rejected. */
     uint8_t bad[] = {0x02,0x00,0x00};

@@ -1,0 +1,77 @@
+#!/bin/sh
+# rc — remote-control harness for the Trackpad-prefpane live-update truth-table campaign.
+# One parameterized tool (so a single permission allowlist entry lets it run freely) that drives
+# System Preferences, triggers device terminate/first-match events, screenshots the screen, and reports
+# the IOKit-notification + device state. Physical transport switches (USB<->BT cable), power, and
+# BT-wake taps still need a human — everything else is here.
+#
+# Usage:
+#   rc pane trackpad|bluetooth|sound|quit   set System Prefs frontmost pane (sound = an "unrelated" pane)
+#   rc shot <label>                         screencapture -> /tmp/rc-<label>.png (prints the path to Read)
+#   rc state                                our device IOKit instance counts + recognizer's cached geometry
+#   rc svc start|stop|<N>                   mt_svc_observe notification logger: start/stop, or tail last N lines
+#   rc mark <label>                         write a "==== CELL: <label> ====" marker into the svc log
+#   rc off                                  device TERMINATE: unload our kext (manual-started Apple driver dies)
+#   rc on                                   device FIRST-MATCH: load our kext + re-establish (reenumerate/bounce)
+#   rc reenum | rc btbounce                 USB re-enumerate / BT close->open (a terminate+firstmatch on that transport)
+#   rc cell <pane> <event> <label>          ONE full test cell as a single command (no shell compounding needed):
+#                                             set <pane> frontmost, shot _before, mark, do <event>, wait, shot _after,
+#                                             then print the two shot paths + the notifications + device state.
+#                                             <pane>=trackpad|bluetooth|sound|none(quit)  <event>=off|on|reenum|btbounce|none
+set -u
+HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
+SVCLOG=/tmp/rc-svc.log
+
+pane_id() {
+  case "$1" in
+    trackpad)  echo "com.apple.preference.trackpad";;
+    bluetooth) echo "com.apple.preferences.Bluetooth";;
+    sound)     echo "com.apple.preference.sound";;
+    *)         echo "";;
+  esac
+}
+
+case "${1:-}" in
+  pane)
+    if [ "${2:-}" = quit ]; then
+      osascript -e 'tell application "System Preferences" to quit' 2>&1; exit 0
+    fi
+    PID="$(pane_id "${2:-}")"; [ -n "$PID" ] || { echo "pane: trackpad|bluetooth|sound|quit"; exit 2; }
+    osascript -e 'tell application "System Preferences"
+      activate
+      set current pane to pane id "'"$PID"'"
+    end tell' 2>&1
+    ;;
+  shot)
+    OUT="/tmp/rc-${2:-shot}.png"; screencapture -x "$OUT" && echo "$OUT";;
+  state)
+    ioreg -lw0 2>/dev/null | grep -aoE '"(com_schmonz_MT2USBReader|com_schmonz_MT2BTReader|BNBTrackpadDevice|AppleMultitouchDevice)"=[0-9]+' | sort -u
+    "$HERE/mt_transport" 2>/dev/null | grep -iE "surfaceW|familyID|sensorRows" | head -1;;
+  svc)
+    case "${2:-tail}" in
+      start) pkill -f mt_svc_observe 2>/dev/null; "$HERE/mt_svc_observe" > "$SVCLOG" 2>&1 & sleep 1; echo "svc -> $SVCLOG"; tail -2 "$SVCLOG";;
+      stop)  pkill -f mt_svc_observe 2>/dev/null; echo "svc stopped";;
+      *)     tail -n "${2:-14}" "$SVCLOG" 2>/dev/null;;
+    esac;;
+  mark)  printf '==== CELL: %s ====\n' "${2:-?}" >> "$SVCLOG"; echo "marked: ${2:-?}";;
+  off)   make -C "$ROOT/kext-gesture" unload >/dev/null 2>&1; echo "OFF: kext unloaded (Apple driver terminate)";;
+  on)    make -C "$ROOT/kext-gesture" load >/dev/null 2>&1
+         "$HERE/mt2_reenumerate" >/dev/null 2>&1; "$HERE/mt2_bt_bounce" >/dev/null 2>&1
+         echo "ON: kext loaded + transport re-established";;
+  reenum)   "$HERE/mt2_reenumerate";;
+  btbounce) "$HERE/mt2_bt_bounce";;
+  cell)
+    P="${2:-trackpad}"; EV="${3:-none}"; L="${4:-cell}"
+    [ "$P" = none ] && "$0" pane quit >/dev/null 2>&1 || "$0" pane "$P" >/dev/null 2>&1
+    sleep 2
+    "$0" shot "${L}_before" >/dev/null
+    "$0" mark "$L ($P / $EV)" >/dev/null
+    case "$EV" in none) :;; *) "$0" "$EV" >/dev/null 2>&1;; esac
+    sleep 4
+    "$0" shot "${L}_after" >/dev/null
+    echo "BEFORE: /tmp/rc-${L}_before.png"
+    echo "AFTER : /tmp/rc-${L}_after.png"
+    echo "--- notifications ---"; "$0" svc 6
+    echo "--- device state ---"; "$0" state | head -5;;
+  *) echo "usage: rc {pane|shot|state|svc|mark|off|on|reenum|btbounce|cell} ..."; exit 2;;
+esac

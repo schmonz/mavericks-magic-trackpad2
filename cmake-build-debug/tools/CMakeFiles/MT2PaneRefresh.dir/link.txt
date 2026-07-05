@@ -1,0 +1,1 @@
+/usr/bin/cc -g -arch x86_64 -mmacosx-version-min=10.9 -bundle -Wl,-headerpad_max_install_names -o MT2PaneRefresh CMakeFiles/MT2PaneRefresh.dir/mt2_prefpane_refresh/mt2_prefpane_refresh.c.o CMakeFiles/MT2PaneRefresh.dir/__/src/mt2_pane_sm.c.o CMakeFiles/MT2PaneRefresh.dir/__/src/mt2_single_load.c.o  -framework IOKit -framework CoreFoundation -framework Carbon -lobjc

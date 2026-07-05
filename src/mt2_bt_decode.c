@@ -7,6 +7,6 @@
 #define MT2_BT_REPORT_ID 0x31
 #define MT2_BT_HEADER    4
 
-int mt2_bt_decode(const uint8_t *report, size_t len, touch_frame_t *frame) {
+int mt2_bt_decode(const uint8_t *report, size_t len, VoodooInputEvent *frame) {
     return mt2_decode(report, len, MT2_BT_REPORT_ID, MT2_BT_HEADER, frame);
 }

@@ -50,13 +50,13 @@ void com_schmonz_MT2Gesture::sink_post_click(void *ctx, unsigned mask) {
 /* Sink: MT1-encode the session-conditioned touch frame (lifecycle states + liftoff) and feed it to
  * the genuine spawned AppleMultitouchDevice (fBnbTarget), which Apple's recognizer turns into cursor
  * + gestures. NULL-guard for frames arriving before the BT interpose sets the target. */
-void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const touch_frame_t *frame) {
+void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
     if (!self->fBnbTarget) return;
     /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point, to
      * correlate the faithful decoded position against the recognizer's normalization. */
-    if (frame->ntouches > 0)
-        MT2_DLOG(2, "feed x=%d y=%d -> bnbAMD", frame->touches[0].x, frame->touches[0].y);
+    if (frame->contact_count > 0)
+        MT2_DLOG(2, "feed x=%d y=%d -> bnbAMD", frame->transducers[0].currentCoordinates.x, frame->transducers[0].currentCoordinates.y);
     uint8_t mt1[256];
     int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
     if (n <= 0) return;
@@ -78,7 +78,7 @@ void com_schmonz_MT2Gesture::connectionEstablished(IOService *source,
     IOLog("MT2Gesture: connection established (src=%p mode=%d)\n", source, (int)mode);
 }
 /* A reader submits one decoded frame; the session decides what reaches the device. */
-void com_schmonz_MT2Gesture::submitFrame(IOService *source, const touch_frame_t *tf) {
+void com_schmonz_MT2Gesture::submitFrame(IOService *source, const VoodooInputEvent *tf) {
     if (fSessionLock) IOLockLock(fSessionLock);
     mt2_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
     if (fSessionLock) IOLockUnlock(fSessionLock);

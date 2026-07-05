@@ -20,35 +20,35 @@ static const uint8_t FRAME_2F[] = {
 };
 
 static void run_tests(void) {
-    touch_frame_t f = {0};
+    VoodooInputEvent f = {0};
     int rc = mt2_bt_decode(FRAME_1F, sizeof(FRAME_1F), &f);
     CHECK_EQ(rc, 0);
-    CHECK_EQ(f.ntouches, 1);
-    CHECK_EQ(f.button, 0);
+    CHECK_EQ(f.contact_count, 1);
+    CHECK_EQ(f.isPhysicalButtonDown, 0);
     /* Golden values hand-derived from the (shared) trackpad2 9-byte record packing. */
-    CHECK_EQ(f.touches[0].id, 5);
-    CHECK_EQ(f.touches[0].x, 126);
-    CHECK_EQ(f.touches[0].y, 192);
-    CHECK_EQ(f.touches[0].touch_major, 162);
-    CHECK_EQ(f.touches[0].touch_minor, 100);
-    CHECK_EQ(f.touches[0].size, 25);
-    CHECK(f.touches[0].state == TS_TOUCHING);
+    CHECK_EQ(f.transducers[0].id, 5);
+    CHECK_EQ(f.transducers[0].currentCoordinates.x, 126);
+    CHECK_EQ(f.transducers[0].currentCoordinates.y, 192);
+    CHECK_EQ(f.transducers[0].touch_major, 162);
+    CHECK_EQ(f.transducers[0].touch_minor, 100);
+    CHECK_EQ(f.transducers[0].currentCoordinates.pressure, 25);
+    CHECK(f.transducers[0].state == TS_TOUCHING);
     /* Within the MT2 device coordinate range. */
-    CHECK(f.touches[0].x > -3678 && f.touches[0].x < 3934);
-    CHECK(f.touches[0].y > -2478 && f.touches[0].y < 2587);
+    CHECK(f.transducers[0].currentCoordinates.x > -3678 && f.transducers[0].currentCoordinates.x < 3934);
+    CHECK(f.transducers[0].currentCoordinates.y > -2478 && f.transducers[0].currentCoordinates.y < 2587);
 
     /* Physical click: button bit set, one contact. */
-    touch_frame_t fc = {0};
+    VoodooInputEvent fc = {0};
     CHECK_EQ(mt2_bt_decode(FRAME_CLICK, sizeof(FRAME_CLICK), &fc), 0);
-    CHECK_EQ(fc.ntouches, 1);
-    CHECK_EQ(fc.button, 1);
+    CHECK_EQ(fc.contact_count, 1);
+    CHECK_EQ(fc.isPhysicalButtonDown, 1);
 
     /* Two-finger frame: two distinct contacts, no button. */
-    touch_frame_t f2 = {0};
+    VoodooInputEvent f2 = {0};
     CHECK_EQ(mt2_bt_decode(FRAME_2F, sizeof(FRAME_2F), &f2), 0);
-    CHECK_EQ(f2.ntouches, 2);
-    CHECK_EQ(f2.button, 0);
-    CHECK(f2.touches[0].id != f2.touches[1].id);
+    CHECK_EQ(f2.contact_count, 2);
+    CHECK_EQ(f2.isPhysicalButtonDown, 0);
+    CHECK(f2.transducers[0].id != f2.transducers[1].id);
 
     /* A USB-format frame (report id 0x02) must be rejected by the BT decoder. */
     uint8_t usb[] = {0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x31,0x30,0xbb,0x93,

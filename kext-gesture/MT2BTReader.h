@@ -1,7 +1,7 @@
 #ifndef MT2BTREADER_H
 #define MT2BTREADER_H
 #include <IOKit/IOService.h>
-#include "touch_model.h"
+#include "voodoo_input.h"
 #include "genuine_host.h"          /* shared manual-start + ordered-teardown core */
 
 class IOBluetoothL2CAPChannel;

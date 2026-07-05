@@ -7,18 +7,18 @@ static void run_tests(void) {
     CHECK_EQ(mt2_settle_passed(2500, 2500), 1);
     CHECK_EQ(mt2_settle_passed(9999, 2500), 1);
 
-    touch_frame_t f = {0};
-    f.ntouches = 3;
-    f.touches[0].size = 25; f.touches[0].x = 10;
-    f.touches[1].size = 0;  f.touches[1].x = 20;
-    f.touches[2].size = 12; f.touches[2].x = 30;
+    VoodooInputEvent f = {0};
+    f.contact_count = 3;
+    f.transducers[0].currentCoordinates.pressure = 25; f.transducers[0].currentCoordinates.x = 10;
+    f.transducers[1].currentCoordinates.pressure = 0;  f.transducers[1].currentCoordinates.x = 20;
+    f.transducers[2].currentCoordinates.pressure = 12; f.transducers[2].currentCoordinates.x = 30;
     mt2_drop_lifted(&f);
-    CHECK_EQ(f.ntouches, 2);
-    CHECK_EQ(f.touches[0].x, 10);
-    CHECK_EQ(f.touches[1].x, 30);
-    touch_frame_t up = {0}; up.ntouches = 1; up.touches[0].size = 0;
+    CHECK_EQ(f.contact_count, 2);
+    CHECK_EQ(f.transducers[0].currentCoordinates.x, 10);
+    CHECK_EQ(f.transducers[1].currentCoordinates.x, 30);
+    VoodooInputEvent up = {0}; up.contact_count = 1; up.transducers[0].currentCoordinates.pressure = 0;
     mt2_drop_lifted(&up);
-    CHECK_EQ(up.ntouches, 0);
+    CHECK_EQ(up.contact_count, 0);
 
     unsigned last = 0, mask = 0xdead;
     CHECK_EQ(mt2_click_changed(0, 0, &last, &mask), 0);
@@ -33,13 +33,13 @@ static void run_tests(void) {
     CHECK_EQ(mt2_click_changed(1, 0, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
 
     mt2_decel_t d;
-    touch_frame_t held = {0}; held.ntouches = 1; held.touches[0].size = 20; held.touches[0].x = 77;
+    VoodooInputEvent held = {0}; held.contact_count = 1; held.transducers[0].currentCoordinates.pressure = 20; held.transducers[0].currentCoordinates.x = 77;
     mt2_decel_arm(&d, &held);
     CHECK_EQ(d.step, 0);
-    touch_frame_t out; int has; uint32_t rearm;
-    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(out.touches[0].x, 77); CHECK_EQ(rearm, MT2_DECEL_MS);
+    VoodooInputEvent out; int has; uint32_t rearm;
+    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(out.transducers[0].currentCoordinates.x, 77); CHECK_EQ(rearm, MT2_DECEL_MS);
     mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(rearm, MT2_DECEL_MS);
-    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(out.ntouches, 0); CHECK_EQ(rearm, 0u);
+    mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 1); CHECK_EQ(out.contact_count, 0); CHECK_EQ(rearm, 0u);
     mt2_decel_step(&d, &out, &has, &rearm); CHECK_EQ(has, 0); CHECK_EQ(rearm, 0u);
 }
 TEST_MAIN()
