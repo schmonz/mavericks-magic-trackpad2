@@ -82,17 +82,24 @@ Method + raw per-binary findings: the parallel `tools/re` comb `hid-device-ident
 A second parallel comb (10 binaries + the `MultitouchHID.plugin` recognizer) over five NEW surfaces:
 gesture, apple-genuineness, preferences, notifications, pairing/OOB. Method: `hid-multi-surface-comb`.
 
-## ⭐ Genuineness — the root icon lever (SEEDABLE)
+## Genuineness / `isApple` — RE'd, but NOT the icon lever (seed ABANDONED 2026-07-04)
+
+> **CORRECTION 2026-07-04 (on-device read): the "seed → Apple art everywhere" claim below is FALSE.**
+> Our `BNBTrackpadDevice` node already shows `VendorID=76`(0x4C)/`VendorIDSource=1`(BT-SIG) → `isAppleDevice`
+> is **ALREADY TRUE** over BT — yet the connect/disconnect bezel HUD *still* rendered a MOUSE image. So the
+> art is **NOT gated on `isApple`**; seeding `PnPVendorID`/`…Source` would change nothing (and it's SDP-DI-
+> sourced, not a settable node property, so it isn't even seedable the way the comb assumed). Icon fixes stay
+> **per-site**: the pane-row icon is fixed via the osax image swizzle; the menu-extra picture is a 10.9 CoD-
+> vault limitation; the **bezel HUD lives in a separate process (BezelServices/BluetoothUIServer) with its own
+> CoD→art lookup that must be RE'd on its own.** Do NOT re-propose the isApple seed. See
+> [[mt2-device-identity-unlocks]] #1 for the full reassessment.
 
 `-[IOBluetoothObject isAppleDevice]` (@0xcd80) = **`(PnPVendorIDSource==2/USB && PnPVendorID==0x05AC)` OR
-`(source==1/BT-SIG && PnPVendorID==0x004C)`**. This one boolean is what `_IOBluetoothGetGenericTypeStringForDeviceClasses`'s
-`isApple` flag ultimately reflects — i.e. **Apple-vs-generic art at every icon site (BT-pane row, menu extra,
-connect/disconnect bezel HUD) hinges on it.** Our unit IS genuine Apple hardware (vendor `0x05AC`), so this
-is *accurate to seed, not impersonation* — the icon is generic today only because `PnPVendorID`/`…Source`
-aren't reaching the node `isAppleDevice` reads. **Seed `PnPVendorID`=0x05AC (USB)/0x004C (BT) + `PnPVendorIDSource`
-on our node → `isApple` true → Apple trackpad art everywhere, no swizzle.** Closes the pane-picture + bezel-HUD
-items at the root. (Verify which node/path the bezel HUD actually resolves through — it showed a mouse image,
-so confirm CoD→trackpad + isApple on that path.) Sibling checks (`appleBluetoothMousePresent/HIDDevicePresent/
+`(source==1/BT-SIG && PnPVendorID==0x004C)`** — logic confirmed and still useful as RE, but per the correction
+above it is already satisfied on our node and is not the art gate. (The icon has two paths: a pure-CoD
+`imageForDevice:`→`imageForMajorDeviceClass:` with no isApple, plus the isApple-keyed
+`_IOBluetoothGetGenericTypeStringForDeviceClasses` — so "one flag fixes all art" was an oversimplification.)
+Sibling checks (`appleBluetoothMousePresent/HIDDevicePresent/
 KeyboardPresent`) instead match the IOKit service class `IOAppleBluetoothHIDDriver` + HID usage.
 
 ## Gesture — the recognizer is a data-driven chord engine
@@ -157,8 +164,10 @@ KeyboardPresent`) instead match the IOKit service class `IOAppleBluetoothHIDDriv
 
 ## Top actionable unlocks (ranked)
 
-1. **Seed `PnPVendorID`=0x05AC/0x004C + `PnPVendorIDSource`** → `isApple` true → Apple art at ALL icon sites
-   (pane/menu/bezel), no swizzle. Verify our node currently lacks it; it's genuine so it's correct to seed.
+1. ~~Seed `PnPVendorID` → `isApple` → Apple art everywhere~~ **ABANDONED 2026-07-04 — dead end.** `isApple`
+   is already TRUE on our node yet the bezel HUD still showed a mouse → the art is not gated on it (see the
+   correction under "Genuineness / `isApple`" above). Icon fixes stay per-site; the bezel HUD needs its own
+   process + CoD→art lookup RE'd.
 2. **Gestures are per-key on the node** (`TrackpadUserPreferences`/`MultitouchPreferences`) — full enable/tune
    control by seeding; `hwSupports3FDrag` needs the `+0xb0` bit `0x2` cap set + the property.
 3. **Connect/disconnect hooks** (`registerForConnect/DisconnectNotification`) = the clean seam for the
