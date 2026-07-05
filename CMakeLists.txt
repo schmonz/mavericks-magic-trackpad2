@@ -8,6 +8,11 @@ set(MT2_VERSION "0.2.0")
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MT2_VERSION_NUMERIC "${MT2_VERSION}")
 project(mt2 VERSION ${MT2_VERSION_NUMERIC} LANGUAGES C CXX)
 
+# Reject a poorly-fitting compiler up front (gcc-by-mistake / wrong IDE toolchain). Must come
+# right after project() so CMAKE_<LANG>_COMPILER_ID is populated. Both hosts require Apple's clang
+# (only differing in Xcode version) — see the module header.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/require_compiler.cmake)
+
 # Native 10.9 build for now; Project B adds the modern-SDK cross-build on top.
 if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "" FORCE)
