@@ -22,6 +22,12 @@ class com_schmonz_MT2USBReader : public IOService {
     gh_host_t fHost;               /* genuine_host lifecycle handle for fGenuine */
     void releaseInterface(void);   /* reverse startGenuine; idempotent */
     bool startGenuine(IOService *provider);   /* manual-start + interpose Apple's driver */
+    /* startGenuine as named steps (named alike to MT2BTReader where the action matches): */
+    void resetTransportState(void);       /* fresh per-stream reframe + button-edge state */
+    void sendEnable(void);                /* MT2 USB multitouch-enable (control transfer) */
+    void settle(void);                    /* let the device leave mouse mode before the AMD probes */
+    bool manualStartGenuineAmd(void);     /* host a genuine AppleUSBMultitouchDriver on the interface */
+    void armAbsencePump(void);            /* post-liftoff absence-frame heartbeat */
 public:
     virtual bool start(IOService *provider) override;
     /* Release the interface here, NOT just in stop(): on device unplug/re-enumerate

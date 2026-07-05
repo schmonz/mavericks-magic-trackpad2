@@ -597,3 +597,63 @@ stalls every disconnect for the full bound (RE'd 2026-06-23, see open-questions.
 safety rests on the in-gate delegate + vtable restores that run BEFORE the teardown (not on
 quiescence); the async termination completes after release(). So: plain terminate() +
 release(), no wait.
+
+## MT2USBReader bring-up: the load-bearing whys (RE detail)
+
+Sibling to the BT section above. The reader keeps one-line pointers here; the full reasoning
+lives below so `MT2USBReader.cpp` stays legible.
+
+### Enable → settle → start ordering (panic hardening) (`sendEnable` / `settle`)
+
+`startGenuine` sends the MT2's USB multitouch-enable (a SET_REPORT control transfer, payload
+`02 01`) and then sleeps `MT2_USB_ENABLE_SETTLE_MS` (50 ms) BEFORE starting Apple's
+AppleUSBMultitouchDriver. Both the reorder AND the settle are load-bearing (root-caused
+2026-07-04, `mt2-usb-bringup-getreport-panic`): if the AMD starts on a still-mouse-mode device
+its `configureDataMode` floods the not-ready device with feature-report probes that all stall
+(0xe000404f) — the storm behind an `!pageList phys_addr` panic in IOHIDFamily on the BT→USB
+switch. The enable ACKs immediately but the device's mode switch is ASYNC and `gh_start` is
+fast, so enable-before-start ALONE is not enough — with no settle the mouse-mode storm returns
+(0x28 packets + a 0xc8 configureDataMode retry loop, 24 vs 17 stalls). 50 ms measured
+sufficient (reorder-only = storm; reorder + 50 ms = clean). The enable is a control transfer on
+`fIntf` (valid since `start()`, independent of the AMD), so it is safe to send here, before
+`gh_start`. Don't delete the settle.
+
+### Post-liftoff absence-frame pump (`armAbsencePump` / `mt2_usb_pump_action`)
+
+The genuine recognizer's deferred tap commits (e.g. `MTTapDragManager::sendPendingSecondaryTap`,
+the 2-finger TAP secondary click) run once PER FRAME and key off the frame timestamp; our device
+goes silent at liftoff, so an isolated tap's commit window starves. After the device falls silent
+we pump zero-contact frames (advancing wall-clock ts) for a window long enough to cover the
+double-tap commit window (~30 × 15 ms ≈ 450 ms). A new real report re-arms the silence timer
+(`mt2_usb_handle_report` refills `gPumpBudget` + resets the timer to `USB_PUMP_SILENCE_MS`), so we
+never pump while a gesture is active. (RE'd 2026-06-24; mirrors the retired synthetic path's
+`emit_with_liftoff` absence pump, extended for the longer secondary-tap window.) BT solves the
+same starvation inside the session's liftoff watchdog instead.
+
+### Seed via the init dictionary, not setProperty (`usb_build_init_props`)
+
+Seed the manually-started AMD via the INIT dict, NOT `setProperty`: the driver overrides every
+`setProperty` variant and drops unknown keys, but `init()` forwards the dict to `super::init`
+which populates the property table directly. Manual-start does no personality merge AND the device
+NAKs Apple's feature reports, so without these the instance lacks its user-client class (→ 0
+frames to clients), sensor geometry, and the hidd-engagement props (`HIDServiceSupport` +
+`IOCFPlugInTypes` → MultitouchHID.plugin). `HIDDefaultBehavior=Trackpad` (NOT the personality's
+Mouse) because MT2 multitouch-streaming emits no mouse reports. `parser-options` 39 = 0x27 (bit
+0x2 = clicky-hardware gate); prefs seeded under both `MultitouchPreferences` and
+`TrackpadUserPreferences` so click/right-click enable. Geometry values are the one source of
+truth in `src/mt2_geometry.*` (the half-resolution 16×13 grid + zeroed region we used before was
+the edge-dead-zone root cause). No `Product` seed: the genuine AMD's `start` copies the device's
+real USB iProduct descriptor ("Magic Trackpad") onto the node, overriding any seed (verified
+live) — the device-accurate value, so we let it stand (BT differs — it re-seeds post-start).
+
+### releaseInterface during willTerminate (unplug deadlock) (`releaseInterface`)
+
+`releaseInterface` MUST run during the `willTerminate` handshake (device unplug / re-enumerate),
+not just in `stop()`: IOKit does not call `stop()` until the interface is released, so deferring
+teardown to `stop()` deadlocks — the reader stays inactive/busy and pins the whole dead device
+subtree (leaked, never freed; one per unplug). It is idempotent (willTerminate then stop). It
+reverses `startGenuine`: the genuine driver owns the interface + interrupt pipe, so we never
+opened `fIntf` ourselves and must NOT close it (an unmatched close would unbalance the open
+count) — we only null it. The pump is stopped FIRST (cancel + remove from the workloop) so no
+pumped frame can race the `gh_stop` teardown (which restores the vtable, avoiding the in-flight
+handleReport use-after-free, then terminates + releases the genuine driver).
