@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
     <title>Mavericks Trackpad 2</title>
+    <!-- Welcome pane: explains up front why the installer needs an administrator password (it installs a
+         kernel extension). Shown by Installer.app on a direct .pkg install. Lives in dist/resources/ and
+         is handed to productbuild via its resources flag. -->
+    <welcome file="Welcome.html" mime-type="text/html"/>
     <!--
       HARD install floor: OS X 10.9.5. A SAFETY gate, not a KPI limit. The hijack of
       AppleMultitouchDriver / MultitouchHID.plugin is reverse-engineered against

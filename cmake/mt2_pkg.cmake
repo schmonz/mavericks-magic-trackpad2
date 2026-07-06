@@ -61,6 +61,7 @@ add_custom_target(pkg
           --identifier com.schmonz.mt2d --version ${MT2_PKG_VERSION} --install-location /
           ${CMAKE_BINARY_DIR}/mt2d-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
+          --resources ${CMAKE_SOURCE_DIR}/dist/resources
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
   DEPENDS kext mt2_reenumerate MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch mt2_usb_bt_handoff ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
