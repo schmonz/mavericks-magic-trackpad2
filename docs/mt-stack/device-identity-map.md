@@ -58,10 +58,45 @@ pane row's `NSImageView` directly.
   `_LSCreateDeviceTypeIdentifierWithModelCode` from a **product/model-code string** — a name/model identity
   path independent of CoD. A correct model-code could resolve Apple art without swizzling.
 
-**Bezel HUD (connect/disconnect):** BezelServices itself has **zero** device-identity sites — it's the HUD
-backend; the icon is passed IN by the caller, which resolves it through the same CoD vault. So the
-mouse-image HUD is the same CoD/`isApple` limitation, and the `isApple` lever (or a per-caller swizzle)
-would fix it. ([[mt2-connect-disconnect-bezel-hud]])
+**Bezel HUD (connect/disconnect) — RE'd 2026-07-06 (mechanism found; NOT the CoD vault).** The earlier
+"caller resolves via the CoD vault" guess is **WRONG**. The connect/disconnect OSD is drawn by the
+**BezelServices login plugin** — `/System/Library/LoginPlugins/BezelServices.loginPlugin/Contents/MacOS/BezelServices`
+(hosted per-session in **loginwindow**; it renders the actual bezel through `BezelUIServer` at
+`…/BezelServices.loginPlugin/Contents/Resources/BezelUI/BezelUIServer`). Neither the `BezelServices.framework`
+dylib (just `_BSDoGraphic*`) nor `BluetoothUIServer` is involved — `BluetoothUIServer` only posts
+NSUserNotifications (`deliverNotification:`), and IOBluetoothUI's vault is used **only internally** (no
+external caller references `IOBluetoothDeviceImageVault`). Flow: `+[DriverServices listenForClass:]` arms an
+IOKit `IOServiceMatched`/connect/disconnect notification (`DeviceArrivalCallback`/`driverConnectedCallback`,
+HIDMonitor) → `+[DriverServices processMsgForService:messageType:messageArgument:]` →
+`+[DriverServices dispatchOSDAction:]`. **The OSD is 100% data-driven, NOT computed from CoD/`isApple`:**
+`dispatchOSDAction:` pulls `Image`, `MessageKey`, `Priority`, `DurationMS`, `ResourceBundle` straight from a
+matched **`BS_UI_Plugin` plist Action dict** (it even asserts `image != NULL` — there is *no* device-type→image
+fallback in code). The event NAME comes from the **driver personality**: `AppleBluetoothHIDMouse.kext`'s
+"Wireless Mouse 2004" personality (CFBundleIdentifier `com.apple.driver.IOBluetoothHIDDriver`) declares
+`ConnectionNotificationType=MouseConnected` / `DisconnectionNotificationType=MouseDisconnected`. Our MT2, a BT
+HID pointing device, matches that pointing-class personality → posts the **`MouseConnected`/`MouseDisconnected`**
+messages → whatever `BS_UI_Plugin` Action handles those supplies the **mouse** `Image`. (The keyboard analogue
+is fully visible: `AppleHIDKeyboard.kext/Contents/Resources/BS_UI_Plugin_IOAppleBluetoothHIDDriver-Info.plist`
+maps `2007KeyboardConnected`→Action `2007KeyboardConnectOSD` `{Type=OSD, Image=BtEmbeddedKeyboard.pdf,
+MessageKey=KeyboardConnectedText, Priority=600}`.)
+
+*Residual gap:* I could not locate the **mouse** `BS_UI_Plugin` plist nor any `BtEmbedded*.pdf` on disk
+(grep of all of `/System/Library` + `/System/Library/Extensions` found only the keyboard plist; the mouse kext
+personality names the message but ships no OSD-Action config here). So the exact plist Action feeding the mouse
+image is unconfirmed — it is either a plist my greps missed (compiled/renamed) or the login-plugin's
+`installListenersForClasses:` scan discovers it from a source I did not pin (`pathsMatchingExtensions:` scan
+path not disassembled to a literal). This does not change the mechanism or the verdict.
+
+**Fixability verdict — config seam, NOT swizzle.** Because the image is a plist `Image` value (not CoD-vault
+art), the cleanest fix mirrors Apple's own keyboard config: ship a `BS_UI_Plugin` plist that maps
+`MouseConnected`/`MouseDisconnected` to an OSD Action with a **trackpad** `Image` (and our own `MessageKey`
+text). This is data, reuses Apple's exact mechanism, and needs no code injection. A `DYLD_INSERT_LIBRARIES`
+swizzle of `+[DriverServices dispatchOSDAction:]` (rewrite the `Image` arg) is *technically* possible on 10.9
+(no SIP) but the host is **loginwindow** — a root, early-launch, session-critical process where a bad insert =
+logout loop; far riskier than the System-Prefs `NSImageView` pane-row swizzle, so **not recommended**. Next
+probe to make the config fix actionable: disassemble the login-plugin's plugin-discovery (`BezelServicesTask
+didStartup`→`DriverServices` singleton `start`, `pathsMatchingExtensions:`) to pin the directory/bundle it
+scans for `BS_UI_Plugin` plists, and confirm whether a mouse plist already exists there. ([[mt2-connect-disconnect-bezel-hud]])
 
 ## Highest-value follow-ups (surfaced by the comb)
 
