@@ -25,7 +25,25 @@ static NSString *const kRelaunchMarker = @"/tmp/.mt2updater-relaunched";
     (void)updater;
     [[NSData data] writeToFile:kRelaunchMarker atomically:YES];
 }
-- (void)updaterDidNotFindUpdate:(SUUpdater *)updater { (void)updater; [NSApp terminate:nil]; }
+- (void)terminateNow { [NSApp terminate:nil]; }
+- (void)updaterDidNotFindUpdate:(SUUpdater *)updater {
+    (void)updater;
+    // Sparkle 1.27 calls this delegate BEFORE it shows its modal "You're up-to-date!" alert
+    // (SUUIBasedUpdateDriver -didNotFindUpdate: delegate first, then a blocking -runModal). Calling
+    // [NSApp terminate:] here killed the app before that alert could appear -- so a manual check
+    // silently did nothing visible.
+    //
+    // We must let the alert show and still exit cleanly (LSUIElement, no window -> can't linger).
+    // The alert runs a nested modal run loop in NSModalPanelRunLoopMode; schedule the terminate as a
+    // zero-delay timer registered ONLY in NSDefaultRunLoopMode. It cannot fire during the modal loop
+    // (wrong mode), and this call stack never returns to the default loop until after the alert is
+    // dismissed -- so termination happens exactly once the user closes the alert. No window/notification
+    // guessing, deterministic ordering.
+    [self performSelector:@selector(terminateNow)
+               withObject:nil
+               afterDelay:0.0
+                  inModes:@[NSDefaultRunLoopMode]];
+}
 - (void)userDidCancelDownload:(SUUpdater *)updater   { (void)updater; [NSApp terminate:nil]; }
 @end
 
