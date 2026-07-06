@@ -805,42 +805,92 @@ static id mt2_make_button(CGRect frame, CFStringRef title, SEL action) {
     return b;
 }
 
-/* Build the About tab's container view + its four controls. Version comes from MT2_VERSION_STR (compile
- * time). The checkbox reflects the current SUEnableAutomaticChecks (default OFF). */
+/* Autoresize masks (NSAutoresizingMaskOptions): MinXMargin=1, WidthSizable=2, MaxXMargin=4,
+ * MinYMargin=8, HeightSizable=16, MaxYMargin=32. Centered+top-anchored = 1|4|8; full-width+top = 2|8;
+ * bottom-right-pinned = 1|32. Text alignment (old NSTextAlignment): left=0, right=1, center=2. */
+#define MT2_AR_CENTER_TOP  (1|4|8)
+#define MT2_W  520
+#define MT2_H  260
+
+/* Build the About tab's container view + its controls, CENTERED. Big bold title on top, the update
+ * controls + GitHub hyperlink centered, and the version tucked in the lower-right corner. Version from
+ * MT2_VERSION_STR (compile time); the checkbox reflects SUEnableAutomaticChecks (default OFF). */
 static id mt2_build_about_view(void) {
     Class viewCls = objc_getClass("NSView");
     id v = ((id (*)(Class, SEL))objc_msgSend)(viewCls, sel_registerName("alloc"));
-    v = ((id (*)(id, SEL, CGRect))objc_msgSend)(v, sel_registerName("initWithFrame:"), CGRectMake(0, 0, 480, 240));
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(v, sel_registerName("setAutoresizingMask:"), 2 | 16); /* width+height sizable */
+    v = ((id (*)(id, SEL, CGRect))objc_msgSend)(v, sel_registerName("initWithFrame:"), CGRectMake(0, 0, MT2_W, MT2_H));
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(v, sel_registerName("setAutoresizingMask:"), 2 | 16);
     SEL addSub = sel_registerName("addSubview:");
+    SEL setMask = sel_registerName("setAutoresizingMask:");
+    SEL setAlign = sel_registerName("setAlignment:");
 
-    /* Version label. */
-    char vbuf[96];
-    snprintf(vbuf, sizeof vbuf, "Mavericks Trackpad 2 — version %s", MT2_VERSION_STR);
-    CFStringRef vs = CFStringCreateWithCString(kCFAllocatorDefault, vbuf, kCFStringEncodingUTF8);
-    id vlabel = mt2_make_label(CGRectMake(20, 190, 440, 24), vs);
-    if (vs) CFRelease(vs);
-    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, vlabel);
+    /* Title — large, bold, centered, full width. */
+    id title = mt2_make_label(CGRectMake(0, 200, MT2_W, 36), CFSTR("Mavericks Trackpad 2"));
+    Class fontCls = objc_getClass("NSFont");
+    id font = fontCls ? ((id (*)(Class, SEL, double))objc_msgSend)(fontCls, sel_registerName("boldSystemFontOfSize:"), 22.0) : NULL;
+    if (font) ((void (*)(id, SEL, id))objc_msgSend)(title, sel_registerName("setFont:"), font);
+    ((void (*)(id, SEL, long))objc_msgSend)(title, setAlign, 2);       /* center */
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(title, setMask, 2 | 8);   /* width-sizable, top */
+    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, title);
 
-    /* Check for Updates… (reuses the mt2CheckForUpdates: action). */
-    id upd = mt2_make_button(CGRectMake(18, 148, 200, 32), CFSTR("Check for Updates…"),
+    /* Check for Updates — centered button; standard control font so it matches the pane's own buttons. */
+    id upd = mt2_make_button(CGRectMake((MT2_W-200)/2, 148, 200, 32), CFSTR("Check for Updates…"),
                              sel_registerName("mt2CheckForUpdates:"));
+    Class fontCls2 = objc_getClass("NSFont");
+    id ctlfont = fontCls2 ? ((id (*)(Class, SEL, double))objc_msgSend)(fontCls2, sel_registerName("systemFontOfSize:"), 13.0) : NULL;
+    if (ctlfont) ((void (*)(id, SEL, id))objc_msgSend)(upd, sel_registerName("setFont:"), ctlfont);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(upd, setMask, MT2_AR_CENTER_TOP);
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, upd);
 
-    /* Automatically check for updates (checkbox). */
+    /* Check automatically — checkbox centered directly under the Check for Updates button; same font. */
     id chk = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSButton"), sel_registerName("alloc"));
-    chk = ((id (*)(id, SEL, CGRect))objc_msgSend)(chk, sel_registerName("initWithFrame:"), CGRectMake(20, 112, 300, 22));
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, sel_registerName("setButtonType:"), 3); /* NSSwitchButton */
-    ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTitle:"), (id)CFSTR("Automatically check for updates"));
+    chk = ((id (*)(id, SEL, CGRect))objc_msgSend)(chk, sel_registerName("initWithFrame:"), CGRectMake((MT2_W-148)/2, 116, 148, 22));
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, sel_registerName("setButtonType:"), 3);
+    ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTitle:"), (id)CFSTR("Check automatically"));
+    if (ctlfont) ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setFont:"), ctlfont);
     ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setState:"), mt2_autocheck_enabled() ? 1 : 0);
     ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTarget:"), gPane);
     ((void (*)(id, SEL, SEL))objc_msgSend)(chk, sel_registerName("setAction:"), sel_registerName("mt2ToggleAutoCheck:"));
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, sel_registerName("setAutoresizingMask:"), MT2_AR_TOP);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, setMask, MT2_AR_CENTER_TOP);
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, chk);
 
-    /* View on GitHub — a plain button (link entry point). */
-    id gh = mt2_make_button(CGRectMake(18, 72, 160, 32), CFSTR("View on GitHub"),
-                            sel_registerName("mt2OpenGitHub:"));
+    /* Lower-right corner: ONE right-aligned "GitHub | <version>" control — clicking it opens the repo.
+     * Only the "GitHub" run is styled as a link (blue + underline); the rest is plain. One control (not
+     * two) removes the gap/float from separate frames. Small system font matches the pane's secondary
+     * text. Right-aligned via a paragraph style so it hugs the view's right edge. Attribute keys are the
+     * string VALUES ("NSFont"/"NSColor"/"NSUnderline"/"NSParagraphStyle") so we don't link AppKit symbols. */
+    char gbuf[64];
+    snprintf(gbuf, sizeof gbuf, "GitHub | %s", MT2_VERSION_STR);
+    CFStringRef gstr = CFStringCreateWithCString(kCFAllocatorDefault, gbuf, kCFStringEncodingUTF8);
+    id mas = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSMutableAttributedString"), sel_registerName("alloc"));
+    mas = ((id (*)(id, SEL, id))objc_msgSend)(mas, sel_registerName("initWithString:"), (id)gstr);
+    if (gstr) CFRelease(gstr);
+    SEL addAttr = sel_registerName("addAttribute:value:range:");
+    CFRange full = CFRangeMake(0, 9 + (long)strlen(MT2_VERSION_STR));  /* "GitHub | " + version */
+    CFRange link = CFRangeMake(0, 6);                                  /* "GitHub" */
+    Class fc = objc_getClass("NSFont");
+    id smallf = fc ? ((id (*)(Class, SEL, double))objc_msgSend)(fc, sel_registerName("systemFontOfSize:"), 11.0) : NULL;
+    if (smallf) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSFont"), smallf, full);
+    Class psCls = objc_getClass("NSMutableParagraphStyle");
+    id ps = psCls ? ((id (*)(Class, SEL))objc_msgSend)(psCls, sel_registerName("alloc")) : NULL;
+    if (ps) {
+        ps = ((id (*)(id, SEL))objc_msgSend)(ps, sel_registerName("init"));
+        ((void (*)(id, SEL, long))objc_msgSend)(ps, sel_registerName("setAlignment:"), 1);  /* right */
+        ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSParagraphStyle"), ps, full);
+    }
+    Class colorCls = objc_getClass("NSColor");
+    id blue = colorCls ? ((id (*)(Class, SEL))objc_msgSend)(colorCls, sel_registerName("blueColor")) : NULL;
+    id num1 = ((id (*)(Class, SEL, int))objc_msgSend)(objc_getClass("NSNumber"), sel_registerName("numberWithInt:"), 1);
+    if (blue) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSColor"), blue, link);
+    ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSUnderline"), num1, link);
+
+    id gh = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSButton"), sel_registerName("alloc"));
+    gh = ((id (*)(id, SEL, CGRect))objc_msgSend)(gh, sel_registerName("initWithFrame:"), CGRectMake(MT2_W-208, 12, 196, 16));
+    ((void (*)(id, SEL, signed char))objc_msgSend)(gh, sel_registerName("setBordered:"), 0);
+    ((void (*)(id, SEL, id))objc_msgSend)(gh, sel_registerName("setAttributedTitle:"), mas);
+    ((void (*)(id, SEL, id))objc_msgSend)(gh, sel_registerName("setTarget:"), gPane);
+    ((void (*)(id, SEL, SEL))objc_msgSend)(gh, sel_registerName("setAction:"), sel_registerName("mt2OpenGitHub:"));
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(gh, setMask, 1 | 32);   /* pinned bottom-right */
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, gh);
     return v;
 }
