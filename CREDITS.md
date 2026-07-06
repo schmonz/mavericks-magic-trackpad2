@@ -37,7 +37,10 @@ If you contributed and aren't listed (or want different wording/attribution), pl
 
 - **VoodooInput** (acidanthera) — a maintained multitouch-device *simulator*; the reference for
   presenting a device the native gesture engine adopts (our "BNBDevice-equivalence" approach), and
-  for the haptic actuator. https://github.com/acidanthera/VoodooInput
+  for the haptic actuator. We also **model our device interface** after it: the `VoodooInputEvent` /
+  `VoodooInputTransducer` types in `src/voodoo_input.h` are our own field-for-field model of
+  acidanthera's `VoodooInputMessage.h`, so the shared reader seam speaks a standard multitouch-event
+  vocabulary. https://github.com/acidanthera/VoodooInput
 - **mac-precision-touchpad** (imbushuo) & **MagicTrackpad2ForWindows** (vitoplantamura) — open-source
   Windows MT2 drivers; sources for the MT2 surface geometry, finger-report layout, and haptic
   actuation format. https://github.com/imbushuo/mac-precision-touchpad ·
