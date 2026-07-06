@@ -155,8 +155,12 @@ if(MT2_SPARKLE_FRAMEWORK)
   add_custom_command(TARGET MavericksTrackpad2Updater POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/MacOS
     COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/Frameworks
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/Resources
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:MavericksTrackpad2Updater> ${UPD_APP}/Contents/MacOS/MavericksTrackpad2Updater
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater-Info.plist ${UPD_APP}/Contents/Info.plist
+    # Product .icns (CFBundleIconFile) so Sparkle's dialog shows the trackpad, not a generic icon.
+    # Committed pre-built from Apple's TrackpadPicture.png (see the file's provenance) -> no CI dependency.
+    COMMAND ${CMAKE_COMMAND} -E copy ${UPD_DIR}/MavericksTrackpad2Updater.icns ${UPD_APP}/Contents/Resources/MavericksTrackpad2Updater.icns
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${MT2_SPARKLE_FRAMEWORK} ${UPD_APP}/Contents/Frameworks/Sparkle.framework
     COMMENT "Assembling MavericksTrackpad2Updater.app")
 

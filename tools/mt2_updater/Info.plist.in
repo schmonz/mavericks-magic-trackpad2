@@ -8,6 +8,10 @@
 	<string>MavericksTrackpad2Updater</string>
 	<key>CFBundleExecutable</key>
 	<string>MavericksTrackpad2Updater</string>
+	<!-- Product icon for Sparkle's update dialog (else it shows a generic app icon).
+	     Art = Apple's TrackpadPicture.png, the same trackpad image the pane reuses. -->
+	<key>CFBundleIconFile</key>
+	<string>MavericksTrackpad2Updater</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleInfoDictionaryVersion</key>
