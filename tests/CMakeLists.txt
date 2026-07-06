@@ -27,6 +27,7 @@ add_test(NAME test_vtable_clone COMMAND test_vtable_clone)
 # Shell + bats suites (run from the source tree).
 add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.sh)
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)
+add_test(NAME test_appcast_notes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_appcast_notes.sh)
 
 # Branch A watcher inject-decision (first ObjC ctest). Links the watcher source for
 # mt2_should_inject; -DMT2_PANE_WATCH_TEST excludes the watcher's main (no duplicate main).
