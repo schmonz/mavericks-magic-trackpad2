@@ -63,21 +63,46 @@ int main(int argc, const char **argv) {
         if (strcmp(argv[i], "--background") == 0) { gBackground = YES; break; }
     }
     @autoreleasepool {
-        NSFileManager *fm = [NSFileManager defaultManager];
-        if ([fm fileExistsAtPath:kRelaunchMarker]) {         // Sparkle just relaunched us post-update
-            [fm removeItemAtPath:kRelaunchMarker error:NULL];
-            return 0;                                         // nothing to do; exit quietly
-        }
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-        [NSApp activateIgnoringOtherApps:YES];                // LSUIElement: bring Sparkle's dialog forward
+
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if ([fm fileExistsAtPath:kRelaunchMarker]) {          // Sparkle relaunched us after installing the pkg
+            [fm removeItemAtPath:kRelaunchMarker error:NULL];
+            // The update changed the kext/daemon/pane, not this helper, so there's nothing to "return to" —
+            // and the user otherwise gets NO signal the driver updated. Show one clear confirmation, then
+            // exit. The pkg replaced this app too, so our own bundle version IS the just-installed version.
+            [NSApp activateIgnoringOtherApps:YES];
+            NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+            NSAlert *done = [[NSAlert alloc] init];
+            [done setMessageText:@"Mavericks Trackpad 2 updated"];
+            [done setInformativeText:(ver.length
+                ? [NSString stringWithFormat:@"The trackpad driver was updated to version %@ and is ready to use.", ver]
+                : @"The trackpad driver was updated and is ready to use.")];
+            [done addButtonWithTitle:@"OK"];
+            [done runModal];
+            return 0;
+        }
+
+        // The About-tab "Check automatically" checkbox is the SINGLE control for auto-updates (default OFF).
+        // Pre-seed SUEnableAutomaticChecks=NO the first time (if never set) so Sparkle 1.x doesn't pop its
+        // own "check automatically?" prompt at an odd moment — the checkbox owns this decision.
+        NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
+        if ([ud objectForKey:@"SUEnableAutomaticChecks"] == nil) [ud setBool:NO forKey:@"SUEnableAutomaticChecks"];
+
+        // Background (daily LaunchAgent) mode HONORS that checkbox: checkForUpdatesInBackground is an
+        // explicit call Sparkle runs regardless of the setting, so gate it ourselves — auto-checks OFF
+        // means the daily agent does nothing. (A user-initiated check is never gated.)
+        if (gBackground && ![ud boolForKey:@"SUEnableAutomaticChecks"]) return 0;
+
+        [NSApp activateIgnoringOtherApps:YES];                 // LSUIElement: bring Sparkle's dialog forward
         gDelegate = [[MT2UpdaterDelegate alloc] init];
-        SUUpdater *updater = [SUUpdater sharedUpdater];        // host bundle = this app (SUFeedURL/SUPublicEDKey)
+        SUUpdater *updater = [SUUpdater sharedUpdater];         // host bundle = this app (SUFeedURL/SUPublicEDKey)
         [updater setDelegate:gDelegate];
         if (gBackground) {
-            [updater checkForUpdatesInBackground];            // silent: UI only if an update exists
+            [updater checkForUpdatesInBackground];             // silent: UI only if an update exists
         } else {
-            [updater checkForUpdates:nil];                    // user-initiated: always shows UI
+            [updater checkForUpdates:nil];                     // user-initiated: always shows UI
         }
         [NSApp run];
     }
