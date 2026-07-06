@@ -44,9 +44,11 @@ honest as the device connects, disconnects, or switches transport.
 
     sudo launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist
     launchctl unload /Library/LaunchAgents/com.schmonz.mt2panewatch.plist
+    launchctl unload /Library/LaunchAgents/com.schmonz.mt2updatecheck.plist
     sudo kextunload -b com.schmonz.MT2Gesture
     sudo rm -rf /Library/LaunchDaemons/com.schmonz.mt2d.plist \
         /Library/LaunchAgents/com.schmonz.mt2panewatch.plist \
+        /Library/LaunchAgents/com.schmonz.mt2updatecheck.plist \
         /Library/ScriptingAdditions/MT2PaneRefresh.osax \
         /usr/local/libexec/mt2_pane_watch \
         /usr/local/sbin/mt2d-run /usr/local/sbin/mt2_reenumerate \

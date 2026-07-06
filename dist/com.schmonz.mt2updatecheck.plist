@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Per-user GUI-session agent: runs a SILENT scheduled Sparkle update check
+         (the updater's --background mode shows UI only if an update is available,
+         then quits). Must be a LaunchAgent (not Daemon) so Sparkle can present its
+         prompt in the user's Aqua session when an update is found. Short-lived:
+         it checks and exits, so no KeepAlive. -->
+    <key>Label</key>
+    <string>com.schmonz.mt2updatecheck</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater</string>
+        <string>--background</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>86400</integer>
+</dict>
+</plist>

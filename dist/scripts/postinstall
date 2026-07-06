@@ -64,4 +64,14 @@ else
     echo "MT2: prefpane payload installed as a standalone osax + watcher (no SIMBL found)."
 fi
 
+# Scheduled background update check (per-user LaunchAgent). Independent of the prefpane route above.
+# Only meaningful when the updater app was staged (Sparkle-enabled build); load it for the current GUI
+# user so the first daily check can run without a logout. Best-effort — never fail the install on it.
+UPDATE_AGENT=/Library/LaunchAgents/com.schmonz.mt2updatecheck.plist
+UPDATER_APP=/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater
+if [ -x "$UPDATER_APP" ] && [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+    sudo -u "$CONSOLE_USER" launchctl unload "$UPDATE_AGENT" 2>/dev/null || true
+    sudo -u "$CONSOLE_USER" launchctl load -w "$UPDATE_AGENT" 2>/dev/null || true
+fi
+
 exit 0

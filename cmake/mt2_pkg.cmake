@@ -46,6 +46,10 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2usbbthandoff.plist ${PKGROOT}/Library/LaunchDaemons/
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2panewatch.plist ${PKGROOT}/Library/LaunchAgents/
+  # Scheduled background update check: per-user LaunchAgent that runs the updater in --background mode
+  # (daily + at login). Only useful when the updater app is staged (Sparkle build), but the plist is a
+  # static file with no build dependency, so always ship it; the postinstall loads it best-effort.
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2updatecheck.plist ${PKGROOT}/Library/LaunchAgents/
   # Stage the SIMBL plugin bundle in a holding area; postinstall copies it into the SIMBL Plugins
   # dir only if SIMBL is present on the target.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/share/mt2d
