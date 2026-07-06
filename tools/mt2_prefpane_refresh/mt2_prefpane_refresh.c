@@ -705,9 +705,34 @@ static void mt2_open_github_imp(id self, SEL _cmd, id sender) {
     LOG("about: View on GitHub clicked");
 }
 
+/* The pane's tab delegate CRASHES on a foreign 4th tab. tabView:willSelectTabViewItem: does
+ * [[self _allControllers] objectAtIndex:<tabIndex>], and _allControllers has one entry per ORIGINAL tab
+ * (3) — so selecting our index-3 tab is objectAtIndex:3 on a 3-element array => NSRangeException, which
+ * wedges tab switching. tabView:didSelectTabViewItem: also persists "lastselectedtab"=our index (would
+ * crash on the next open's restore). Fix: swizzle both to SKIP the pane's per-tab logic for OUR item
+ * (identifier "MT2About") and pass through for its own tabs — NSTabView still shows our item's view via
+ * its built-in display, and mGestureViewController stays on the last real tab. RE'd 2026-07-06 (disasm
+ * of tabView:willSelectTabViewItem: @0x6eab). */
+static void (*gOrigTabWillSelect)(id, SEL, id, id) = NULL;
+static void (*gOrigTabDidSelect)(id, SEL, id, id) = NULL;
+static int mt2_is_about_item(id item) {
+    if (!item) return 0;
+    id ident = ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("identifier"));
+    return ident && CFGetTypeID((CFTypeRef)ident) == CFStringGetTypeID()
+        && CFEqual((CFStringRef)ident, CFSTR("MT2About"));
+}
+static void my_tab_will_select(id self, SEL _cmd, id tv, id item) {
+    if (mt2_is_about_item(item)) return;              /* skip: [_allControllers objectAtIndex:3] would crash */
+    if (gOrigTabWillSelect) gOrigTabWillSelect(self, _cmd, tv, item);
+}
+static void my_tab_did_select(id self, SEL _cmd, id tv, id item) {
+    if (mt2_is_about_item(item)) return;              /* skip: don't persist our tab as lastselectedtab */
+    if (gOrigTabDidSelect) gOrigTabDidSelect(self, _cmd, tv, item);
+}
+
 /* Register the three About-tab action selectors on the live pane class once (class_addMethod with a C
  * IMP — the GC-safe substitute for @implementation). mt2CheckForUpdates: is added by
- * install_updater_action(); add the two new ones here. */
+ * install_updater_action(); add the two new ones here. Also swizzle the tab delegate (see above). */
 static int gAboutActionsInstalled = 0;
 static void install_about_actions(void) {
     if (!gPane) return;
@@ -718,6 +743,27 @@ static void install_about_actions(void) {
     class_addMethod(c, sel_registerName("mt2OpenGitHub:"),      (IMP)mt2_open_github_imp,      "v@:@");
     gAboutActionsInstalled = 1;
     LOG("about: installed mt2ToggleAutoCheck:/mt2OpenGitHub: on %s", class_getName(c));
+}
+
+/* Swizzle the TAB DELEGATE's class so our foreign tab can't crash its per-tab logic. The delegate is the
+ * MTTrackpadController that owns the NSTabView — a DIFFERENT object from gPane (the NSPreferencePane), so
+ * we must swizzle [tabview delegate]'s class, not gPane's. Installed once, from mt2_inject_about_tab
+ * where the live NSTabView is in hand. */
+static int gTabSwizzleInstalled = 0;
+static void install_tab_delegate_swizzle(id tabview) {
+    if (gTabSwizzleInstalled || !tabview) return;
+    id delegate = ((id (*)(id, SEL))objc_msgSend)(tabview, sel_registerName("delegate"));
+    if (!delegate) return;
+    Class dc = object_getClass(delegate);
+    Method mw = class_getInstanceMethod(dc, sel_registerName("tabView:willSelectTabViewItem:"));
+    if (mw) { gOrigTabWillSelect = (void (*)(id, SEL, id, id))method_getImplementation(mw);
+              method_setImplementation(mw, (IMP)my_tab_will_select); }
+    Method md = class_getInstanceMethod(dc, sel_registerName("tabView:didSelectTabViewItem:"));
+    if (md) { gOrigTabDidSelect = (void (*)(id, SEL, id, id))method_getImplementation(md);
+              method_setImplementation(md, (IMP)my_tab_did_select); }
+    if (mw) gTabSwizzleInstalled = 1;
+    LOG("about: tab-delegate swizzle on %s (will=%d did=%d)", class_getName(dc),
+        gOrigTabWillSelect != NULL, gOrigTabDidSelect != NULL);
 }
 
 /* Is the updater's automatic-check preference ON? Reads the updater domain; DEFAULT OFF if unset. */
@@ -823,6 +869,7 @@ static void mt2_inject_about_tab(id root) {
     id tabview = find_tabview(root, 0);
     if (!tabview) return;
     install_about_actions();
+    install_tab_delegate_swizzle(tabview);   /* swizzle the REAL delegate (MTTrackpadController), not gPane */
     long idx = ((long (*)(id, SEL, id))objc_msgSend)(
         tabview, sel_registerName("indexOfTabViewItemWithIdentifier:"), (id)CFSTR("MT2About"));
     if (idx != LONG_MAX) return;   /* NSNotFound == NSIntegerMax; anything else => already present */
