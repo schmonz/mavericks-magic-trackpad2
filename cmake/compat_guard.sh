@@ -55,18 +55,17 @@ check_binary() {
     fail=1
   fi
 
-  # (3) minimum OS must be 10.9 -- from EITHER LC_VERSION_MIN_MACOSX ('version' field, what the 10.9-era
-  #     toolchain emits on the native x86 host) OR LC_BUILD_VERSION ('minos' field, what a modern arm64
-  #     toolchain on macOS 26 emits when it cross-builds for 10.9). Accept both so this guard runs
-  #     EQUALLY on the 10.9 x86 host and the macOS 26 arm64 host.
+  # (3) minimum OS must be 10.9, via LC_VERSION_MIN_MACOSX ('version' field). BOTH build hosts emit this
+  #     for a 10.9 target: ld64 uses LC_VERSION_MIN_MACOSX for deployment targets below 10.14 (only 10.14+
+  #     gets LC_BUILD_VERSION), so the macOS-26 arm64 cross-build of our 10.9 target carries it too --
+  #     confirmed empirically by our shipped macOS-26-built releases running correctly on 10.9. So no
+  #     LC_BUILD_VERSION handling is needed.
   minos=$(otool -l "$b" 2>/dev/null | awk '
     /LC_VERSION_MIN_MACOSX/ { inv = 1; next }
     inv && $1 == "version" { print $2; exit }
-    /LC_BUILD_VERSION/ { inb = 1; next }
-    inb && $1 == "minos" { print $2; exit }
   ')
   if [ -z "$minos" ]; then
-    echo "compat guard: $b has no LC_VERSION_MIN_MACOSX/LC_BUILD_VERSION min-OS (cannot prove 10.9)." >&2
+    echo "compat guard: $b has no LC_VERSION_MIN_MACOSX (cannot prove min-OS 10.9)." >&2
     echo "  fix: set the deployment target (CMAKE_OSX_DEPLOYMENT_TARGET=10.9)." >&2
     fail=1
   elif [ "$minos" != "10.9" ]; then
