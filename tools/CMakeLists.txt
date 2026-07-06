@@ -75,6 +75,16 @@ add_custom_command(TARGET MT2PaneRefresh_simbl POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy ${OSAX_DIR}/SIMBL-Info.plist ${SIMBL_OUT}/Contents/Info.plist
   COMMENT "Assembling MT2PaneRefresh.bundle (SIMBL)")
 
+# GC-neutral guard, BAKED IN (not a manual otool check): every payload injected into 10.9's ObjC-GC
+# System Preferences must be free of __objc_imageinfo, or GC refuses to load it. Fail the build here so
+# a stray Obj-C construct can never ship silently. See cmake/check_gc_neutral.sh.
+foreach(_gc MT2PaneRefresh MT2PaneRefresh_dylib MT2PaneRefresh_simbl)
+  add_custom_command(TARGET ${_gc} POST_BUILD
+    COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/check_gc_neutral.sh $<TARGET_FILE:${_gc}>
+    COMMENT "Verifying ${_gc} is GC-neutral (no __objc_imageinfo)"
+    VERBATIM)
+endforeach()
+
 # Aggregate convenience target (mirrors the Makefile `prefpane-refresh`: osax + dylib + arm).
 add_custom_target(prefpane-refresh DEPENDS MT2PaneRefresh MT2PaneRefresh_dylib mt2_pane_arm)
 add_custom_target(prefpane-refresh-simbl DEPENDS MT2PaneRefresh_simbl)
