@@ -21,6 +21,7 @@
 #import <Foundation/Foundation.h>
 #import <IOBluetooth/IOBluetooth.h>
 #import <IOKit/IOKitLib.h>
+#include <string.h>
 
 #define MT2_COD 0x594   /* Peripheral(5) + pointing + digitizer minor 0x25 — the MT2 over BT */
 
@@ -50,8 +51,21 @@ static void usb_reader_terminated(void *refcon, io_iterator_t it) {
     if (any) wake_bt_mt2();
 }
 
-int main(void) {
+int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        /* One-shot mode: wake the deep-idle BT MT2 exactly once and exit — NO notification, NO run
+         * loop. Reuses the same proven wake_bt_mt2 primitive. Used post-update (after the kext
+         * reload) so the trackpad resumes without a physical tap. The single openConnection is
+         * synchronous and returns after the BT page timeout (~5s) if the device is unreachable, so
+         * this can't hang; a paired+powered device wakes near-instantly, and unpaired/off-connected
+         * cases are skipped/error-return with no loop. */
+        for (int i = 1; i < argc; i++) {
+            if (argv[i] && strcmp(argv[i], "--wake-once") == 0) {
+                wake_bt_mt2();
+                return 0;
+            }
+        }
+
         IONotificationPortRef np = IONotificationPortCreate(kIOMasterPortDefault);
         if (!np) { NSLog(@"mt2_usb_bt_handoff: IONotificationPortCreate failed"); return 1; }
         CFRunLoopAddSource(CFRunLoopGetCurrent(),
