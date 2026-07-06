@@ -1,14 +1,20 @@
 #!/bin/sh
 # 10.9 userland compat guard.
 #
-# Fail the build if any SHIPPED userland binary references a post-10.9 symbol as an
-# undefined import -- on a real 10.9 machine dyld aborts at launch on a non-weak
-# missing symbol, and even a weak one means we're calling an API that isn't there.
-# Cross-building against the modern SDK makes this a live regression risk, so this
-# runs in CI after every build.
+# Fail the build if any SHIPPED userland binary would misbehave on a real 10.9 machine.
+# Three per-binary invariants, checked for every shipped userland Mach-O:
+#   (1) no post-10.9 symbol as an undefined import -- on a real 10.9 machine dyld aborts
+#       at launch on a non-weak missing symbol, and even a weak one means we're calling an
+#       API that isn't there. Cross-building against the modern SDK makes this a live risk.
+#   (2) architecture is exactly x86_64 -- 10.9 is Intel-only; an arm64 (or fat) slice can
+#       never run there.
+#   (3) LC_VERSION_MIN_MACOSX minimum OS is 10.9 -- a higher deployment target lets the
+#       linker resolve/emit newer-OS behavior and marks the binary as requiring a newer OS.
 #
-# Audited 2026-07-02: the tree currently has ZERO such references (the dispatch_*
+# Audited 2026-07-02: the tree currently has ZERO post-10.9 references (the dispatch_*
 # symbols present are libdispatch, shipped since 10.6). This guard keeps it that way.
+#
+# Userland only: the kext is NOT checked here (kext loadability is a separate task).
 #
 # Usage: compat_guard.sh <build-dir>
 set -eu
@@ -18,6 +24,54 @@ BUILD=$1
 # (name -> first OS). Extend as new call sites are added.
 POST_10_9='_clock_gettime|_clock_gettime_nsec_np|_IORegistryEntryCopyPath|_IOMainPort|_kIOMainPortDefault|_os_unfair_lock_lock|_os_unfair_lock_unlock|_os_log|_os_log_create|_os_log_impl'
 
+fail=0
+checked=0
+
+# check_binary <path>
+# Runs all three invariants against one Mach-O. Sets $fail=1 on any violation and
+# names the binary + the violation + the fix on stderr. Increments $checked.
+check_binary() {
+  b=$1
+  [ -f "$b" ] || { echo "compat guard: MISSING shipped binary $b" >&2; fail=1; return; }
+  checked=$((checked + 1))
+
+  # (1) post-10.9 undefined imports. Match the denylist as whole symbol names.
+  leak=$(nm -u "$b" 2>/dev/null | awk '{print $NF}' | grep -xE "($POST_10_9)" || true)
+  if [ -n "$leak" ]; then
+    echo "compat guard: post-10.9 symbol(s) in $b:" >&2
+    printf '  %s\n' $leak >&2
+    echo "  fix: drop the post-10.9 API / use a 10.9-available equivalent." >&2
+    fail=1
+  fi
+
+  # (2) architecture must be exactly x86_64 (10.9 is Intel-only).
+  #     `lipo -archs` doesn't exist on the 10.9 toolchain, so parse `lipo -info`:
+  #       non-fat -> "...is architecture: x86_64"; fat -> "...are: x86_64 arm64".
+  #     Stripping through the last ": " yields the space-separated arch list either way.
+  archs=$(lipo -info "$b" 2>/dev/null | sed 's/.*: //' || true)
+  if [ "$archs" != "x86_64" ]; then
+    echo "compat guard: $b arch is '$archs', expected exactly 'x86_64' (10.9 is Intel-only)." >&2
+    echo "  fix: build for x86_64 only (CMAKE_OSX_ARCHITECTURES=x86_64)." >&2
+    fail=1
+  fi
+
+  # (3) LC_VERSION_MIN_MACOSX must declare minimum OS 10.9.
+  #     Parse the 'version' field of the LC_VERSION_MIN_MACOSX load command.
+  minos=$(otool -l "$b" 2>/dev/null | awk '
+    /LC_VERSION_MIN_MACOSX/ { inlc = 1; next }
+    inlc && $1 == "version" { print $2; inlc = 0 }
+  ')
+  if [ -z "$minos" ]; then
+    echo "compat guard: $b has no LC_VERSION_MIN_MACOSX (cannot prove min-OS 10.9)." >&2
+    echo "  fix: set the deployment target (CMAKE_OSX_DEPLOYMENT_TARGET=10.9)." >&2
+    fail=1
+  elif [ "$minos" != "10.9" ]; then
+    echo "compat guard: $b min-OS is '$minos', expected '10.9'." >&2
+    echo "  fix: set CMAKE_OSX_DEPLOYMENT_TARGET=10.9." >&2
+    fail=1
+  fi
+}
+
 # The binaries the .pkg actually ships (mirror cmake/mt2_pkg.cmake).
 SHIPPED="
 $BUILD/sbin/mt2_reenumerate
@@ -26,33 +80,17 @@ $BUILD/MT2PaneRefresh.osax/Contents/MacOS/MT2PaneRefresh
 $BUILD/MT2PaneRefresh.bundle/Contents/MacOS/MT2PaneRefresh
 "
 
-fail=0
-checked=0
 for b in $SHIPPED; do
-  [ -f "$b" ] || { echo "compat guard: MISSING shipped binary $b" >&2; fail=1; continue; }
-  checked=$((checked + 1))
-  # Undefined symbols only; match the denylist as whole symbol names.
-  leak=$(nm -u "$b" 2>/dev/null | awk '{print $NF}' | grep -xE "($POST_10_9)" || true)
-  if [ -n "$leak" ]; then
-    echo "compat guard: post-10.9 symbol(s) in $b:" >&2
-    printf '  %s\n' $leak >&2
-    fail=1
-  fi
+  check_binary "$b"
 done
 
 # Updater binary: only present in Sparkle-enabled builds; skip silently if absent.
 UPD_BIN="$BUILD/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater"
 if [ -f "$UPD_BIN" ]; then
-  checked=$((checked + 1))
-  leak=$(nm -u "$UPD_BIN" 2>/dev/null | awk '{print $NF}' | grep -xE "($POST_10_9)" || true)
-  if [ -n "$leak" ]; then
-    echo "compat guard: post-10.9 symbol(s) in $UPD_BIN:" >&2
-    printf '  %s\n' $leak >&2
-    fail=1
-  fi
+  check_binary "$UPD_BIN"
 fi
 
 # Fail closed: if we somehow measured nothing, that's a broken build, not a pass.
 [ "$checked" -gt 0 ] || { echo "compat guard: no shipped binaries found under $BUILD (fail-closed)" >&2; exit 2; }
 
-[ "$fail" = 0 ] && echo "compat guard: $checked shipped binaries clean (no post-10.9 imports)" || exit 1
+[ "$fail" = 0 ] && echo "compat guard: $checked shipped binaries clean (x86_64, min-OS 10.9, no post-10.9 imports)" || exit 1

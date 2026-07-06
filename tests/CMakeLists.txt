@@ -29,6 +29,14 @@ add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.s
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)
 add_test(NAME test_appcast_notes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_appcast_notes.sh)
 
+# Build-artifact invariants: fail the build if a shipped artifact violates a 10.9 rule.
+# These run against ${CMAKE_BINARY_DIR}, so they assume `cmake --build` has already
+# assembled the osax/.bundle/.kext (POST_BUILD of `all` targets) into the build dir.
+#   test_compat_guard: userland Mach-Os are x86_64, min-OS 10.9, no post-10.9 imports.
+#   test_plists: shipped Info.plists lint clean + updater has SUFeedURL/SUPublicEDKey.
+add_test(NAME test_compat_guard COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/compat_guard.sh ${CMAKE_BINARY_DIR})
+add_test(NAME test_plists COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/check_plists.sh ${CMAKE_BINARY_DIR})
+
 # Branch A watcher inject-decision (first ObjC ctest). Links the watcher source for
 # mt2_should_inject; -DMT2_PANE_WATCH_TEST excludes the watcher's main (no duplicate main).
 add_executable(test_pane_watch test_pane_watch.m
