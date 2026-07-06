@@ -159,6 +159,9 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
+      # Check out the repo so docs/release-notes/vX.Y.Z.md exists for body_path below (the
+      # download-artifact step only brings the .pkg + appcast, not the source tree).
+      - uses: actions/checkout@v7
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -167,6 +170,10 @@ jobs:
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v3
         with:
+          # Human-readable release body = the same notes we ship in the appcast. GitHub renders
+          # Markdown natively, so the raw .md is correct here (no HTML). ref_name on a tag push is
+          # vX.Y.Z, matching the file name; this job only runs on tags (if: github.ref_type=='tag').
+          body_path: docs/release-notes/${{ github.ref_name }}.md
           # Pre-release ONLY if the tag has a -suffix (e.g. v0.2.0-beta1). A plain v0.x is now a FULL
           # release so GitHub's /releases/latest/ resolves to it -- which is what the updater's
           # SUFeedURL (/releases/latest/download/appcast.xml) depends on. (Dropped the old "v0.x =>
