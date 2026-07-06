@@ -420,6 +420,20 @@ void com_schmonz_MT2BTReader::seedBnbIdentity() {
      * explanation.md "Product re-seed after IOHIDDevice::start". */
     OSString *prod = OSString::withCString("Magic Trackpad 2");
     if (prod) { fManualBnb->setProperty("Product", prod); prod->release(); }
+    /* Connect/disconnect bezel HUD = a TRACKPAD, not a mouse. IOBluetoothHIDDriver's connect timer
+     * reads these keys and posts the event name to the BezelServices login plugin; NULL defaults a
+     * pointing device to "MouseConnected" (→ mouse art). Because we manual-start BNBTrackpadDevice, the
+     * genuine BNBTrackpadDriver personality (which declares these) never merges onto our node, so we
+     * seed them here. Apple already ships /Library/Application Support/Apple/BezelServices/
+     * AppleBluetoothMultitouch.plugin mapping (BNBTrackpadDevice, Connected/Disconnected/TrackpadOff)
+     * -> BtTrackpad.pdf, so this is scoped to our node — a real Magic Mouse is untouched. See
+     * docs/mt-stack/device-identity-map.md "Bezel HUD". */
+    OSString *nc = OSString::withCString("Connected");
+    if (nc) { fManualBnb->setProperty("ConnectionNotificationType", nc); nc->release(); }
+    OSString *nd = OSString::withCString("Disconnected");
+    if (nd) { fManualBnb->setProperty("DisconnectionNotificationType", nd); nd->release(); }
+    OSString *np = OSString::withCString("TrackpadOff");
+    if (np) { fManualBnb->setProperty("PoweredOffNotificationType", np); np->release(); }
     /* Battery display gate: the Trackpad pane's initWithHIDDevice: returns nil (→ 0%) if the node has
      * no "ExtendedFeatures" property, REGARDLESS of BatteryPercent. Publish a present-but-empty dict
      * purely to pass that presence gate — see explanation.md "the ExtendedFeatures presence gate". */
