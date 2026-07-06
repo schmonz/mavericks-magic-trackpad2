@@ -4,8 +4,11 @@
 <dict>
 	<key>CFBundleIdentifier</key>
 	<string>com.schmonz.MavericksTrackpad2Updater</string>
+	<!-- CFBundleName is the host name Sparkle shows in its dialogs ("A new version of X is
+	     available", "You're up to date"), so it's the PRODUCT name, not the helper's internal name.
+	     CFBundleExecutable/Identifier/IconFile keep the internal MavericksTrackpad2Updater name. -->
 	<key>CFBundleName</key>
-	<string>MavericksTrackpad2Updater</string>
+	<string>Mavericks Trackpad 2</string>
 	<key>CFBundleExecutable</key>
 	<string>MavericksTrackpad2Updater</string>
 	<!-- Product icon for Sparkle's update dialog (else it shows a generic app icon).
