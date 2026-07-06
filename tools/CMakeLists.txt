@@ -36,6 +36,8 @@ target_link_libraries(mt2_pane_watch
 set(OSAX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mt2_prefpane_refresh)
 add_library(MT2PaneRefresh MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
 target_include_directories(MT2PaneRefresh PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# The About tab's version label reads this at compile time (kept in lock-step with MT2_VERSION).
+target_compile_definitions(MT2PaneRefresh PRIVATE MT2_VERSION_STR="${MT2_VERSION}")
 set_target_properties(MT2PaneRefresh PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME MT2PaneRefresh)
 target_link_libraries(MT2PaneRefresh "-framework IOKit" "-framework CoreFoundation" "-framework Carbon" objc)
 # Assemble MT2PaneRefresh.osax/Contents/{MacOS,Info.plist}
@@ -49,6 +51,7 @@ add_custom_command(TARGET MT2PaneRefresh POST_BUILD
 # Same payload as a DYLD_INSERT_LIBRARIES dylib (a loader we control at launch).
 add_library(MT2PaneRefresh_dylib SHARED ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
 target_include_directories(MT2PaneRefresh_dylib PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(MT2PaneRefresh_dylib PRIVATE MT2_VERSION_STR="${MT2_VERSION}")
 set_target_properties(MT2PaneRefresh_dylib PROPERTIES
   PREFIX "" OUTPUT_NAME MT2PaneRefresh SUFFIX ".dylib"
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -58,6 +61,7 @@ target_link_libraries(MT2PaneRefresh_dylib "-framework IOKit" "-framework CoreFo
 # the current working loader). Same -bundle binary, SIMBL-Info.plist, .bundle dir.
 add_library(MT2PaneRefresh_simbl MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${CMAKE_SOURCE_DIR}/src/mt2_pane_sm.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
 target_include_directories(MT2PaneRefresh_simbl PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(MT2PaneRefresh_simbl PRIVATE MT2_VERSION_STR="${MT2_VERSION}")
 # Distinct output dir: MT2PaneRefresh (osax) also emits an unprefixed/unsuffixed
 # "MT2PaneRefresh" in tools/ -- same path => a parallel-build race where one target's
 # POST_BUILD bundle never gets assembled. Give SIMBL its own dir so the paths differ.

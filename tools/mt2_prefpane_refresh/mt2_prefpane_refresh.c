@@ -40,6 +40,7 @@
 
 #include <string.h>
 #include <syslog.h>
+#include <limits.h>
 #include <unistd.h>
 #include <sys/sysctl.h>
 #include <dispatch/dispatch.h>
@@ -56,6 +57,14 @@
 #include "mt2_single_load.h"
 
 #define LOG(...) syslog(LOG_NOTICE, "[MT2PaneRefresh] " __VA_ARGS__)
+
+/* CMake passes -DMT2_VERSION_STR="X.Y.Z" (lock-step with MT2_VERSION); keep the file self-compilable. */
+#ifndef MT2_VERSION_STR
+#define MT2_VERSION_STR "0.0.0"
+#endif
+
+/* Sparkle + the daily auto-check agent read this key from the updater's own prefs domain. */
+#define MT2_UPDATER_DOMAIN CFSTR("com.schmonz.MavericksTrackpad2Updater")
 
 /* ============================================================================================
  * 1. GENERIC HELPERS — objc dispatch shims + core cross-section state
@@ -78,8 +87,8 @@ static int service_present(const char *cls) {
 }
 
 /* Launch the shared Sparkle updater helper on demand (one shared copy, same path for the osax + SIMBL
- * routes). `open` returns immediately; the helper runs its own UI. Fired by the repurposed "Check for
- * Updates" button (section 5). */
+ * routes). `open` returns immediately; the helper runs its own UI. Fired by the About tab's "Check for
+ * Updates…" button (section 5b). */
 static void mt2_launch_updater(void) {
     const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
     if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
@@ -396,7 +405,7 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
  * loadMainView only when the view type must change (NoTrackpad<->Trackpad), else just set the
  * battery via the real _magicTrackpadAction(connected). We OWN that selector (see my_magicAction),
  * so this is the only place it fires. */
-static void mt2_update_setup_button(id root);   /* fwd: re-repurpose the Set-Up button after a render */
+static void mt2_inject_about_tab(id root);   /* fwd: (re)inject the About tab after a render (idempotent) */
 static void perform(psm_action_t a) {
     if (!gPane) return;
     switch (a) {
@@ -436,8 +445,8 @@ static void perform(psm_action_t a) {
      * function as the steady-state belt. */
     if (a == PSM_ACT_RENDER_NONE || a == PSM_ACT_RENDER_BT || a == PSM_ACT_RENDER_USB) {
         mt2_render_battery(front_window_content());
-        mt2_update_setup_button(front_window_content());  /* loadMainView rebuilds the Set-Up button on a
-                                                           * reconnect -> re-repurpose it NOW, not on the tick */
+        mt2_inject_about_tab(front_window_content());  /* loadMainView rebuilds the tab strip on a
+                                                        * reconnect -> re-inject the About tab NOW, not on the tick */
     }
 }
 
@@ -639,11 +648,11 @@ static void install_battery_timer_swizzle(const char *src) {
     LOG("swizzled MTTrackpadController _checkBatteryTimer: via %s (hide Change Batteries — sealed MT2)", src);
 }
 
-/* ---- Updater "Check for Updates" button (Phase 4) -------------------------------------------
- * REUSE Apple's own "Set Up Bluetooth Trackpad…" button (bottom bar, action setupBTMouse:) instead of
- * building + positioning a new view: on the trackpad view we relabel it "Check for Updates…" and
- * re-point its action at our updater; on NoTrackpad the real Set-Up onboarding is left alone. The
- * button keeps Apple's frame + styling. (Version label + GitHub link come next.) */
+/* ---- Updater "Check for Updates" action ----------------------------------------------------
+ * The update entry point now lives on the About tab (section 5b), not a repurposed Apple button.
+ * This selector + IMP are the action wired to the About tab's "Check for Updates…" button; the
+ * former Set-Up-button repurpose (relabel setupBTMouse: -> mt2CheckForUpdates:) has been retired so
+ * Apple's "Set Up Bluetooth Trackpad…" button keeps its original title + onboarding action. */
 
 /* The button's action IMP, installed on the pane class -> launch the shared updater helper. */
 static void mt2_check_updates_imp(id self, SEL _cmd, id sender) {
@@ -663,41 +672,168 @@ static void install_updater_action(void) {
     LOG("updater: installed mt2CheckForUpdates: on %s", class_getName(c));
 }
 
-/* Find the bottom-bar Set-Up/Check button by action — the original setupBTMouse: or, once repurposed,
- * our mt2CheckForUpdates: (so it's located in either state). */
-static id find_setup_button(id view, int depth) {
-    if (!view || depth > 12) return NULL;
-    Class btnCls = objc_getClass("NSButton");
-    if (btnCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(view, sel_registerName("isKindOfClass:"), btnCls)) {
-        SEL a = ((SEL (*)(id, SEL))objc_msgSend)(view, sel_registerName("action"));
-        const char *an = a ? sel_getName(a) : "";
-        if (!strcmp(an, "setupBTMouse:") || !strcmp(an, "mt2CheckForUpdates:")) return view;
+/* ============================================================================================
+ * 5b. ABOUT TAB — a 4th tab on the Trackpad pane's NSTabView
+ * --------------------------------------------------------------------------------------------
+ * Adds an "About" tab carrying: the product/version label, a "Check for Updates…" button (the update
+ * entry point, replacing the retired Set-Up-button repurpose), an "Automatically check for updates"
+ * checkbox (persisted to the updater's SUEnableAutomaticChecks in its own prefs domain), and a
+ * "View on GitHub" link. All controls are built through the objc runtime (GC-neutral pure C) and laid
+ * out with frames. Injection is idempotent (keyed on the "MT2About" tab identifier) and re-asserted on
+ * every pane render, so a loadMainView rebuild never duplicates it.
+ * ============================================================================================ */
+
+/* The two extra About-tab action IMPs (Check-for-Updates reuses mt2CheckForUpdates: from above). */
+static void mt2_toggle_autocheck_imp(id self, SEL _cmd, id sender) {
+    (void)self; (void)_cmd;
+    /* sender is the checkbox; NSOnState == 1. Persist to the UPDATER's domain where Sparkle + the daily
+     * agent read it, then synchronize so the change is durable immediately. */
+    long state = ((long (*)(id, SEL))objc_msgSend)(sender, sel_registerName("state"));
+    CFPreferencesSetAppValue(CFSTR("SUEnableAutomaticChecks"),
+                             state ? kCFBooleanTrue : kCFBooleanFalse, MT2_UPDATER_DOMAIN);
+    CFPreferencesAppSynchronize(MT2_UPDATER_DOMAIN);
+    LOG("about: SUEnableAutomaticChecks -> %s", state ? "on" : "off");
+}
+static void mt2_open_github_imp(id self, SEL _cmd, id sender) {
+    (void)self; (void)_cmd; (void)sender;
+    Class wsCls = objc_getClass("NSWorkspace");
+    id ws = wsCls ? ((id (*)(Class, SEL))objc_msgSend)(wsCls, sel_registerName("sharedWorkspace")) : NULL;
+    Class urlCls = objc_getClass("NSURL");
+    id url = urlCls ? ((id (*)(Class, SEL, id))objc_msgSend)(urlCls, sel_registerName("URLWithString:"),
+                        (id)CFSTR("https://github.com/schmonz/mavericks-magic-trackpad2")) : NULL;
+    if (ws && url) ((signed char (*)(id, SEL, id))objc_msgSend)(ws, sel_registerName("openURL:"), url);
+    LOG("about: View on GitHub clicked");
+}
+
+/* Register the three About-tab action selectors on the live pane class once (class_addMethod with a C
+ * IMP — the GC-safe substitute for @implementation). mt2CheckForUpdates: is added by
+ * install_updater_action(); add the two new ones here. */
+static int gAboutActionsInstalled = 0;
+static void install_about_actions(void) {
+    if (!gPane) return;
+    install_updater_action();                       /* mt2CheckForUpdates: (idempotent) */
+    if (gAboutActionsInstalled) return;
+    Class c = object_getClass(gPane);
+    class_addMethod(c, sel_registerName("mt2ToggleAutoCheck:"), (IMP)mt2_toggle_autocheck_imp, "v@:@");
+    class_addMethod(c, sel_registerName("mt2OpenGitHub:"),      (IMP)mt2_open_github_imp,      "v@:@");
+    gAboutActionsInstalled = 1;
+    LOG("about: installed mt2ToggleAutoCheck:/mt2OpenGitHub: on %s", class_getName(c));
+}
+
+/* Is the updater's automatic-check preference ON? Reads the updater domain; DEFAULT OFF if unset. */
+static int mt2_autocheck_enabled(void) {
+    int on = 0;
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("SUEnableAutomaticChecks"), MT2_UPDATER_DOMAIN);
+    if (v) {
+        if (CFGetTypeID(v) == CFBooleanGetTypeID()) on = CFBooleanGetValue((CFBooleanRef)v);
+        CFRelease(v);
     }
+    return on;
+}
+
+/* Small control builders. Controls pin to the container's TOP (autoresize: flexible bottom margin) so
+ * the layout survives the NSTabView resizing the container to its content rect. */
+#define MT2_AR_TOP 8   /* NSViewMinYMargin — bottom margin flexible => fixed distance from the top edge */
+
+static id mt2_make_label(CGRect frame, CFStringRef text) {
+    Class cls = objc_getClass("NSTextField");
+    id tf = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_registerName("alloc"));
+    tf = ((id (*)(id, SEL, CGRect))objc_msgSend)(tf, sel_registerName("initWithFrame:"), frame);
+    ((void (*)(id, SEL, signed char))objc_msgSend)(tf, sel_registerName("setEditable:"), 0);
+    ((void (*)(id, SEL, signed char))objc_msgSend)(tf, sel_registerName("setSelectable:"), 0);
+    ((void (*)(id, SEL, signed char))objc_msgSend)(tf, sel_registerName("setBezeled:"), 0);
+    ((void (*)(id, SEL, signed char))objc_msgSend)(tf, sel_registerName("setDrawsBackground:"), 0);
+    if (text) ((void (*)(id, SEL, id))objc_msgSend)(tf, sel_registerName("setStringValue:"), (id)text);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(tf, sel_registerName("setAutoresizingMask:"), MT2_AR_TOP);
+    return tf;
+}
+static id mt2_make_button(CGRect frame, CFStringRef title, SEL action) {
+    Class cls = objc_getClass("NSButton");
+    id b = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_registerName("alloc"));
+    b = ((id (*)(id, SEL, CGRect))objc_msgSend)(b, sel_registerName("initWithFrame:"), frame);
+    ((void (*)(id, SEL, id))objc_msgSend)(b, sel_registerName("setTitle:"), (id)title);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(b, sel_registerName("setBezelStyle:"), 1);   /* NSRoundedBezelStyle */
+    ((void (*)(id, SEL, id))objc_msgSend)(b, sel_registerName("setTarget:"), gPane);
+    ((void (*)(id, SEL, SEL))objc_msgSend)(b, sel_registerName("setAction:"), action);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(b, sel_registerName("setAutoresizingMask:"), MT2_AR_TOP);
+    return b;
+}
+
+/* Build the About tab's container view + its four controls. Version comes from MT2_VERSION_STR (compile
+ * time). The checkbox reflects the current SUEnableAutomaticChecks (default OFF). */
+static id mt2_build_about_view(void) {
+    Class viewCls = objc_getClass("NSView");
+    id v = ((id (*)(Class, SEL))objc_msgSend)(viewCls, sel_registerName("alloc"));
+    v = ((id (*)(id, SEL, CGRect))objc_msgSend)(v, sel_registerName("initWithFrame:"), CGRectMake(0, 0, 480, 240));
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(v, sel_registerName("setAutoresizingMask:"), 2 | 16); /* width+height sizable */
+    SEL addSub = sel_registerName("addSubview:");
+
+    /* Version label. */
+    char vbuf[96];
+    snprintf(vbuf, sizeof vbuf, "Mavericks Trackpad 2 — version %s", MT2_VERSION_STR);
+    CFStringRef vs = CFStringCreateWithCString(kCFAllocatorDefault, vbuf, kCFStringEncodingUTF8);
+    id vlabel = mt2_make_label(CGRectMake(20, 190, 440, 24), vs);
+    if (vs) CFRelease(vs);
+    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, vlabel);
+
+    /* Check for Updates… (reuses the mt2CheckForUpdates: action). */
+    id upd = mt2_make_button(CGRectMake(18, 148, 200, 32), CFSTR("Check for Updates…"),
+                             sel_registerName("mt2CheckForUpdates:"));
+    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, upd);
+
+    /* Automatically check for updates (checkbox). */
+    id chk = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSButton"), sel_registerName("alloc"));
+    chk = ((id (*)(id, SEL, CGRect))objc_msgSend)(chk, sel_registerName("initWithFrame:"), CGRectMake(20, 112, 300, 22));
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, sel_registerName("setButtonType:"), 3); /* NSSwitchButton */
+    ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTitle:"), (id)CFSTR("Automatically check for updates"));
+    ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setState:"), mt2_autocheck_enabled() ? 1 : 0);
+    ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTarget:"), gPane);
+    ((void (*)(id, SEL, SEL))objc_msgSend)(chk, sel_registerName("setAction:"), sel_registerName("mt2ToggleAutoCheck:"));
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, sel_registerName("setAutoresizingMask:"), MT2_AR_TOP);
+    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, chk);
+
+    /* View on GitHub — a plain button (link entry point). */
+    id gh = mt2_make_button(CGRectMake(18, 72, 160, 32), CFSTR("View on GitHub"),
+                            sel_registerName("mt2OpenGitHub:"));
+    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, gh);
+    return v;
+}
+
+/* Find the pane's tab strip: the NSTabView in the pane window's view tree (Trackpad view only — the
+ * NoTrackpad view has no tab strip). Matched by class OR by answering numberOfTabViewItems. */
+static id find_tabview(id view, int depth) {
+    if (!view || depth > 14) return NULL;
+    Class tv = objc_getClass("NSTabView");
+    if (tv && ((signed char (*)(id, SEL, Class))objc_msgSend)(view, sel_registerName("isKindOfClass:"), tv))
+        return view;
     id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
     unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
     for (unsigned long i = 0; i < n; i++) {
-        id r = find_setup_button(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
+        id r = find_tabview(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
         if (r) return r;
     }
     return NULL;
 }
 
-/* On the trackpad view (USB or BT) repurpose the Set-Up button into "Check for Updates…"; on
- * NoTrackpad Apple's own Set-Up button (a separate view) is left untouched. Idempotent (skips if
- * already ours). If NoTrackpad turns out to REUSE the same button instance, "Check for Updates" would
- * show there too — the on-device check that decides whether a restore-on-NoTrackpad is also needed
- * (the design expects separate buttons). */
-static void mt2_update_setup_button(id root) {
-    if (!current_view_is_trackpad()) return;
-    install_updater_action();
-    id btn = find_setup_button(root, 0);
-    if (!btn) return;
-    SEL a = ((SEL (*)(id, SEL))objc_msgSend)(btn, sel_registerName("action"));
-    if (a && !strcmp(sel_getName(a), "mt2CheckForUpdates:")) return;   /* already repurposed */
-    ((void (*)(id, SEL, id))objc_msgSend)(btn, sel_registerName("setTitle:"), (id)CFSTR("Check for Updates…"));
-    ((void (*)(id, SEL, id))objc_msgSend)(btn, sel_registerName("setTarget:"), gPane);
-    ((void (*)(id, SEL, SEL))objc_msgSend)(btn, sel_registerName("setAction:"), sel_registerName("mt2CheckForUpdates:"));
-    LOG("updater: repurposed Set-Up button -> Check for Updates");
+/* (Re)inject the About tab. Idempotent: keyed on the "MT2About" tab identifier — if the strip already
+ * carries it, do nothing. Called from every pane render + the reconcile tick, so a loadMainView that
+ * rebuilds the tab strip re-adds it once, never duplicating. No-op on NoTrackpad (no NSTabView). */
+static void mt2_inject_about_tab(id root) {
+    if (!gPane || !root) return;
+    id tabview = find_tabview(root, 0);
+    if (!tabview) return;
+    install_about_actions();
+    long idx = ((long (*)(id, SEL, id))objc_msgSend)(
+        tabview, sel_registerName("indexOfTabViewItemWithIdentifier:"), (id)CFSTR("MT2About"));
+    if (idx != LONG_MAX) return;   /* NSNotFound == NSIntegerMax; anything else => already present */
+
+    Class itemCls = objc_getClass("NSTabViewItem");
+    id item = ((id (*)(Class, SEL))objc_msgSend)(itemCls, sel_registerName("alloc"));
+    item = ((id (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("initWithIdentifier:"), (id)CFSTR("MT2About"));
+    ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setLabel:"), (id)CFSTR("About"));
+    ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setView:"), mt2_build_about_view());
+    ((void (*)(id, SEL, id))objc_msgSend)(tabview, sel_registerName("addTabViewItem:"), item);
+    LOG("about: injected About tab (4th) on %s", object_getClassName(tabview));
 }
 
 /* Hide the button — called from our own 2s reconcile tick so it fires regardless of whether the
@@ -712,7 +848,7 @@ static void hide_battery_button_now(void) {
      * window contentView; fall back to mainView if the pane isn't in a window yet. */
     id win = ((id (*)(id, SEL))objc_msgSend)(mv, sel_registerName("window"));
     id root = win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : mv;
-    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mt2_render_battery(root); mt2_update_setup_button(root); }
+    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mt2_render_battery(root); mt2_inject_about_tab(root); }
     /* NB: the /tmp/mt2_pane_dump view-tree dump lives ONLY in the aux tick (front window) so it works
      * on any pane, incl. Bluetooth; a second trigger here would consume the flag first on the Trackpad
      * pane and dump the wrong window. */
@@ -1160,8 +1296,8 @@ static void capture_pane(id self) {
         dispatch_source_set_event_handler(tick, ^{ sm_reconcile(); hide_battery_button_now(); });
         dispatch_resume(tick);
     }
-    hide_battery_button_now();   /* run once NOW (button-hide + Set-Up->Check-for-Updates repurpose) so
-                                  * they don't wait up to 2 s for the first tick on a fresh pane open */
+    hide_battery_button_now();   /* run once NOW (button-hide + About-tab injection) so they don't wait
+                                  * up to 2 s for the first tick on a fresh pane open */
 }
 
 /* Swizzled -[NSPreferencePane willSelect] (fires BEFORE didSelect): install the image swizzle here,
