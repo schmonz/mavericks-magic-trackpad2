@@ -90,6 +90,20 @@ MessageKey=KeyboardConnectedText, Priority=600}`.)
 
 4. **`BS_UI_Plugin` scan directory (Thread 2 — PINNED).** The login plugin scans **`/Library/Application Support/Apple/BezelServices/*.plugin`** — `contentsOfDirectoryAtPath:@"/Library/Application Support/Apple/BezelServices"` then `pathsMatchingExtensions:@[@"plugin"]`, in the DriverServices plugin-load path (`binary:/System/Library/LoginPlugins/BezelServices.loginPlugin/Contents/MacOS/BezelServices`, string+selector xrefs near `0xfe80`; the disassembler mislabels the enclosing fn `_ESDisposeContext`). On-disk it holds `AppleBluetoothHIDKeyboard/…HIDMouse/…Multitouch/AppleHIDMouse/IOAppleBluetoothHIDDriver/IOBluetoothHIDDriver{Generic,Keyboard,Mouse}.plugin` — so the earlier "only the keyboard plist exists" residual is CLOSED: the mouse config is `AppleBluetoothHIDMouse.plugin` (`MouseConnected→MouseConnectOSD→BtMouse.pdf`) and, crucially, the trackpad config we need is already present in `AppleBluetoothMultitouch.plugin`. ([[mt2-connect-disconnect-bezel-hud]])
 
+5. **ON-DEVICE 2026-07-06 — seed lands but the HUD does NOT fire (necessary ≠ sufficient).** Loaded the
+   kext with the 3-prop seed (`feat(bt)…bezel HUD` `8ef5b37`); `re ioreg-props BNBTrackpadDevice` confirms
+   `ConnectionNotificationType="Connected"`/`DisconnectionNotificationType="Disconnected"`/
+   `PoweredOffNotificationType="TrackpadOff"` ARE on our node — so the seed persists, beat the connect
+   timer, and `IOHIDDevice::start` did not clobber them. BUT a REAL trackpad power-off→on shows **NO bezel
+   at all** — not even the old mouse one. So the connect/disconnect notification is **not being posted for
+   our node**: manual-starting `BNBTrackpadDevice` bypasses the normal BT connection-complete flow that
+   arms/fires `deviceConnectTimerFired`, so no OSD event is emitted (mouse or trackpad). The seed is correct
+   + harmless (would render a trackpad IF the event ever fired), but making the HUD appear needs us to ALSO
+   arm/post the connect notification from our start path — a bigger change. The earlier "2026-07-04 mouse
+   HUD" sighting was likely a transient genuine-path moment we've since diverged from. **DEFERRED (cosmetic).**
+   If revisited: dtrace `deviceConnectTimerFired`/the notification post to confirm the bypass, then arm/post
+   it ourselves for the manual-started node (or find why the timer isn't armed under manual-start).
+
 ## Highest-value follow-ups (surfaced by the comb)
 
 1. **Verify `HIDDefaultBehavior="Trackpad"` on the BT node** (it's the load-bearing trackpad gate; we seed
