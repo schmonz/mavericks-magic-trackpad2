@@ -90,7 +90,19 @@ path not disassembled to a literal). This does not change the mechanism or the v
 **Fixability verdict — config seam, NOT swizzle.** Because the image is a plist `Image` value (not CoD-vault
 art), the cleanest fix mirrors Apple's own keyboard config: ship a `BS_UI_Plugin` plist that maps
 `MouseConnected`/`MouseDisconnected` to an OSD Action with a **trackpad** `Image` (and our own `MessageKey`
-text). This is data, reuses Apple's exact mechanism, and needs no code injection. A `DYLD_INSERT_LIBRARIES`
+text). This is data, reuses Apple's exact mechanism, and needs no code injection.
+
+**SCOPING (critical — the `MouseConnected` mapping just above is TOO BROAD as written):**
+`MouseConnected`/`MouseDisconnected` fire for ANY Bluetooth mouse, so a plist that overrides them to a
+trackpad image would change the connect/disconnect HUD for a **real Magic Mouse** too — violating
+[[mt2-dont-perturb-coconnected-apple-devices]]. The SCOPED fix is to make OUR device emit a **distinct
+event**: override our BT HID personality's `ConnectionNotificationType`/`DisconnectionNotificationType` to a
+trackpad/custom message (e.g. `TrackpadConnected`) and ship a `BS_UI_Plugin` Action for THAT event with the
+trackpad image — so only our MT2 gets the trackpad HUD while real mice keep theirs. This is a clean
+per-device config dimension (fits [[mt2-mission-interface-over-driver]] — the event is data, per device).
+OPEN: pin where our device's `ConnectionNotificationType` actually comes from (which matched
+`IOBluetoothHIDDriver` personality binds our BT node) and whether we can set it on our own node/personality
+without touching the shared mouse personality. A `DYLD_INSERT_LIBRARIES`
 swizzle of `+[DriverServices dispatchOSDAction:]` (rewrite the `Image` arg) is *technically* possible on 10.9
 (no SIP) but the host is **loginwindow** — a root, early-launch, session-critical process where a bad insert =
 logout loop; far riskier than the System-Prefs `NSImageView` pane-row swizzle, so **not recommended**. Next
