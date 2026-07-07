@@ -2,10 +2,10 @@
 # Mirrors kext-gesture/Makefile exactly (see OBJS there). Two compilations of the shared
 # src/*.c exist in this project: mt2core (userland, -std=c99) and HERE (kext, -x c++).
 
-# Kext-local C++ sources (incl. mt2_log + gh_default_adapter, which are kext-only).
+# Kext-local C++ sources (incl. mt2_log + mt2_diag + gh_default_adapter, which are kext-only).
 set(KEXT_LOCAL_CPP
   MT2Gesture.cpp MT2GestureUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
-  mt2_log.cpp gh_default_adapter.cpp)
+  mt2_log.cpp mt2_diag.cpp gh_default_adapter.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES

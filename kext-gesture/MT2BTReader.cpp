@@ -31,6 +31,7 @@
 #include "mt2_battery.h"    /* mt2_parse_battery_report — shared pure decode of report 0x90 */
 #include "mt2_pipeline.h"   /* MT2_EVENT_DRIVEN */
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
+#include "mt2_diag.h"          /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mt2_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
@@ -187,16 +188,6 @@ static void mt2_maybe_publish_battery(const void *data, size_t len) {
         mt2_publish_battery(gGenuineBnb, pct);
 }
 
-/* Diagnostic: log each DISTINCT report id the shim sees, once. On a load this reveals whether the
- * battery report 0x90 actually arrives on the interrupt channel (passive watch works) or not (we'd
- * need to poll it). Cheap — the device streams only a handful of distinct ids. */
-static void mt2_diag_report_id(uint8_t id) {
-    static uint8_t seen[32];
-    if (seen[id >> 3] & (uint8_t)(1u << (id & 7))) return;
-    seen[id >> 3] |= (uint8_t)(1u << (id & 7));
-    MT2_DLOG(1, "shim saw report id 0x%02x", (unsigned)id);
-}
-
 /* THE SEAM (dirty trick #1: L2CAP delegate-callback splice). This runs in place of BNB's own data
  * callback on the interrupt channel (interposeInGate swaps it in). It decodes the raw MT2 0x31 report
  * to a VoodooInputEvent and hands that ONE object across to the shared engine
@@ -210,9 +201,9 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     size_t rlen = length;
     if (length > 0 && b[0] == 0xA1) { rep = b + 1; rlen = length - 1; }   /* strip transport byte */
 
-    /* Battery is polled on the CONTROL channel (the MT2 never streams 0x90 here — proven); this peek
-     * is a cheap safety net, distinct id from the 0x31 stream so it never disturbs the decode. */
-    if (rlen > 0) mt2_diag_report_id(rep[0]);
+    /* Shared diag: distinct report id (once) + resume-after-gap. Also reveals whether battery report
+     * 0x90 ever arrives on the interrupt channel vs needing a control-channel poll. */
+    if (rlen > 0) mt2_diag_raw(MT2_DIAG_BT, rep[0]);
     mt2_maybe_publish_battery(rep, rlen);
 
     VoodooInputEvent tf;
@@ -227,10 +218,10 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
         bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, gGenuineBnb, 0, 0); }
 
-    /* Edge-clamp probe (debug.mt2_log>=2): decoded contact-0 X/Y vs the recognizer's norm.x, to catch
-     * a downstream saturation band (re/mt-contacts). Diagnostic only. */
-    if (tf.contact_count > 0)
-        MT2_DLOG(2, "edge x=%d y=%d ts=%u", tf.transducers[0].currentCoordinates.x, tf.transducers[0].currentCoordinates.y, bt_uptime_ms());
+    /* Shared diag: per-frame edge coords (debug.mt2_log>=2) — decoded contact-0 X/Y, to catch a
+     * downstream saturation band (re/mt-contacts). want_first=false: BT's first-frame signal is the
+     * FUNCTIONAL CSM_STEADY above, not a duplicate observational marker. */
+    mt2_diag_frame(MT2_DIAG_BT, &tf, /*want_first=*/false);
 
     /* Cross the seam: hand the decoded frame to the SHARED session (drop-lifted + lifecycle + liftoff),
      * sink targeting BNB's own spawned AMD. A raw feed with no lifecycle states janked the cursor. */
@@ -254,8 +245,9 @@ static void bt_control_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
     (void)target;
     const uint8_t *b = (const uint8_t *)data;
     /* Log distinct ids seen on control (confirmed the battery 0x90 response arrives here, not on the
-     * interrupt channel). Strip the 0xA1 transport byte for the id, matching the interrupt diag. */
-    if (length > 0) mt2_diag_report_id((length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
+     * interrupt channel). Strip the 0xA1 transport byte for the id, matching the interrupt diag.
+     * saw_id (not _raw): control-plane battery polls must NOT reset the touch stream's idle-gap clock. */
+    if (length > 0) mt2_diag_saw_id(MT2_DIAG_BT, (length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
     mt2_maybe_publish_battery(data, length);
     /* Forward to BNB's real delegate — the control plane depends on seeing every PDU. */
     if (gCtrlOrigCb) ((bt_l2cap_cb_t)gCtrlOrigCb)(gCtrlOrigTarget, channel, length, data);
@@ -290,8 +282,9 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     /* The 0xF1 multitouch enable is DEFERRED to the phase-2 reEnable timer (firing it before the
      * channel is OPEN flaps the link) — see explanation.md "Deferred 0xF1 multitouch enable". */
     IOLog("MT2BTReader: setup on PSM=%u\n", psm);
-    /* A control channel coming up starts a new connection attempt — bump the id and mark CONTROL_UP. */
-    if (psm == 0x11) { gConnId++; bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0); }
+    /* A control channel coming up starts a new connection attempt — bump the id, mark CONTROL_UP, and
+     * reset the shared diag so a reconnect re-observes report ids + re-arms the first-frame/gap markers. */
+    if (psm == 0x11) { gConnId++; mt2_diag_reset(MT2_DIAG_BT); bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0); }
     return kIOReturnSuccess;
 }
 

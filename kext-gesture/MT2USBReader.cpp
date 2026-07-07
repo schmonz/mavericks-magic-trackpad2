@@ -31,6 +31,7 @@
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
 #include "mt2_geometry.h"              /* MT2_SURFACE_WIDTH/HEIGHT — one knob shared with the BT report */
+#include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 
 /* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
 #define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
@@ -84,6 +85,7 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     IOByteCount mn = report->getLength();
     if (mn == 0 || mn > sizeof(mt2)) return gOrigUsbHandleReport(self, report, type, options);
     report->readBytes(0, mt2, mn);
+    mt2_diag_raw(MT2_DIAG_USB, mt2[0]);                   /* shared diag: distinct id + resume-after-gap, pre-gate */
     if (mt2[0] != 0x02)                                   /* not a touch report: pass through untouched */
         return gOrigUsbHandleReport(self, report, type, options);
 
@@ -102,6 +104,7 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     size_t outlen = 0;
     if (usb_assemble_compactv4(&frame, usb_ts_22bit(), out, sizeof(out), &outlen) != 0)  /* assembly */
         return gOrigUsbHandleReport(self, report, type, options);
+    mt2_diag_frame(MT2_DIAG_USB, &frame, /*want_first=*/true);   /* shared: first-frame (lvl1) + per-frame edge (lvl2) */
 
     IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);
     if (!md) return kIOReturnNoMemory;
@@ -280,6 +283,10 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
 void com_schmonz_MT2USBReader::resetTransportState() {
     mt2_usb_reframe_reset();   /* fresh per-finger lifecycle history for this stream */
     gLastUsbButton = 0;        /* fresh physical-button edge state for this stream */
+    /* Fresh shared diag for this stream: a real re-enumeration re-observes report ids and re-arms the
+     * first-frame + gap markers. A screensaver does NOT re-enter here, so the gap heartbeat correctly
+     * spans the idle window. */
+    mt2_diag_reset(MT2_DIAG_USB);
 }
 
 /* Step: send the MT2's USB multitouch-enable (SET_REPORT control transfer on fIntf). Sent BEFORE
