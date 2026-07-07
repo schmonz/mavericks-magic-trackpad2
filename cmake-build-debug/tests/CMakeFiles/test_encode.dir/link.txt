@@ -1,1 +1,0 @@
-/usr/bin/cc -g -arch x86_64 -mmacosx-version-min=10.9 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test_encode.dir/test_encode.c.o -o ../sbin/test_encode  ../src/libmt2core.a

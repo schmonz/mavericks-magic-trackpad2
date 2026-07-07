@@ -1,1 +1,0 @@
-/usr/bin/cc -g -arch x86_64 -mmacosx-version-min=10.9 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/test_vtable_clone.dir/test_vtable_clone.c.o -o ../sbin/test_vtable_clone
