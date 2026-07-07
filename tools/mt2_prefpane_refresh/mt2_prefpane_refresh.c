@@ -87,14 +87,19 @@ static int service_present(const char *cls) {
 }
 
 /* Launch the shared Sparkle updater helper on demand (one shared copy, same path for the osax + SIMBL
- * routes). `open` returns immediately; the helper runs its own UI. Fired by the About tab's "Check for
- * Updates…" button (section 5b). */
+ * routes). Fired by the About tab's "Check for Updates…" button (section 5b).
+ *
+ * Exec the helper's BINARY DIRECTLY — NOT via `open`/LaunchServices. The helper is an LSUIElement /
+ * accessory app; when launched through `open` from inside System Preferences it comes up with NO
+ * foreground window (System Prefs just defocuses and nothing appears — confirmed on-device 2026-07-06,
+ * both from the pane and a terminal `open`). A direct exec lets the helper's own
+ * -[NSApp activateIgnoringOtherApps:] bring the Sparkle dialog to the front (a direct exec DID show it). */
 static void mt2_launch_updater(void) {
-    const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
-    if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
+    const char *bin = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater";
+    if (access(bin, X_OK) != 0) { LOG("updater: %s not installed", bin); return; }
     pid_t pid = fork();
-    if (pid == 0) { execl("/usr/bin/open", "open", app, (char *)NULL); _exit(127); }
-    LOG("updater: launched %s", app);
+    if (pid == 0) { execl(bin, bin, (char *)NULL); _exit(127); }  /* fork+exec: child only calls exec/_exit */
+    LOG("updater: launched %s (direct exec)", bin);
 }
 
 /* The front window's contentView (any pane, incl. Bluetooth — gPane only tracks Trackpad). */
