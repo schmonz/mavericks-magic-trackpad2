@@ -110,6 +110,7 @@ cat <<XML
       <sparkle:shortVersionString>$VER</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>$MINOS</sparkle:minimumSystemVersion>
       <description><![CDATA[
+<style>body{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;font-size:13px;}</style>
 $(md_to_html "$NOTES_FILE")
 ]]></description>
       <enclosure url="$URL" type="application/octet-stream" $ENCLOSURE_ATTRS />
