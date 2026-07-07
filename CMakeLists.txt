@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.13)  # kext link uses target_link_options (adde
 # (e.g. -pre.1 / -rc.1) that CMake's project(VERSION) can't hold, so keep the full
 # string here and feed project() only the numeric part. The .pkg name + version and
 # CI all derive from MT2_VERSION -- bump it here, tag v<MT2_VERSION> to match.
-set(MT2_VERSION "0.4.1")
+set(MT2_VERSION "0.4.2")
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MT2_VERSION_NUMERIC "${MT2_VERSION}")
 project(mt2 VERSION ${MT2_VERSION_NUMERIC} LANGUAGES C CXX)
 

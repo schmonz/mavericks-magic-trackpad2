@@ -21,6 +21,15 @@ static void run_tests(void) {
     /* Simulate a fresh process by clearing the marker: the next loader can then claim again. */
     unsetenv(MT2_SINGLE_LOAD_ENV);
     CHECK_EQ(mt2_claim_single_load(), 1);
+
+    /* Regression (2026-07-06): an INHERITED marker carries a FOREIGN pid (a child's pid != its
+     * parent's), or an older payload's presence-only "1". It must NOT be mistaken for an in-process
+     * claim — presence-only made whole fresh System Preferences instances stay inert (the About tab
+     * vanished across reopens). Seed a foreign marker; the next claim must still WIN, and only then do
+     * same-process copies bail. */
+    setenv(MT2_SINGLE_LOAD_ENV, "1", 1);          /* foreign/stale marker (also the old presence value) */
+    CHECK_EQ(mt2_claim_single_load(), 1);         /* ignore the foreign marker, claim fresh */
+    CHECK_EQ(mt2_claim_single_load(), 0);         /* now keyed to our pid -> siblings bail */
 }
 
 TEST_MAIN()
