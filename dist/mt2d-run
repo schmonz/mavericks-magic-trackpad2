@@ -123,16 +123,9 @@ log "attempting full-gesture mode"
 # BT + USB reader personalities bind the device on their own.
 "$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
 
-# INSTRUMENTATION (screensaver bug capture): enable logging so the BT connect/reconnect/enable timeline
-# (`tools/re conn-trace`) and the USB shim markers land in /var/log/system.log with wall-clock stamps
-# from boot — surviving reboots and kernel-buffer wrap. The oid is registered by the kext's start()
-# above, so it exists by the time kextload returns.
-#   LEVEL 2 (verbose, per-frame) — deliberately, NOT level 1: the bug reproduces within ~1-2s of the
-#   desktop appearing (screensaver engages almost immediately), a window so short that the once-only
-#   level-1 markers can't distinguish "frames flow, cursor dead" from "device silent". Level 2 logs
-#   every frame on BOTH transports through that window, which IS the capture. Volume is a non-issue for
-#   a boot-time repro. REVERT to `=1` (or `=0`) once we have one good capture. `=0` silences.
-/usr/sbin/sysctl -w debug.mt2_log=2 2>/dev/null || true
+# NOTE: kext diagnostics (debug.mt2_log) default OFF; the screensaver-capture boot-enable was removed
+# once that investigation concluded (not our bug). Enable on demand: `sudo sysctl debug.mt2_log=1`
+# (milestones / BT conn-trace) or `=2` (verbose per-frame, both transports). See mt2_diag / mt2_log.
 
 # NOTE: we deliberately do NOT touch the device's name here. The MT2 stores its own persistent name
 # (HID Feature report 0x55) and 10.9 surfaces it fine; the name is written ONLY on an explicit user
