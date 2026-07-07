@@ -43,6 +43,31 @@ static void wake_bt_mt2(void) {
     }
 }
 
+/* Post-update/post-reload BOUNCE: a full closeConnection -> openConnection on the MT2, forcing the BT
+ * link to re-open BOTH L2CAP channels (PSM 17 control + 19 interrupt) so our reader re-attaches and
+ * re-sends the multitouch enable. Distinct from wake_bt_mt2 (a plain openConnection): after a kext
+ * reload the baseband link is STILL UP but the multitouch stream has stalled, so openConnection no-ops
+ * with kBluetoothHCIErrorACLConnectionAlreadyExists (0x0b) and the user still has to click. A bounce
+ * ALWAYS re-establishes, which resumes the stream with no tap. Same primitive as tools/mt2_bt_bounce
+ * (proven safe for the reload case, [[mt2-reload-async-teardown-collision]]). */
+static void bounce_bt_mt2(void) {
+    @autoreleasepool {
+        NSArray *devs = [IOBluetoothDevice pairedDevices];
+        int n = 0;
+        for (IOBluetoothDevice *d in devs) {
+            if ([d getClassOfDevice] != MT2_COD) continue;
+            n++;
+            if ([d isConnected]) {
+                IOReturn rc = [d closeConnection];       /* synchronous: returns after the link is down */
+                NSLog(@"mt2_usb_bt_handoff: bounce closeConnection %@ -> 0x%08x", [d addressString], rc);
+            }
+            IOReturn ro = [d openConnection];            /* re-open -> re-run HID matching + our enable */
+            NSLog(@"mt2_usb_bt_handoff: bounce openConnection %@ -> 0x%08x", [d addressString], ro);
+        }
+        if (!n) NSLog(@"mt2_usb_bt_handoff: bounce — no paired CoD-0x594 MT2 found");
+    }
+}
+
 /* kIOTerminatedNotification callback: our USB reader instance(s) just went away = cable pulled. */
 static void usb_reader_terminated(void *refcon, io_iterator_t it) {
     (void)refcon;
@@ -62,6 +87,12 @@ int main(int argc, const char *argv[]) {
         for (int i = 1; i < argc; i++) {
             if (argv[i] && strcmp(argv[i], "--wake-once") == 0) {
                 wake_bt_mt2();
+                return 0;
+            }
+            /* Post-update: the link is up but the multitouch stream stalled across the kext reload, so a
+             * plain wake no-ops. Bounce (close+reopen) to force the re-establish + re-enable. */
+            if (argv[i] && strcmp(argv[i], "--bounce-once") == 0) {
+                bounce_bt_mt2();
                 return 0;
             }
         }

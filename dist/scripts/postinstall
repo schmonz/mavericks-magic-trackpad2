@@ -21,11 +21,12 @@ echo ok > "$STATE"
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST"
 
-# Post-update: wake the deep-idle BT MT2 so it resumes without a tap (best-effort; the tool
-# only touches a paired, reachable CoD-0x594 device and no-ops otherwise). Backgrounded + settle
-# so a powered-off device's page timeout can't stall the installer. Fires on fresh install too —
-# harmless there (paired-only, skip-connected).
-( sleep 3; /usr/local/libexec/mt2_usb_bt_handoff --wake-once >/dev/null 2>&1 ) &
+# Post-update: BOUNCE the BT MT2 (close+reopen) so it resumes without a tap. A plain wake no-ops here
+# because the kext reload leaves the baseband link UP but the multitouch stream stalled
+# (openConnection -> kBluetoothHCIErrorACLConnectionAlreadyExists 0x0b); the bounce forces a full
+# re-establish + re-enable. Best-effort (paired CoD-0x594 only, no-ops otherwise). Backgrounded +
+# settle so a powered-off device's page timeout can't stall the installer.
+( sleep 3; /usr/local/libexec/mt2_usb_bt_handoff --bounce-once >/dev/null 2>&1 ) &
 
 # USB->BT handoff daemon: wakes deep-idle Bluetooth on cable unplug (no click). Root LaunchDaemon,
 # runs regardless of GUI session. Best-effort — a UX feature, never fail the install on it.
