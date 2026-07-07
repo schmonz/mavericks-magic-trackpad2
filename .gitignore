@@ -3,6 +3,7 @@
 *.o
 *.d
 spike_bind
+.idea/
 
 # build outputs: unit tests -> build/tests/, pkg staging -> build/, the kext bundle
 build/
