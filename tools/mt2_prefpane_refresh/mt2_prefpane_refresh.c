@@ -811,6 +811,80 @@ static id mt2_make_button(CGRect frame, CFStringRef title, SEL action) {
 #define MT2_AR_CENTER_TOP  (1|4|8)
 #define MT2_W  520
 #define MT2_H  260
+#define MT2_TAG_VERLINK 55501   /* the "GitHub | <ver>" link button */
+#define MT2_TAG_HINT    55502   /* the "Update available" hint label */
+#define MT2_TAG_AUTOCHECK 55503 /* the "Check automatically" checkbox */
+
+/* The version actually installed on disk = the pkg-updated updater app's CFBundleShortVersionString.
+ * The About tab shows THIS (not the compile-baked MT2_VERSION_STR) so it reflects reality after an update
+ * even though this osax binary may be older. Returns a +1 CFString (caller releases) or NULL -> fall back
+ * to compile-baked. CF-only (no ObjC syntax) so it stays GC-neutral. */
+static CFStringRef mt2_installed_version_copy(void) {
+    CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
+        CFSTR("/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/Info.plist"),
+        kCFURLPOSIXPathStyle, false);
+    if (!url) return NULL;
+    CFReadStreamRef s = CFReadStreamCreateWithFile(kCFAllocatorDefault, url);
+    CFRelease(url);
+    if (!s) return NULL;
+    CFStringRef ver = NULL;
+    if (CFReadStreamOpen(s)) {
+        CFPropertyListRef pl = CFPropertyListCreateWithStream(kCFAllocatorDefault, s, 0,
+                                   kCFPropertyListImmutable, NULL, NULL);
+        if (pl) {
+            if (CFGetTypeID(pl) == CFDictionaryGetTypeID()) {
+                CFStringRef v = (CFStringRef)CFDictionaryGetValue((CFDictionaryRef)pl,
+                                    CFSTR("CFBundleShortVersionString"));
+                if (v && CFGetTypeID(v) == CFStringGetTypeID()) ver = CFStringCreateCopy(kCFAllocatorDefault, v);
+            }
+            CFRelease(pl);
+        }
+        CFReadStreamClose(s);
+    }
+    CFRelease(s);
+    return ver;
+}
+
+/* Fill buf with the installed version (updater Info.plist), or the compile-baked fallback. */
+static void mt2_version_cstr(char *buf, unsigned long n) {
+    CFStringRef iv = mt2_installed_version_copy();
+    if (iv && CFStringGetCString(iv, buf, (CFIndex)n, kCFStringEncodingUTF8)) { CFRelease(iv); return; }
+    if (iv) CFRelease(iv);
+    snprintf(buf, n, "%s", MT2_VERSION_STR);
+}
+
+/* Build the "GitHub | <ver>" attributed title: whole string small system font, right-aligned; only the
+ * "GitHub" run is a blue underlined link. Attribute keys by their string VALUES (no AppKit symbol link). */
+static id mt2_github_title(const char *ver) {
+    char gbuf[80];
+    snprintf(gbuf, sizeof gbuf, "GitHub | %s", ver);
+    CFStringRef gstr = CFStringCreateWithCString(kCFAllocatorDefault, gbuf, kCFStringEncodingUTF8);
+    id mas = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSMutableAttributedString"), sel_registerName("alloc"));
+    mas = ((id (*)(id, SEL, id))objc_msgSend)(mas, sel_registerName("initWithString:"), (id)gstr);
+    long fulllen = gstr ? CFStringGetLength(gstr) : 0;
+    if (gstr) CFRelease(gstr);
+    SEL addAttr = sel_registerName("addAttribute:value:range:");
+    CFRange full = CFRangeMake(0, fulllen);
+    CFRange link = CFRangeMake(0, 6);   /* "GitHub" */
+    Class fc = objc_getClass("NSFont");
+    id smallf = fc ? ((id (*)(Class, SEL, double))objc_msgSend)(fc, sel_registerName("systemFontOfSize:"), 11.0) : NULL;
+    if (smallf) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSFont"), smallf, full);
+    Class psCls = objc_getClass("NSMutableParagraphStyle");
+    id ps = psCls ? ((id (*)(Class, SEL))objc_msgSend)(psCls, sel_registerName("alloc")) : NULL;
+    if (ps) {
+        ps = ((id (*)(id, SEL))objc_msgSend)(ps, sel_registerName("init"));
+        ((void (*)(id, SEL, long))objc_msgSend)(ps, sel_registerName("setAlignment:"), 1);
+        ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSParagraphStyle"), ps, full);
+    }
+    Class colorCls = objc_getClass("NSColor");
+    id blue = colorCls ? ((id (*)(Class, SEL))objc_msgSend)(colorCls, sel_registerName("blueColor")) : NULL;
+    id num1 = ((id (*)(Class, SEL, int))objc_msgSend)(objc_getClass("NSNumber"), sel_registerName("numberWithInt:"), 1);
+    if (blue) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSColor"), blue, link);
+    ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSUnderline"), num1, link);
+    return mas;
+}
+
+static char gAboutVer[48] = "";   /* version currently shown in the About link (change-detect for refresh) */
 
 /* Build the About tab's container view + its controls, CENTERED. Big bold title on top, the update
  * controls + GitHub hyperlink centered, and the version tucked in the lower-right corner. Version from
@@ -848,46 +922,35 @@ static id mt2_build_about_view(void) {
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, sel_registerName("setButtonType:"), 3);
     ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTitle:"), (id)CFSTR("Check automatically"));
     if (ctlfont) ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setFont:"), ctlfont);
+    ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setTag:"), MT2_TAG_AUTOCHECK);
     ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setState:"), mt2_autocheck_enabled() ? 1 : 0);
     ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTarget:"), gPane);
     ((void (*)(id, SEL, SEL))objc_msgSend)(chk, sel_registerName("setAction:"), sel_registerName("mt2ToggleAutoCheck:"));
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, setMask, MT2_AR_CENTER_TOP);
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, chk);
 
-    /* Lower-right corner: ONE right-aligned "GitHub | <version>" control — clicking it opens the repo.
-     * Only the "GitHub" run is styled as a link (blue + underline); the rest is plain. One control (not
-     * two) removes the gap/float from separate frames. Small system font matches the pane's secondary
-     * text. Right-aligned via a paragraph style so it hugs the view's right edge. Attribute keys are the
-     * string VALUES ("NSFont"/"NSColor"/"NSUnderline"/"NSParagraphStyle") so we don't link AppKit symbols. */
-    char gbuf[64];
-    snprintf(gbuf, sizeof gbuf, "GitHub | %s", MT2_VERSION_STR);
-    CFStringRef gstr = CFStringCreateWithCString(kCFAllocatorDefault, gbuf, kCFStringEncodingUTF8);
-    id mas = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSMutableAttributedString"), sel_registerName("alloc"));
-    mas = ((id (*)(id, SEL, id))objc_msgSend)(mas, sel_registerName("initWithString:"), (id)gstr);
-    if (gstr) CFRelease(gstr);
-    SEL addAttr = sel_registerName("addAttribute:value:range:");
-    CFRange full = CFRangeMake(0, 9 + (long)strlen(MT2_VERSION_STR));  /* "GitHub | " + version */
-    CFRange link = CFRangeMake(0, 6);                                  /* "GitHub" */
-    Class fc = objc_getClass("NSFont");
-    id smallf = fc ? ((id (*)(Class, SEL, double))objc_msgSend)(fc, sel_registerName("systemFontOfSize:"), 11.0) : NULL;
-    if (smallf) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSFont"), smallf, full);
-    Class psCls = objc_getClass("NSMutableParagraphStyle");
-    id ps = psCls ? ((id (*)(Class, SEL))objc_msgSend)(psCls, sel_registerName("alloc")) : NULL;
-    if (ps) {
-        ps = ((id (*)(id, SEL))objc_msgSend)(ps, sel_registerName("init"));
-        ((void (*)(id, SEL, long))objc_msgSend)(ps, sel_registerName("setAlignment:"), 1);  /* right */
-        ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSParagraphStyle"), ps, full);
-    }
-    Class colorCls = objc_getClass("NSColor");
-    id blue = colorCls ? ((id (*)(Class, SEL))objc_msgSend)(colorCls, sel_registerName("blueColor")) : NULL;
-    id num1 = ((id (*)(Class, SEL, int))objc_msgSend)(objc_getClass("NSNumber"), sel_registerName("numberWithInt:"), 1);
-    if (blue) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSColor"), blue, link);
-    ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSUnderline"), num1, link);
+    /* "Update available" hint — centered below the checkbox, HIDDEN until an update is pending. The
+     * updater records MT2AvailableUpdateVersion when Sparkle finds one; mt2_about_refresh() (reconcile
+     * tick) fills + shows/hides this by tag. */
+    id hint = mt2_make_label(CGRectMake(0, 88, MT2_W, 18), NULL);
+    ((void (*)(id, SEL, long))objc_msgSend)(hint, setAlign, 2);            /* center */
+    if (ctlfont) ((void (*)(id, SEL, id))objc_msgSend)(hint, sel_registerName("setFont:"), ctlfont);
+    ((void (*)(id, SEL, long))objc_msgSend)(hint, sel_registerName("setTag:"), MT2_TAG_HINT);
+    ((void (*)(id, SEL, signed char))objc_msgSend)(hint, sel_registerName("setHidden:"), 1);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(hint, setMask, 2 | 8); /* width-sizable, top */
+    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, hint);
 
+    /* Lower-right corner: ONE right-aligned "GitHub | <version>" control — clicking it opens the repo.
+     * The version is the INSTALLED version (read from disk, not compile-baked), and the control is TAGGED
+     * so the reconcile tick can refresh the version live after an update. See mt2_github_title(). */
+    char vbuf[48];
+    mt2_version_cstr(vbuf, sizeof vbuf);
+    snprintf(gAboutVer, sizeof gAboutVer, "%s", vbuf);
     id gh = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSButton"), sel_registerName("alloc"));
     gh = ((id (*)(id, SEL, CGRect))objc_msgSend)(gh, sel_registerName("initWithFrame:"), CGRectMake(MT2_W-208, 12, 196, 16));
     ((void (*)(id, SEL, signed char))objc_msgSend)(gh, sel_registerName("setBordered:"), 0);
-    ((void (*)(id, SEL, id))objc_msgSend)(gh, sel_registerName("setAttributedTitle:"), mas);
+    ((void (*)(id, SEL, long))objc_msgSend)(gh, sel_registerName("setTag:"), MT2_TAG_VERLINK);
+    ((void (*)(id, SEL, id))objc_msgSend)(gh, sel_registerName("setAttributedTitle:"), mt2_github_title(vbuf));
     ((void (*)(id, SEL, id))objc_msgSend)(gh, sel_registerName("setTarget:"), gPane);
     ((void (*)(id, SEL, SEL))objc_msgSend)(gh, sel_registerName("setAction:"), sel_registerName("mt2OpenGitHub:"));
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(gh, setMask, 1 | 32);   /* pinned bottom-right */
@@ -933,6 +996,58 @@ static void mt2_inject_about_tab(id root) {
     LOG("about: injected About tab (4th) on %s", object_getClassName(tabview));
 }
 
+/* Live-refresh the About tab's dynamic bits from the reconcile tick: the displayed version tracks the
+ * INSTALLED version (right after an update, no reopen needed), and the "Update available" hint shows/hides
+ * from the version the updater recorded. Controls are re-found by TAG each call (no dangling refs across a
+ * pane rebuild). No-op if the About tab isn't present. */
+static void mt2_about_refresh(id root) {
+    if (!root) return;
+    id tabview = find_tabview(root, 0);
+    if (!tabview) return;
+    long idx = ((long (*)(id, SEL, id))objc_msgSend)(
+        tabview, sel_registerName("indexOfTabViewItemWithIdentifier:"), (id)CFSTR("MT2About"));
+    if (idx == LONG_MAX) return;                        /* About tab not present */
+    id item = ((id (*)(id, SEL, long))objc_msgSend)(tabview, sel_registerName("tabViewItemAtIndex:"), idx);
+    id view = item ? ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("view")) : NULL;
+    if (!view) return;
+
+    char cur[48];
+    mt2_version_cstr(cur, sizeof cur);
+
+    /* installed version changed -> rebuild the "GitHub | <ver>" link title */
+    if (strcmp(cur, gAboutVer) != 0) {
+        id link = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_VERLINK);
+        if (link) {
+            ((void (*)(id, SEL, id))objc_msgSend)(link, sel_registerName("setAttributedTitle:"), mt2_github_title(cur));
+            snprintf(gAboutVer, sizeof gAboutVer, "%s", cur);
+        }
+    }
+
+    /* keep the "Check automatically" checkbox in sync with the persisted setting, so an external change
+     * (the daily agent, a second window, a defaults write) never leaves it showing a stale state. */
+    id box = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_AUTOCHECK);
+    if (box) ((void (*)(id, SEL, long))objc_msgSend)(box, sel_registerName("setState:"), mt2_autocheck_enabled() ? 1 : 0);
+
+    /* "Update available" hint: show only if the updater recorded an available version that differs from
+     * what's installed (a lingering flag whose version == installed means we already updated -> hide). */
+    id hint = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_HINT);
+    if (!hint) return;
+    int show = 0;
+    CFPreferencesAppSynchronize(MT2_UPDATER_DOMAIN);
+    CFStringRef av = CFPreferencesCopyAppValue(CFSTR("MT2AvailableUpdateVersion"), MT2_UPDATER_DOMAIN);
+    if (av && CFGetTypeID(av) == CFStringGetTypeID()) {
+        char avc[48];
+        if (CFStringGetCString(av, avc, sizeof avc, kCFStringEncodingUTF8) && avc[0] && strcmp(avc, cur) != 0) {
+            char hbuf[80]; snprintf(hbuf, sizeof hbuf, "Update available: %s", avc);
+            CFStringRef hs = CFStringCreateWithCString(kCFAllocatorDefault, hbuf, kCFStringEncodingUTF8);
+            if (hs) { ((void (*)(id, SEL, id))objc_msgSend)(hint, sel_registerName("setStringValue:"), (id)hs); CFRelease(hs); }
+            show = 1;
+        }
+    }
+    if (av) CFRelease(av);
+    ((void (*)(id, SEL, signed char))objc_msgSend)(hint, sel_registerName("setHidden:"), show ? 0 : 1);
+}
+
 /* Hide the button — called from our own 2s reconcile tick so it fires regardless of whether the
  * pane's battery timer re-runs. Walk from the pane's mainView (covers whichever controller/tab owns
  * the button right now), and refresh the battery row on the same tick (belt for the render owner). */
@@ -945,7 +1060,7 @@ static void hide_battery_button_now(void) {
      * window contentView; fall back to mainView if the pane isn't in a window yet. */
     id win = ((id (*)(id, SEL))objc_msgSend)(mv, sel_registerName("window"));
     id root = win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : mv;
-    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mt2_render_battery(root); mt2_inject_about_tab(root); }
+    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mt2_render_battery(root); mt2_inject_about_tab(root); mt2_about_refresh(root); }
     /* NB: the /tmp/mt2_pane_dump view-tree dump lives ONLY in the aux tick (front window) so it works
      * on any pane, incl. Bluetooth; a second trigger here would consume the flag first on the Trackpad
      * pane and dump the wrong window. */

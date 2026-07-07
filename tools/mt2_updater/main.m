@@ -15,6 +15,16 @@
 - (void)setDelegate:(id)delegate;
 @end
 
+// The appcast item Sparkle hands to -updater:didFindValidUpdate:. We only read its display version.
+@interface SUAppcastItem : NSObject
+- (NSString *)displayVersionString;
+@end
+
+// The prefs key (in THIS app's own domain = com.schmonz.MavericksTrackpad2Updater) where we record the
+// version of an available update. The prefpane osax reads it to show an "Update available" hint. Set when
+// Sparkle finds an update (either check mode), cleared when we're up to date.
+static NSString *const kAvailableUpdateKey = @"MT2AvailableUpdateVersion";
+
 // Silent scheduled mode, selected by a `--background` argv flag (the LaunchAgent passes it). In this
 // mode Sparkle shows NO "You're up-to-date!" alert, so the "let the modal show first" dance below is
 // both unnecessary and undesirable -- we terminate immediately on a no-update result.
@@ -32,8 +42,21 @@ static NSString *const kRelaunchMarker = @"/tmp/.mt2updater-relaunched";
     [[NSData data] writeToFile:kRelaunchMarker atomically:YES];
 }
 - (void)terminateNow { [NSApp terminate:nil]; }
+- (void)updater:(SUUpdater *)updater didFindValidUpdate:(SUAppcastItem *)item {
+    (void)updater;
+    // Record the available version so the prefpane's About tab can show an "Update available" hint even
+    // if the user dismisses Sparkle's dialog without installing. Fires on both user + background checks.
+    NSString *v = [item respondsToSelector:@selector(displayVersionString)] ? [item displayVersionString] : nil;
+    if (v.length) {
+        [[NSUserDefaults standardUserDefaults] setObject:v forKey:kAvailableUpdateKey];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+}
 - (void)updaterDidNotFindUpdate:(SUUpdater *)updater {
     (void)updater;
+    // Up to date -> clear any stale "update available" hint the pane might be showing.
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:kAvailableUpdateKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
     // Background (scheduled) mode shows no alert -> nothing to wait for; exit right away so the
     // LSUIElement process never lingers.
     if (gBackground) { [NSApp terminate:nil]; return; }
