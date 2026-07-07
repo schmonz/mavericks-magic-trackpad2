@@ -87,7 +87,7 @@ int main(int argc, const char **argv) {
     }
     @autoreleasepool {
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];  /* normal foreground app (see Info.plist) */
 
         NSFileManager *fm = [NSFileManager defaultManager];
         if ([fm fileExistsAtPath:kRelaunchMarker]) {          // Sparkle relaunched us after installing the pkg

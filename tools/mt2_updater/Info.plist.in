@@ -25,8 +25,11 @@
 	<string>@MT2_VERSION@</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
-	<key>LSUIElement</key>
-	<true/>
+	<!-- A NORMAL foreground app (not LSUIElement). Sparkle's update flow assumes a standard
+	     LaunchServices-launched app: an LSUIElement accessory helper fought window foregrounding, and
+	     (with a fork+exec launch) its non-LaunchServices host made Sparkle's Autoupdate unable to detect
+	     the host quit -> the install hung. Being a normal app launched via `open` restores the standard,
+	     working flow. Cost: a brief Dock icon while checking/installing, which is the normal Sparkle UX. -->
 	<key>LSMinimumSystemVersion</key>
 	<string>10.9</string>
 	<key>SUFeedURL</key>

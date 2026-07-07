@@ -89,17 +89,18 @@ static int service_present(const char *cls) {
 /* Launch the shared Sparkle updater helper on demand (one shared copy, same path for the osax + SIMBL
  * routes). Fired by the About tab's "Check for Updates…" button (section 5b).
  *
- * Exec the helper's BINARY DIRECTLY — NOT via `open`/LaunchServices. The helper is an LSUIElement /
- * accessory app; when launched through `open` from inside System Preferences it comes up with NO
- * foreground window (System Prefs just defocuses and nothing appears — confirmed on-device 2026-07-06,
- * both from the pane and a terminal `open`). A direct exec lets the helper's own
- * -[NSApp activateIgnoringOtherApps:] bring the Sparkle dialog to the front (a direct exec DID show it). */
+ * Launch via `open` (LaunchServices), NOT a direct fork+exec of the binary. Sparkle's update flow needs
+ * the host to be a normal LaunchServices-registered app: Sparkle's Autoupdate helper waits for the host
+ * to terminate (then installs the pkg + relaunches) through LaunchServices, so a direct-exec'd
+ * (non-registered) host makes Autoupdate hang forever and the install NEVER happens (root-caused
+ * on-device 2026-07-06: Autoupdate stuck waiting on a host pid that had already exited). The updater is
+ * now a normal foreground app (not LSUIElement), so `open` also brings its Sparkle dialog to the front. */
 static void mt2_launch_updater(void) {
-    const char *bin = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater";
-    if (access(bin, X_OK) != 0) { LOG("updater: %s not installed", bin); return; }
+    const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
+    if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
     pid_t pid = fork();
-    if (pid == 0) { execl(bin, bin, (char *)NULL); _exit(127); }  /* fork+exec: child only calls exec/_exit */
-    LOG("updater: launched %s (direct exec)", bin);
+    if (pid == 0) { execl("/usr/bin/open", "open", app, (char *)NULL); _exit(127); }
+    LOG("updater: launched %s (via open)", app);
 }
 
 /* The front window's contentView (any pane, incl. Bluetooth — gPane only tracks Trackpad). */
@@ -858,37 +859,6 @@ static void mt2_version_cstr(char *buf, unsigned long n) {
     snprintf(buf, n, "%s", MT2_VERSION_STR);
 }
 
-/* Build the "GitHub | <ver>" attributed title: whole string small system font, right-aligned; only the
- * "GitHub" run is a blue underlined link. Attribute keys by their string VALUES (no AppKit symbol link). */
-static id mt2_github_title(const char *ver) {
-    char gbuf[80];
-    snprintf(gbuf, sizeof gbuf, "GitHub | %s", ver);
-    CFStringRef gstr = CFStringCreateWithCString(kCFAllocatorDefault, gbuf, kCFStringEncodingUTF8);
-    id mas = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSMutableAttributedString"), sel_registerName("alloc"));
-    mas = ((id (*)(id, SEL, id))objc_msgSend)(mas, sel_registerName("initWithString:"), (id)gstr);
-    long fulllen = gstr ? CFStringGetLength(gstr) : 0;
-    if (gstr) CFRelease(gstr);
-    SEL addAttr = sel_registerName("addAttribute:value:range:");
-    CFRange full = CFRangeMake(0, fulllen);
-    CFRange link = CFRangeMake(0, 6);   /* "GitHub" */
-    Class fc = objc_getClass("NSFont");
-    id smallf = fc ? ((id (*)(Class, SEL, double))objc_msgSend)(fc, sel_registerName("systemFontOfSize:"), 11.0) : NULL;
-    if (smallf) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSFont"), smallf, full);
-    Class psCls = objc_getClass("NSMutableParagraphStyle");
-    id ps = psCls ? ((id (*)(Class, SEL))objc_msgSend)(psCls, sel_registerName("alloc")) : NULL;
-    if (ps) {
-        ps = ((id (*)(id, SEL))objc_msgSend)(ps, sel_registerName("init"));
-        ((void (*)(id, SEL, long))objc_msgSend)(ps, sel_registerName("setAlignment:"), 1);
-        ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSParagraphStyle"), ps, full);
-    }
-    Class colorCls = objc_getClass("NSColor");
-    id blue = colorCls ? ((id (*)(Class, SEL))objc_msgSend)(colorCls, sel_registerName("blueColor")) : NULL;
-    id num1 = ((id (*)(Class, SEL, int))objc_msgSend)(objc_getClass("NSNumber"), sel_registerName("numberWithInt:"), 1);
-    if (blue) ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSColor"), blue, link);
-    ((void (*)(id, SEL, id, id, CFRange))objc_msgSend)(mas, addAttr, (id)CFSTR("NSUnderline"), num1, link);
-    return mas;
-}
-
 static char gAboutVer[48] = "";   /* version currently shown in the About link (change-detect for refresh) */
 
 /* Build the About tab's container view + its controls, CENTERED. Big bold title on top, the update
@@ -945,21 +915,22 @@ static id mt2_build_about_view(void) {
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(hint, setMask, 2 | 8); /* width-sizable, top */
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, hint);
 
-    /* Lower-right corner: ONE right-aligned "GitHub | <version>" control — clicking it opens the repo.
-     * The version is the INSTALLED version (read from disk, not compile-baked), and the control is TAGGED
-     * so the reconcile tick can refresh the version live after an update. See mt2_github_title(). */
+    /* Lower-right corner: just the version number, plain + inert, right-aligned so it hugs the edge as the
+     * version changes. Carries the tag the reconcile tick updates after an install. (No GitHub link — the
+     * repo link lived here but its click area/placement read poorly; dropped per user.) */
     char vbuf[48];
     mt2_version_cstr(vbuf, sizeof vbuf);
     snprintf(gAboutVer, sizeof gAboutVer, "%s", vbuf);
-    id gh = ((id (*)(Class, SEL))objc_msgSend)(objc_getClass("NSButton"), sel_registerName("alloc"));
-    gh = ((id (*)(id, SEL, CGRect))objc_msgSend)(gh, sel_registerName("initWithFrame:"), CGRectMake(MT2_W-208, 12, 196, 16));
-    ((void (*)(id, SEL, signed char))objc_msgSend)(gh, sel_registerName("setBordered:"), 0);
-    ((void (*)(id, SEL, long))objc_msgSend)(gh, sel_registerName("setTag:"), MT2_TAG_VERLINK);
-    ((void (*)(id, SEL, id))objc_msgSend)(gh, sel_registerName("setAttributedTitle:"), mt2_github_title(vbuf));
-    ((void (*)(id, SEL, id))objc_msgSend)(gh, sel_registerName("setTarget:"), gPane);
-    ((void (*)(id, SEL, SEL))objc_msgSend)(gh, sel_registerName("setAction:"), sel_registerName("mt2OpenGitHub:"));
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(gh, setMask, 1 | 32);   /* pinned bottom-right */
-    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, gh);
+    CFStringRef vs = CFStringCreateWithCString(kCFAllocatorDefault, vbuf, kCFStringEncodingUTF8);
+    id ver = mt2_make_label(CGRectMake(MT2_W-80, 12, 68, 16), vs);
+    if (vs) CFRelease(vs);
+    Class vfCls = objc_getClass("NSFont");
+    id vfont = vfCls ? ((id (*)(Class, SEL, double))objc_msgSend)(vfCls, sel_registerName("systemFontOfSize:"), 11.0) : NULL;
+    if (vfont) ((void (*)(id, SEL, id))objc_msgSend)(ver, sel_registerName("setFont:"), vfont);
+    ((void (*)(id, SEL, long))objc_msgSend)(ver, setAlign, 1);          /* right — hugs the edge */
+    ((void (*)(id, SEL, long))objc_msgSend)(ver, sel_registerName("setTag:"), MT2_TAG_VERLINK);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(ver, setMask, 1 | 32);   /* pinned bottom-right */
+    ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, ver);
     return v;
 }
 
@@ -1019,11 +990,12 @@ static void mt2_about_refresh(id root) {
     char cur[48];
     mt2_version_cstr(cur, sizeof cur);
 
-    /* installed version changed -> rebuild the "GitHub | <ver>" link title */
+    /* installed version changed -> update the " | <ver>" label (right-aligned, so no reposition needed) */
     if (strcmp(cur, gAboutVer) != 0) {
-        id link = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_VERLINK);
-        if (link) {
-            ((void (*)(id, SEL, id))objc_msgSend)(link, sel_registerName("setAttributedTitle:"), mt2_github_title(cur));
+        id lbl = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_VERLINK);
+        if (lbl) {
+            CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, cur, kCFStringEncodingUTF8);
+            if (s) { ((void (*)(id, SEL, id))objc_msgSend)(lbl, sel_registerName("setStringValue:"), (id)s); CFRelease(s); }
             snprintf(gAboutVer, sizeof gAboutVer, "%s", cur);
         }
     }
