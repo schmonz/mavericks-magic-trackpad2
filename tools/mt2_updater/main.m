@@ -89,22 +89,31 @@ int main(int argc, const char **argv) {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];  /* normal foreground app (see Info.plist) */
 
+        // Sparkle relaunched us after a successful install (it dropped a marker in
+        // updaterWillRelaunchApplication:). Show one "you're updated" confirmation, since the update
+        // changed the kext/daemon/pane, not this helper, so there's otherwise NO visible signal.
+        // ROBUSTNESS: ALWAYS remove the marker, and only honor it if it's FRESH — a stale marker left by an
+        // interrupted/killed flow otherwise made EVERY later launch pop a bogus "updated" dialog and skip
+        // the check (it once showed "updated to 0.4.0" when nothing had installed). Read the ACTUAL
+        // installed version: the pkg replaced this app too, so our own bundle version IS the new version.
         NSFileManager *fm = [NSFileManager defaultManager];
-        if ([fm fileExistsAtPath:kRelaunchMarker]) {          // Sparkle relaunched us after installing the pkg
-            [fm removeItemAtPath:kRelaunchMarker error:NULL];
-            // The update changed the kext/daemon/pane, not this helper, so there's nothing to "return to" —
-            // and the user otherwise gets NO signal the driver updated. Show one clear confirmation, then
-            // exit. The pkg replaced this app too, so our own bundle version IS the just-installed version.
-            [NSApp activateIgnoringOtherApps:YES];
-            NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-            NSAlert *done = [[NSAlert alloc] init];
-            [done setMessageText:@"Mavericks Trackpad 2 updated"];
-            [done setInformativeText:(ver.length
-                ? [NSString stringWithFormat:@"The trackpad driver was updated to version %@ and is ready to use.", ver]
-                : @"The trackpad driver was updated and is ready to use.")];
-            [done addButtonWithTitle:@"OK"];
-            [done runModal];
-            return 0;
+        if ([fm fileExistsAtPath:kRelaunchMarker]) {
+            NSDate *stamp = [[fm attributesOfItemAtPath:kRelaunchMarker error:NULL] fileModificationDate];
+            [fm removeItemAtPath:kRelaunchMarker error:NULL];               // always clear — never let it persist
+            BOOL fresh = stamp && [[NSDate date] timeIntervalSinceDate:stamp] < 300.0;
+            if (fresh && !gBackground) {
+                [NSApp activateIgnoringOtherApps:YES];
+                NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+                NSAlert *done = [[NSAlert alloc] init];
+                [done setMessageText:@"Mavericks Trackpad 2 updated"];
+                [done setInformativeText:(ver.length
+                    ? [NSString stringWithFormat:@"The trackpad driver was updated to version %@ and is ready to use.", ver]
+                    : @"The trackpad driver was updated and is ready to use.")];
+                [done addButtonWithTitle:@"OK"];
+                [done runModal];
+                return 0;
+            }
+            // stale marker (or background mode) -> fall through to a normal check
         }
 
         // The About-tab "Check automatically" checkbox is the SINGLE control for auto-updates (default OFF).
