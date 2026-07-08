@@ -28,7 +28,7 @@
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
 #include "mt2_usb_decode.h"            /* mt2_usb_decode -> VoodooInputEvent (the decode seam) */
-#include "mt2_usb_reframe.h"           /* mt2_usb_click_report + absence-frame helpers */
+#include "mt2_usb_reframe.h"           /* mt2_apple_checksum + mt2_usb_click_report */
 #include "mt1_encode.h"
 #include "MT2Gesture.h"                /* engine: connectionEstablished/submitFrame + sink type */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
@@ -69,23 +69,13 @@ static IOService *gUsbReader = 0;
  * because of the session lock but because every access happens on the ONE thread that can run
  * mt2_usb_handle_report (the genuine driver's interrupt-read completion; one outstanding read
  * per pipe, re-armed serially — the same single-caller invariant the retired gLastUsbButton
- * edge state relied on). The pump bypasses the shim and never touches these. If a second
- * concurrent handleReport caller ever appears, these would mix type/options between calls. */
+ * edge state relied on). If a second concurrent handleReport caller ever appears, these would
+ * mix type/options between calls. */
 static IOReturn           gChainRc      = kIOReturnSuccess;
 static IOHIDReportType    gChainType    = kIOHIDReportTypeInput;
 static IOOptionBits       gChainOptions = 0;
 
-/* Post-liftoff absence-frame pump: after the device falls silent at liftoff we emit zero-contact
- * frames so the recognizer's deferred per-frame tap commits (2-finger secondary click) don't starve.
- * A real report re-arms the silence timer, so we never pump during a gesture — see explanation.md
- * "MT2USBReader bring-up". */
-#define USB_PUMP_SILENCE_MS   20               /* fire this long after the last real report */
-#define USB_PUMP_INTERVAL_MS  15               /* spacing between pumped absence frames */
-#define USB_PUMP_FRAMES       30               /* ~30 * 15ms = ~450ms window */
-static IOWorkLoop          *gUsbWorkLoop = 0;
-static IOTimerEventSource  *gPumpTimer   = 0;
-static void                *gGenuineSelf = 0;  /* the genuine driver instance (handleReport target) */
-static volatile int         gPumpBudget  = 0;  /* absence frames left to pump after silence */
+static void                *gGenuineSelf = 0;  /* the genuine driver instance = the USB sink's handleReport/handleButton target */
 
 static uint32_t usb_ts_22bit(void) {
     clock_sec_t s; clock_usec_t u;
@@ -163,11 +153,6 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     if (gActiveMT2Gesture && gUsbReader)
         gActiveMT2Gesture->submitFrame(gUsbReader, &frame);
     IOReturn rc = gChainRc;
-
-    /* A real report just arrived: refill the pump budget and (re)arm the silence timer, so the
-     * post-liftoff absence pump fires only after the device falls quiet — never during a gesture. */
-    gPumpBudget = USB_PUMP_FRAMES;
-    if (gPumpTimer) gPumpTimer->setTimeoutMS(USB_PUMP_SILENCE_MS);
     return rc;
 }
 
@@ -177,24 +162,6 @@ static const mt2_splice_row_t kUsbHandleReportRow = {
     USB_HANDLEREPORT_SLOT_INDEX, (void *)&mt2_usb_handle_report,
     /*slot2*/0, /*shim2*/0, USB_VTABLE_SPAN
 };
-
-/* Timer callback (workloop): the device has been silent for USB_PUMP_SILENCE_MS. Emit one zero-contact
- * absence frame into the genuine driver's handleReport so the recognizer's deferred per-frame commit
- * checks keep running through the double-tap window, then re-arm until the budget is spent. */
-static void mt2_usb_pump_action(OSObject * /*owner*/, IOTimerEventSource *ts) {
-    if (gPumpBudget <= 0 || !gOrigUsbHandleReport || !gGenuineSelf) return;
-    uint8_t out[64]; size_t outlen = 0;
-    if (mt2_usb_make_absence_frame(usb_ts_22bit(), out, sizeof(out), &outlen) == 0) {
-        IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);
-        if (md) {
-            md->setLength(outlen);
-            md->writeBytes(0, out, outlen);
-            gOrigUsbHandleReport(gGenuineSelf, md, kIOHIDReportTypeInput, 0);
-            md->release();
-        }
-    }
-    if (--gPumpBudget > 0 && ts) ts->setTimeoutMS(USB_PUMP_INTERVAL_MS);
-}
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2USBReader, IOService)
 
@@ -315,9 +282,8 @@ static const gh_adapter_t kUsbAdapter = {
 
 /* Genuine-USB path, as a sequence of named steps (named alike to MT2BTReader where the action matches):
  * reset per-stream diagnostics, send the MT2 multitouch-enable, settle, host + interpose the genuine
- * driver, join the shared engine, arm the absence pump. The enable→settle→start ORDER is load-bearing
- * (panic hardening) — preserve it. The genuine driver OWNS the interface + interrupt pipe; our reader
- * must NOT open them. */
+ * driver, join the shared engine. The enable→settle→start ORDER is load-bearing (panic hardening) —
+ * preserve it. The genuine driver OWNS the interface + interrupt pipe; our reader must NOT open them. */
 bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     (void)provider;
 
@@ -326,6 +292,8 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     settle();                       /* device leaves mouse mode before the AMD probes it */
     if (!manualStartGenuineAmd())   /* host the genuine AMD + interpose handleReport */
         return false;
+
+    gGenuineSelf = fGenuine;   /* the USB sink's handleReport/handleButton target */
 
     /* Join the shared engine: register our policy row + sink, reset per-stream session state
        (replaces the old mt2_usb_reframe_reset/gLastUsbButton reset — one reset point now).
@@ -339,8 +307,6 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
         gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING, &mt2_policy_usb, &kUsbSink);
     else
         IOLog("MT2USBReader: ENGINE NOT PUBLISHED at bring-up — input will be dead until replug (registration race)\n");
-
-    armAbsencePump();               /* post-liftoff absence-frame heartbeat (deferred tap commits) */
 
     IOLog("MT2USBReader: genuine AppleUSBMultitouchDriver started + handleReport interposed (slot %lu)\n",
           (unsigned long)USB_HANDLEREPORT_SLOT_INDEX);
@@ -389,35 +355,14 @@ bool com_schmonz_MT2USBReader::manualStartGenuineAmd() {
     return true;
 }
 
-/* Step: arm the post-liftoff absence-frame pump — a workloop timer that keeps a brief frame heartbeat
- * alive after the device falls silent, so deferred tap commits (2-finger TAP secondary click) fire
- * instead of starving. Best-effort — if setup fails, the rest still works. */
-void com_schmonz_MT2USBReader::armAbsencePump() {
-    gGenuineSelf = fGenuine;
-    gPumpBudget  = 0;
-    gUsbWorkLoop = IOWorkLoop::workLoop();
-    if (gUsbWorkLoop) {
-        gPumpTimer = IOTimerEventSource::timerEventSource(this, &mt2_usb_pump_action);
-        if (gPumpTimer && gUsbWorkLoop->addEventSource(gPumpTimer) != kIOReturnSuccess) {
-            gPumpTimer->release(); gPumpTimer = 0;
-        }
-    }
-}
-
 /* Reverse startGenuine; idempotent. MUST run during willTerminate (device unplug / re-enumerate): IOKit
  * defers stop() until the interface is released, so a stop()-only teardown deadlocks and leaks the dead
  * device subtree — see explanation.md "MT2USBReader bring-up". We never opened fIntf (the genuine driver
  * did), so we only null it, never close it. */
 void com_schmonz_MT2USBReader::releaseInterface(void) {
-    /* Stop the absence pump FIRST: cancel + remove from the workloop so no pumped frame can race the
-     * teardown below (it touches gGenuineSelf / gOrigUsbHandleReport). Then drop the workloop. */
-    if (gPumpTimer) {
-        gPumpTimer->cancelTimeout();
-        if (gUsbWorkLoop) gUsbWorkLoop->removeEventSource(gPumpTimer);
-        gPumpTimer->release(); gPumpTimer = 0;
-    }
-    if (gUsbWorkLoop) { gUsbWorkLoop->release(); gUsbWorkLoop = 0; }
-    gPumpBudget = 0; gGenuineSelf = 0;
+    /* Clear the sink's chain target: the USB sink no-ops once gGenuineSelf is null, so no feed can
+     * reach a dying target during the teardown below. */
+    gGenuineSelf = 0;
 
     /* Deregister from the engine BEFORE the vtable restore: after connectionClosed returns, no
        session effect can reach kUsbSink, so gh_stop can never race a feed into a dying target. */

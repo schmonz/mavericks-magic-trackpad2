@@ -27,7 +27,6 @@ class com_schmonz_MT2USBReader : public IOService {
     void sendEnable(void);                /* MT2 USB multitouch-enable (control transfer) */
     void settle(void);                    /* let the device leave mouse mode before the AMD probes */
     bool manualStartGenuineAmd(void);     /* host a genuine AppleUSBMultitouchDriver on the interface */
-    void armAbsencePump(void);            /* post-liftoff absence-frame heartbeat */
 public:
     virtual bool start(IOService *provider) override;
     /* Release the interface here, NOT just in stop(): on device unplug/re-enumerate
