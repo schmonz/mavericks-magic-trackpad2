@@ -5,7 +5,7 @@
  * user-client, via the init dict), and send the MT2 0x02 USB multitouch-enable. SHARED
  * ENGINE (the ~97%) is what the seam feeds. There is ONE seam: mt2_usb_handle_report runs
  * in place of the genuine driver's handleReport, reframes each raw MT2 0x02 report by handing
- * the decoded VoodooInputEvent to the shared session engine (policy row mt2_policy_usb) whose
+ * the decoded VoodooInputEvent to the shared session engine (policy row mt2_policy_default) whose
  * registered sink re-encodes + chains the original. Apple's driver owns the interface +
  * interrupt pipe and does all the contact/gesture/cursor work; we only translate the stream
  * at its seam.
@@ -85,7 +85,7 @@ static uint32_t usb_ts_22bit(void) {
 
 /* USB transport sink (registered with the engine at connectionEstablished; calls arrive under
  * the session lock). feed_frame is the second half of the old usb_assemble_compactv4: mt1_encode
- * the session-conditioned frame (session policy row mt2_policy_usb reproduces the old assembly's
+ * the session-conditioned frame (session policy row mt2_policy_default reproduces the old assembly's
  * conditioning byte-for-byte — proven by a parallel-run oracle before the old assembly was deleted,
  * and permanently re-pinned by tests/test_reader_characterization.c's unchanged goldens), append Apple's
  * checksum, wrap, and chain the ORIGINAL handleReport. post_click drives the self-driven
@@ -121,7 +121,7 @@ static const mt2_transport_sink_t kUsbSink =
 /* THE SEAM (the reframe splice): runs in place of the genuine driver's handleReport (usb_gh_interpose
  * points the vtable slot here). Read the raw MT2 0x02 report, then — structurally mirroring the BT
  * reader (mt2_bt_decode -> submitFrame) — hand the decoded VoodooInputEvent to the shared session
- * (policy row mt2_policy_usb); the registered kUsbSink encodes + checksums + chains the original.
+ * (policy row mt2_policy_default); the registered kUsbSink encodes + checksums + chains the original.
  * Non-touch reports pass through untouched. extern "C" free fn; first arg is `this`. */
 extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report,
                                           IOHIDReportType type, IOOptionBits options) {
@@ -142,7 +142,7 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     mt2_diag_frame(MT2_DIAG_USB, &frame, /*want_first=*/true);   /* pre-session, matching BT's diag point */
 
     /* Cross the seam, structurally identical to BT's shim: the SHARED session conditions the
-       frame (mt2_policy_usb = the old assembly byte-for-byte) and kUsbSink chains the original
+       frame (mt2_policy_default = the old assembly byte-for-byte) and kUsbSink chains the original
        handleReport, capturing its IOReturn so the USB stack still sees Apple's real status.
        The physical-button edge now comes from the session's click path (same report[1] bit0,
        via mt2_decode) instead of the retired raw-byte detector. A session-dropped frame is
@@ -304,7 +304,7 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
        the old code's first consumer was this same instant. */
     gUsbReader = this;
     if (gActiveMT2Gesture)
-        gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING, &mt2_policy_usb, &kUsbSink);
+        gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING, &mt2_policy_default, &kUsbSink);
     else
         IOLog("MT2USBReader: ENGINE NOT PUBLISHED at bring-up — input will be dead until replug (registration race)\n");
 

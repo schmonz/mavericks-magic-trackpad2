@@ -26,28 +26,28 @@ static void run_tests(void) {
        no startup delay. The gate mechanism is retained (mt2_settle_passed, covered in
        test_pipeline) as a zero-cost seam should a future device ever need it. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 1000);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 1000);
       VoodooInputEvent f=one(50);
       mt2_session_frame(&s, BT, &f, 1000, &k); CHECK_EQ(r.n_feed, 1);   /* flows at connect, no gate */
       mt2_session_frame(&s, BT, &f, 1500, &k); CHECK_EQ(r.n_feed, 2); } /* keeps flowing */
 
     /* single-active guard: non-active source ignored */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
       VoodooInputEvent f=one(50);
       mt2_session_frame(&s, BT,  &f, 9999, &k); CHECK_EQ(r.n_feed, 0);
       mt2_session_frame(&s, USB, &f, 9999, &k); CHECK_EQ(r.n_feed, 1); }
 
     /* A lone lift frame with no contact ever down produces nothing (no phantom feed). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
       VoodooInputEvent lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
       mt2_session_frame(&s, USB, &lift, 5000, &k);
       CHECK_EQ(r.n_feed, 0); CHECK_EQ(r.n_arm, 0); }
 
     /* click: two-finger press -> secondary then feed (post-settle) */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
       VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20; f.isPhysicalButtonDown=1;
       mt2_session_frame(&s, USB, &f, 5000, &k);
@@ -55,7 +55,7 @@ static void run_tests(void) {
 
     /* EVENT_DRIVEN real contact: lift-drop applied, feed, arm IDLE */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
       VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=70; f.transducers[1].currentCoordinates.pressure=0;   /* one lifted */
       mt2_session_frame(&s, BT, &f, 5000, &k);
@@ -75,7 +75,7 @@ static void run_tests(void) {
        0). Two ABSENCE frames do NOT double handleChordLiftoff (only the first absence is a lift
        transition; the 2nd is "still no contact"). Arms NO watchdog (cleanly lifted). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
       VoodooInputEvent real=one(70); mt2_session_frame(&s, BT, &real, 5000, &k);
       rec_t r2={0}; k=mk(&r2);
       VoodooInputEvent lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
@@ -91,8 +91,8 @@ static void run_tests(void) {
     /* source switch: a late frame from the OLD source is dropped after reconnect to a new one
        (the real regression the single-active guard defends — the transport-handoff window) */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
-      mt2_session_connect(&s, BT,  MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);   /* handoff: BT is now active */
+      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+      mt2_session_connect(&s, BT,  MT2_EVENT_DRIVEN, &mt2_policy_default, 0);   /* handoff: BT is now active */
       VoodooInputEvent f=one(50);
       mt2_session_frame(&s, USB, &f, 5000, &k); CHECK_EQ(r.n_feed, 0);   /* stale USB frame dropped */
       mt2_session_frame(&s, BT,  &f, 5000, &k); CHECK_EQ(r.n_feed, 1); } /* BT flows */
@@ -101,10 +101,10 @@ static void run_tests(void) {
        so there is no re-gate: frames flow immediately after a reconnect too. The boot
        flap-storm guard is unneeded — cold-boot measurement found no post-connect burst. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
       VoodooInputEvent f=one(50);
       mt2_session_frame(&s, BT, &f, 5000, &k); CHECK_EQ(r.n_feed, 1);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 10000);             /* reconnect */
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 10000);             /* reconnect */
       rec_t r2={0}; k=mk(&r2);
       mt2_session_frame(&s, BT, &f, 10000, &k); CHECK_EQ(r2.n_feed, 1);  /* flows at reconnect, no re-gate */
       mt2_session_frame(&s, BT, &f, 10500, &k); CHECK_EQ(r2.n_feed, 2); }/* keeps flowing */
@@ -112,7 +112,7 @@ static void run_tests(void) {
     /* lifecycle: a new contact's FIRST emitted frame is TS_START (MakeTouch),
        subsequent frames are TS_TOUCHING -- the transition tap-to-click needs. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
       VoodooInputEvent f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=3; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].state=TS_TOUCHING;
       mt2_session_frame(&s, BT, &f, 5000, &k);
@@ -122,7 +122,7 @@ static void run_tests(void) {
 
     /* lifecycle (STREAMING/USB too): first frame of a contact -> TS_START */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
       VoodooInputEvent f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=7; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].state=TS_TOUCHING;
       mt2_session_frame(&s, USB, &f, 5000, &k);
@@ -134,7 +134,7 @@ static void run_tests(void) {
        frame arrives), the armed timer flushes the lift. A full lift emits ONE absence frame
        (the flushed contacts are all BreakTouch -> emit absence only, not BreakTouch+absence). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
       VoodooInputEvent f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=2; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=88; f.transducers[0].state=TS_TOUCHING;
       mt2_session_frame(&s, BT, &f, 5000, &k);             /* contact down -> START + arm watchdog */
@@ -147,15 +147,15 @@ static void run_tests(void) {
 
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+      mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
       VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20; f.isPhysicalButtonDown=1;
       mt2_session_frame(&s, BT, &f, 5000, &k);
       CHECK_EQ(r.n_click, 1); CHECK_EQ(r.last_mask, 0x2u); CHECK_EQ(r.n_feed, 1); }
 
-    /* The convergence flips (2026-07) collapsed the USB row onto the BT row: mt2_policy_usb
-       now equals mt2_policy_bt field-for-field, so the three USB-row difference cases that
-       pinned the old divergence (PASSTHROUGH liftoff / empties emitted / no watchdog) were
-       retired. The BT-row cases above already cover the unified behavior. */
+    /* The convergence flips (2026-07) collapsed the two transport rows into one shared
+       mt2_policy_default, so the three USB-row difference cases that pinned the old divergence
+       (PASSTHROUGH liftoff / empties emitted / no watchdog) were retired. The cases above
+       already cover the unified behavior. */
 }
 TEST_MAIN()

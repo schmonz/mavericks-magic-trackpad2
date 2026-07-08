@@ -57,7 +57,7 @@ static VoodooInputEvent contact(int x, int pressure, int button) {
  *    mt2_click_changed in src/mt2_pipeline.c: button-down 1 finger => 0x1, release => 0x0.) */
 static void s1_button_edge_post_click(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
 
     VoodooInputEvent f0 = contact(50, 20, 0);  mt2_session_frame(&s, USB, &f0, 5000, &k);
     VoodooInputEvent f1 = contact(50, 20, 1);  mt2_session_frame(&s, USB, &f1, 5005, &k);
@@ -80,7 +80,7 @@ static void s1_button_edge_post_click(void) {
  *    the click posts before the frame and carries 0x2. */
 static void s2_twofinger_secondary_mask(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
     VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
     f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20;
     f.isPhysicalButtonDown=1;
@@ -96,7 +96,7 @@ static void s2_twofinger_secondary_mask(void) {
  *    flows. This pins that the gate blocks EVERYTHING, not just the frame. */
 static void s3_settle_gate_blocks(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
     s.settle_until_ms = 1000;                       /* seed a non-zero gate window */
     VoodooInputEvent f = contact(50, 20, 1);
     mt2_session_frame(&s, USB, &f, 999, &k);        /* before settle: dropped whole */
@@ -110,7 +110,7 @@ static void s3_settle_gate_blocks(void) {
  *    before the gate/lifecycle; the active source flows. */
 static void s4_single_source_guard(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_bt, 0);
+    mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
     VoodooInputEvent f = contact(50, 20, 0);
     mt2_session_frame(&s, BT,  &f, 5000, &k);  CHECK_EQ(r.n, 0);   /* foreign source: nothing */
     mt2_session_frame(&s, USB, &f, 5000, &k);  CHECK_EQ(r.n, 2);   /* active source: FEED + ARM */
@@ -124,7 +124,7 @@ static void s4_single_source_guard(void) {
  *    lifted, prev_ids cleared). */
 static void s5_full_lift_absence_pump(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-    mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+    mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
     VoodooInputEvent down = contact(70, 20, 0);
     mt2_session_frame(&s, BT, &down, 5000, &k);      /* START + arm */
     r.n = 0;                                         /* isolate the lift */
@@ -142,7 +142,7 @@ static void s5_full_lift_absence_pump(void) {
  *    the timer and the timer produced the lift. */
 static void s6_timer_watchdog_flush(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-    mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_bt, 0);
+    mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
     VoodooInputEvent f; memset(&f,0,sizeof f);
     f.contact_count=1; f.transducers[0].id=2; f.transducers[0].currentCoordinates.pressure=20;
     f.transducers[0].currentCoordinates.x=88;

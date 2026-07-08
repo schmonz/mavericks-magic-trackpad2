@@ -1,8 +1,7 @@
 #include "mt2_session.h"
 
-const mt2_session_policy_t mt2_policy_bt  = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
-/* Now field-for-field identical to mt2_policy_bt (a later commit collapses the two rows). */
-const mt2_session_policy_t mt2_policy_usb = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
+/* The single MT2 conditioning policy — both transports converged to it. */
+const mt2_session_policy_t mt2_policy_default = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
 
 void mt2_session_connect(mt2_session_t *s, uintptr_t source,
                          mt2_transport_mode_t mode,

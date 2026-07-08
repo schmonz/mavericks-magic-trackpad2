@@ -141,9 +141,9 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSession.mode = MT2_EVENT_DRIVEN;
     fSession.settle_until_ms = 0;
     fSession.last_button = 0;
-    fSession.policy = mt2_policy_bt;   /* inert default — active_source==0 drops all frames until
+    fSession.policy = mt2_policy_default;   /* inert default — active_source==0 drops all frames until
                                           a reader's connectionEstablished installs its real row;
-                                          bt row chosen arbitrarily to keep the struct initialized. */
+                                          the default row keeps the struct initialized. */
     mt2_lifecycle_reset(&fSession.lifecycle);
     fSink.post_click = &com_schmonz_MT2Gesture::sink_post_click;
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;

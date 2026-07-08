@@ -155,8 +155,7 @@ _mt2_apple_checksum
 _mt2_bnb_get_multitouch_report
 _mt2_bnb_get_multitouch_report_info
 _mt2_fill_geometry_report
-_mt2_policy_bt
-_mt2_policy_usb
+_mt2_policy_default
 _mt2_region_descriptor
 _mt2_region_param
 _mt2_splice_kext_ops

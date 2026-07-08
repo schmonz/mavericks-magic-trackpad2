@@ -12,7 +12,7 @@
  *   BT : mt2_bt_decode -> mt2_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN)
  *        -> sink bt_sink_feed_frame (MT2BTReader.cpp; MT2Gesture::sink_feed_frame is now a
  *        dispatch trampoline). No checksum on the BT feed.
- *   USB: mt2_usb_decode -> mt2_session_frame (policy row mt2_policy_usb) -> sink feed = mt1_encode
+ *   USB: mt2_usb_decode -> mt2_session_frame (policy row mt2_policy_default) -> sink feed = mt1_encode
  *        + Apple checksum, exactly MT2USBReader::mt2_usb_handle_report + its registered kUsbSink.
  *
  * Real captured raw frames are reused from the existing decode tests:
@@ -76,7 +76,7 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
     mt2_session_t s; memset(&s, 0, sizeof s);
     bt_cap_t cap; memset(&cap, 0, sizeof cap);
     mt2_session_sink_t sink = { bt_click, bt_feed, bt_arm, &cap };
-    mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_bt, /*now*/1000);
+    mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_default, /*now*/1000);
     VoodooInputEvent tf; memset(&tf, 0, sizeof tf);
     if (mt2_bt_decode(raw, rawlen, &tf) != 0) return -1;
     mt2_session_frame(&s, 0xB7, &tf, /*now*/1000, &sink);
@@ -114,14 +114,14 @@ static int usb_pipeline_session(mt2_session_t *s, const uint8_t *raw, size_t raw
 
 static int usb_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out) {
     mt2_session_t s; memset(&s, 0, sizeof s);
-    mt2_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_usb, /*now*/1000);
+    mt2_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_default, /*now*/1000);
     return usb_pipeline_session(&s, raw, rawlen, USB_TS, out);
 }
 
 /* ---- USB lifecycle SEQUENCE (make -> touch -> break) --------------------------------------------
  * The single-frame USB goldens above each run through a fresh session, so they pin DECODE + encode
  * but not the STATEFUL carry (mt2_drop_lifted + mt2_lifecycle_step) across frames. The engine path
- * carries that state in the shared mt2_session lifecycle (policy row mt2_policy_usb), so we freeze
+ * carries that state in the shared mt2_session lifecycle (policy row mt2_policy_default), so we freeze
  * a full 3-frame run through ONE session: same finger present twice (MakeTouch -> Touching) then
  * lifted (its record size drops to 0, drop_lifted removes it, lifecycle synthesizes BreakTouch at
  * the last position). Fixed timestamp for determinism. */
@@ -241,7 +241,7 @@ static void run_tests(void) {
         make_usb_one(tc, 0x20, 0x06);
         make_usb_one(br, 0x00, 0x06);   /* size 0 -> lifted -> BreakTouch synthesized */
         mt2_session_t s; memset(&s, 0, sizeof s);
-        mt2_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_usb, /*now*/1000);
+        mt2_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_default, /*now*/1000);
         int nm = usb_pipeline_session(&s, mk, 21, USB_SEQ_TS, out);
 #if CHAR_CAPTURE
         dump("USB_SEQ_MAKE", out, nm);

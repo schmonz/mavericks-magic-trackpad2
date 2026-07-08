@@ -341,7 +341,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
         if (gActiveMT2Gesture)
             gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
-                                                     &mt2_policy_bt, &kBtSink);
+                                                     &mt2_policy_default, &kBtSink);
         else
             IOLog("MT2BTReader: ENGINE NOT PUBLISHED at interrupt bind — input will be dead until reconnect (registration race)\n");
     }

@@ -31,11 +31,11 @@ typedef struct {
     uint8_t arm_watchdog;        /* 1: arm the MT2_IDLE_MS silence flush while contacts are down */
 } mt2_session_policy_t;
 
-/* The two shipped rows (defined in mt2_session.c so host tests drive the exact rows the
-   kext registers). mt2_policy_bt = today's session behavior; mt2_policy_usb = today's
-   USB-assembly behavior, byte-for-byte. */
-extern const mt2_session_policy_t mt2_policy_bt;
-extern const mt2_session_policy_t mt2_policy_usb;
+/* The shipped row (defined in mt2_session.c so host tests drive the exact row the
+   kext registers). mt2_policy_default = the single MT2 conditioning policy — both
+   transports converged to it (ABSENCE_PAIR liftoff, no empty-frame forwarding, silence
+   watchdog); a future device would supply its own row. */
+extern const mt2_session_policy_t mt2_policy_default;
 
 typedef struct {
     uintptr_t active_source;
@@ -46,7 +46,7 @@ typedef struct {
     mt2_lifecycle_t lifecycle;   /* MakeTouch/BreakTouch lifecycle synthesis */
 } mt2_session_t;
 
-/* policy must be non-NULL — pass a shipped row (mt2_policy_bt / mt2_policy_usb). */
+/* policy must be non-NULL — pass a shipped row (mt2_policy_default). */
 void mt2_session_connect(mt2_session_t *s, uintptr_t source,
                          mt2_transport_mode_t mode,
                          const mt2_session_policy_t *policy, uint32_t now_ms);
