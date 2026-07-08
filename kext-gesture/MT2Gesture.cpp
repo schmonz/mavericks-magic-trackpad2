@@ -73,7 +73,7 @@ void com_schmonz_MT2Gesture::connectionEstablished(IOService *source,
                                                    mt2_transport_mode_t mode) {
     if (fSessionLock) IOLockLock(fSessionLock);
     if (fIdleTimer) fIdleTimer->cancelTimeout();
-    mt2_session_connect(&fSession, (uintptr_t)source, mode, uptime_ms());
+    mt2_session_connect(&fSession, (uintptr_t)source, mode, &mt2_policy_bt, uptime_ms());
     if (fSessionLock) IOLockUnlock(fSessionLock);
     IOLog("MT2Gesture: connection established (src=%p mode=%d)\n", source, (int)mode);
 }
@@ -127,6 +127,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSession.mode = MT2_EVENT_DRIVEN;
     fSession.settle_until_ms = 0;
     fSession.last_button = 0;
+    fSession.policy = mt2_policy_bt;
     mt2_lifecycle_reset(&fSession.lifecycle);
     fSink.post_click = &com_schmonz_MT2Gesture::sink_post_click;
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;

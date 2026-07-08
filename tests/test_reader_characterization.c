@@ -74,7 +74,7 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
     mt2_session_t s; memset(&s, 0, sizeof s);
     bt_cap_t cap; memset(&cap, 0, sizeof cap);
     mt2_session_sink_t sink = { bt_click, bt_feed, bt_arm, &cap };
-    mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, /*now*/1000);
+    mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_bt, /*now*/1000);
     VoodooInputEvent tf; memset(&tf, 0, sizeof tf);
     if (mt2_bt_decode(raw, rawlen, &tf) != 0) return -1;
     mt2_session_frame(&s, 0xB7, &tf, /*now*/1000, &sink);

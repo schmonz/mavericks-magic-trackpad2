@@ -1,9 +1,14 @@
 #include "mt2_session.h"
 
+const mt2_session_policy_t mt2_policy_bt  = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
+const mt2_session_policy_t mt2_policy_usb = { MT2_LIFTOFF_PASSTHROUGH,  /*empties*/1, /*watchdog*/0 };
+
 void mt2_session_connect(mt2_session_t *s, uintptr_t source,
-                         mt2_transport_mode_t mode, uint32_t now_ms) {
+                         mt2_transport_mode_t mode,
+                         const mt2_session_policy_t *policy, uint32_t now_ms) {
     s->active_source = source;
     s->mode = mode;
+    s->policy = *policy;
     s->settle_until_ms = now_ms + MT2_SETTLE_MS;
     s->last_button = 0;
     mt2_lifecycle_reset(&s->lifecycle);      /* next contacts read as new; none pending an end */
@@ -83,17 +88,29 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
     VoodooInputEvent f = *tf;
     mt2_drop_lifted(&f);                          /* keep only real (size>0) contacts */
     mt2_lifecycle_step(&s->lifecycle, &f);        /* +START for new, +BreakTouch for vanished */
-    if (f.contact_count > 0) emit_with_liftoff(s, &f, sink);
+    if (f.contact_count > 0) {
+        if (s->policy.liftoff_shape == MT2_LIFTOFF_ABSENCE_PAIR)
+            emit_with_liftoff(s, &f, sink);
+        else
+            emit(s, &f, sink);              /* PASSTHROUGH: the BreakTouch frame as-is */
+    } else if (s->policy.emit_empty_frames) {
+        emit(s, &f, sink);                  /* zero-contact frame reaches the sink (click edge too) */
+    }
 
     /* While a contact is still down, keep a silence watchdog: if the stream stops with no
-       lift frame, the timer flushes the outstanding BreakTouch so the lift still registers. */
-    if (s->lifecycle.prev_ids) sink->arm_timer(sink->ctx, MT2_IDLE_MS);
+       lift frame, the timer flushes the outstanding BreakTouch so the lift still registers.
+       (Policy-gated: the USB row runs without it today — its absence pump covers the gap.) */
+    if (s->policy.arm_watchdog && s->lifecycle.prev_ids)
+        sink->arm_timer(sink->ctx, MT2_IDLE_MS);
 }
 
 void mt2_session_timer(mt2_session_t *s, const mt2_session_sink_t *sink) {
     /* Silence watchdog fired: deliver BreakTouch for any contact still marked down.
        After a reconnect, mt2_session_connect reset the lifecycle (prev_ids = 0), so a
-       timer armed for a prior connection flushes nothing -- a harmless no-op. */
+       timer armed for a prior connection flushes nothing -- a harmless no-op.
+       NB the flush emits the ABSENCE_PAIR shape regardless of policy.liftoff_shape —
+       valid while every arm_watchdog row also uses ABSENCE_PAIR (true for both shipped
+       rows; revisit if a row ever arms the watchdog with PASSTHROUGH). */
     VoodooInputEvent end = {0};
     if (mt2_lifecycle_flush(&s->lifecycle, &end))
         emit_with_liftoff(s, &end, sink);
