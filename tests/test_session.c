@@ -153,16 +153,9 @@ static void run_tests(void) {
       mt2_session_frame(&s, BT, &f, 5000, &k);
       CHECK_EQ(r.n_click, 1); CHECK_EQ(r.last_mask, 0x2u); CHECK_EQ(r.n_feed, 1); }
 
-    /* ---- policy rows (engine unification): mt2_policy_usb pins TODAY'S USB assembly ----
-       (docs/superpowers/specs/2026-07-07-readers-engine-unification-design.md). The queued
-       convergence changes flip these dimensions one at a time, each with its own test. */
-
-    /* USB row: no watchdog is ever armed, even with a contact down. */
-    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_usb, 0);
-      VoodooInputEvent f=one(70);
-      mt2_session_frame(&s, USB, &f, 5000, &k);
-      CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.n_arm, 0); }
-
+    /* The convergence flips (2026-07) collapsed the USB row onto the BT row: mt2_policy_usb
+       now equals mt2_policy_bt field-for-field, so the three USB-row difference cases that
+       pinned the old divergence (PASSTHROUGH liftoff / empties emitted / no watchdog) were
+       retired. The BT-row cases above already cover the unified behavior. */
 }
 TEST_MAIN()
