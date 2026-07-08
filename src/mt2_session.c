@@ -1,7 +1,7 @@
 #include "mt2_session.h"
 
 const mt2_session_policy_t mt2_policy_bt  = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
-const mt2_session_policy_t mt2_policy_usb = { MT2_LIFTOFF_PASSTHROUGH,  /*empties*/1, /*watchdog*/0 };
+const mt2_session_policy_t mt2_policy_usb = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/1, /*watchdog*/0 };
 
 void mt2_session_connect(mt2_session_t *s, uintptr_t source,
                          mt2_transport_mode_t mode,

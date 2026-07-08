@@ -177,8 +177,9 @@ static const uint8_t GOLD_USB_2F[] = {
     0x5a,0x44,0xa3,0x03,0x20,0x20,0xff,0x76,0x33,0x6d,0x08
 };
 /* USB make->touch->break sequence (same finger id, size 0x20 twice then 0x00). State nibble at 4+8
- * advances 0x3x->0x4x->0x5x (MakeTouch->Touching->BreakTouch); the break carries the finger's last
- * position, so its records differ from make/touch. Captured from the current build. */
+ * advances 0x3x (MakeTouch) -> 0x4x (Touching); the break now emits the ABSENCE_PAIR empty frame
+ * (BT shape) — a header+checksum with no contact record — instead of a BreakTouch contact.
+ * Captured from the current build. */
 static const uint8_t GOLD_USB_SEQ_MAKE[]  = {
     0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x71,0x32,0x70,0x05
 };
@@ -186,7 +187,7 @@ static const uint8_t GOLD_USB_SEQ_TOUCH[] = {
     0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x71,0x42,0x80,0x05
 };
 static const uint8_t GOLD_USB_SEQ_BREAK[] = {
-    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x44,0x55,0xa0,0x71,0x52,0xca,0x05
+    0x28,0xcc,0xcc,0x0c,0xcc,0x01
 };
 
 static void run_tests(void) {
@@ -262,7 +263,7 @@ static void run_tests(void) {
         dump("USB_SEQ_BREAK", out, nb);
 #else
         CHECK(nb > 0);
-        CHECK_EQ(out[4 + 8] & 0xf0, 0x50);         /* BreakTouch (finger lifted) */
+        CHECK_EQ(nb, 4 + 2);   /* ABSENCE_PAIR: full lift now emits empty frames (BT shape), last captured = header+checksum, no contact */
         check_bytes("USB_SEQ_BREAK", out, nb, GOLD_USB_SEQ_BREAK, (int)sizeof GOLD_USB_SEQ_BREAK);
 #endif
     }
