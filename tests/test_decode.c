@@ -36,5 +36,9 @@ static void run_tests(void) {
     /* Malformed input is rejected. */
     uint8_t bad[] = {0x02,0x00,0x00};
     CHECK_EQ(mt2_usb_decode(bad, sizeof(bad), &f), -1);
+
+    /* Wrong report id: byte[0]=0x01 (not 0x02); well-formed 21-byte packet must be rejected. */
+    uint8_t bad_id[21] = {0x01};   /* rest zeroed: valid 12-byte header + 9-byte record, id wrong */
+    CHECK_EQ(mt2_usb_decode(bad_id, sizeof(bad_id), &f), -1);
 }
 TEST_MAIN()

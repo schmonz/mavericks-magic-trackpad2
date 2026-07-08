@@ -158,12 +158,8 @@ _mt2_policy_usb
 _mt2_region_descriptor
 _mt2_region_param
 _mt2_surface_desc_tail
-_mt2_usb_button_edge
 _mt2_usb_click_report
 _mt2_usb_handle_report
 _mt2_usb_make_absence_frame
-_mt2_usb_reframe_reset
-_mt2_usb_to_compactv4
 _sysctl__debug_mt2_batt
 _sysctl__debug_mt2_log
-_usb_assemble_compactv4

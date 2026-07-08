@@ -93,7 +93,8 @@ static uint32_t usb_ts_22bit(void) {
 /* USB transport sink (registered with the engine at connectionEstablished; calls arrive under
  * the session lock). feed_frame is the second half of the old usb_assemble_compactv4: mt1_encode
  * the session-conditioned frame (session policy row mt2_policy_usb reproduces the old assembly's
- * conditioning byte-for-byte — proven by tests/test_usb_engine_equivalence.c), append Apple's
+ * conditioning byte-for-byte — proven by a parallel-run oracle before the old assembly was deleted,
+ * and permanently re-pinned by tests/test_reader_characterization.c's unchanged goldens), append Apple's
  * checksum, wrap, and chain the ORIGINAL handleReport. post_click drives the self-driven
  * handleButton (see the dirty-trick note at mt2_usb_handle_report). */
 static void usb_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {

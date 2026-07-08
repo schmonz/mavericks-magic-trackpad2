@@ -1,6 +1,5 @@
 #include "test.h"
 #include "../src/mt2_usb_reframe.h"
-#include "../src/mt2_usb_decode.h"
 #include <string.h>
 
 static void test_checksum_trivial(void) {
@@ -27,17 +26,6 @@ static void test_checksum_live_vector(void) {
     CHECK_EQ(b[20], 0x04);            /* high byte of 0x499 */
 }
 
-/* 21-byte MT2 USB packet with one finger record. size_b6 == 0 marks an empty/lifted slot
-   (presence is size-based, mt2_drop_lifted, inside the pipeline). */
-static size_t make_mt2_one(uint8_t *b, uint8_t size_b6, uint8_t id_b8) {
-    memset(b, 0, 21);
-    b[0] = 0x02;
-    for (int i = 1; i < 12; i++) b[i] = (uint8_t)(0xA0 + i);
-    b[12+0]=0x11; b[12+1]=0x12; b[12+2]=0x13; b[12+3]=0x00;
-    b[12+4]=0x44; b[12+5]=0x55; b[12+6]=size_b6; b[12+7]=0x77; b[12+8]=id_b8;
-    return 21;
-}
-
 static int checksum_ok(const uint8_t *out, size_t n) {
     uint8_t v[64];
     memcpy(v, out, n);
@@ -46,96 +34,18 @@ static int checksum_ok(const uint8_t *out, size_t n) {
     return v[n-2] == out[n-2] && v[n-1] == out[n-1];
 }
 
-static void test_reframe_emits_0x28_frame_with_valid_checksum(void) {
-    /* The reframe runs the proven pipeline (decode -> drop_lifted -> lifecycle -> mt1_encode) and
-       appends Apple's checksum, producing the SAME 0x28 CompactV4 frame the working MT1/BT path emits
-       (which the recognizer drives the cursor from) -- plus the checksum handleReport requires. */
-    uint8_t mt2[21], out[64]; size_t outlen = 0;
-    mt2_usb_reframe_reset();
-    make_mt2_one(mt2, 0x20, 0x06);
-    CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0x12345, out, sizeof(out), &outlen), 0);
-    CHECK_EQ(out[0], 0x28);                        /* CompactV4 PATH frame type, == MT1 report id */
-    CHECK_EQ(outlen, (size_t)(4 + 9 + 2));         /* 4-byte hdr + one 9-byte contact + 2 checksum */
-    CHECK(checksum_ok(out, outlen));
-    /* timestamp round-trips out of the CompactV4 header */
-    uint32_t ts_back = ((uint32_t)out[1] >> 2) | ((uint32_t)out[2] << 6) | ((uint32_t)out[3] << 14);
-    CHECK_EQ(ts_back, 0x12345u & 0x3FFFFF);
+/* --- session click mask -> handleButton report (byte[15] only) ---------------------------------- */
+static void test_click_report_press_maps_any_mask_to_byte15(void) {
+    uint8_t rep[16]; memset(rep, 0xEE, sizeof rep);
+    mt2_usb_click_report(0x1, rep);
+    CHECK_EQ(rep[15], 0x01);
+    for (int i = 0; i < 15; i++) CHECK_EQ(rep[i], 0x00);
+    mt2_usb_click_report(0x2, rep);           /* secondary mask: still the one physical button */
+    CHECK_EQ(rep[15], 0x01);
 }
-
-static void test_reframe_lifecycle_make_then_drag(void) {
-    /* The pipeline's mt2_lifecycle marks a finger's first frame MakeTouch and later frames Touching;
-       mt1_encode writes that state in the contact's t[8] high nibble (START 0x30, DRAG 0x40). */
-    uint8_t mt2[21], out[64]; size_t outlen = 0;
-    mt2_usb_reframe_reset();
-    make_mt2_one(mt2, 0x20, 0x06);
-    mt2_usb_to_compactv4(mt2, 21, 0, out, sizeof(out), &outlen);
-    CHECK_EQ(out[4 + 8] & 0xF0, 0x30);            /* contact 0, first frame -> MakeTouch */
-    mt2_usb_to_compactv4(mt2, 21, 0, out, sizeof(out), &outlen);
-    CHECK_EQ(out[4 + 8] & 0xF0, 0x40);            /* same finger held -> Touching */
-}
-
-static void test_split_seam_composes_like_fused(void) {
-    /* The un-fused seam: mt2_usb_decode -> VoodooInputEvent -> usb_assemble_compactv4 must produce the
-       EXACT bytes the fused mt2_usb_to_compactv4 does. Run the same input through both (each after its
-       own reset, since the assembly lifecycle is stateful) and require byte-identical output. */
-    uint8_t mt2[21], fused[64], split[64]; size_t fl = 0, sl = 0;
-    make_mt2_one(mt2, 0x20, 0x06);
-
-    mt2_usb_reframe_reset();
-    CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0x12345, fused, sizeof(fused), &fl), 0);
-
-    VoodooInputEvent frame; memset(&frame, 0, sizeof frame);
-    CHECK_EQ(mt2_usb_decode(mt2, 21, &frame), 0);      /* decode -> seam */
-    CHECK_EQ(frame.contact_count, 1u);                 /* known input: one present finger */
-    mt2_usb_reframe_reset();
-    CHECK_EQ(usb_assemble_compactv4(&frame, 0x12345, split, sizeof(split), &sl), 0);  /* assembly */
-
-    CHECK_EQ(sl, fl);
-    CHECK_EQ(memcmp(split, fused, fl), 0);             /* split == fused, byte for byte */
-}
-
-static void test_reframe_rejects_non_touch_report(void) {
-    uint8_t mt2[21], out[64]; size_t outlen = 0;
-    mt2_usb_reframe_reset();
-    make_mt2_one(mt2, 0x20, 0x06);
-    mt2[0] = 0x01;                                /* not a 0x02 report */
-    CHECK_EQ(mt2_usb_to_compactv4(mt2, 21, 0, out, sizeof(out), &outlen), -1);
-}
-
-/* --- physical-button edge (genuine-USB handleButton feed) ---------------------------------------
- * The genuine driver never gets the button from the MT frame (its handleButtonState/handleButton are
- * fed by a separate button provider that manual-start lacks). So we detect the button edge in the MT2
- * 0x02 report (byte[1] bit0) and hand AppleUSBMultitouchDriver::handleButton a button report whose
- * byte[15] carries the state (RE'd: handleButton reads only report[0xf]). */
-
-static void test_button_edge_press_fills_byte15(void) {
-    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0x01;  /* button DOWN */
-    uint8_t last = 0, rep[16];
-    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 1);     /* changed -> dispatch */
-    CHECK_EQ(rep[15], 0x01);                                   /* button in report byte 15 */
-    for (int i = 0; i < 15; i++) CHECK_EQ(rep[i], 0x00);       /* rest zero */
-    CHECK_EQ(last, 0x01);                                      /* state advanced */
-}
-
-static void test_button_edge_no_change_no_dispatch(void) {
-    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0x01;
-    uint8_t last = 0x01, rep[16]; memset(rep, 0xEE, sizeof(rep));
-    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 0);     /* unchanged -> no dispatch */
-    CHECK_EQ(rep[0], 0xEE);                                    /* report left untouched */
-}
-
-static void test_button_edge_release_dispatches(void) {
-    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0x00;  /* button UP */
-    uint8_t last = 0x01, rep[16]; memset(rep, 0xEE, sizeof(rep));
-    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 1);     /* 1 -> 0 -> dispatch */
-    CHECK_EQ(rep[15], 0x00);
-    CHECK_EQ(last, 0x00);
-}
-
-static void test_button_edge_masks_bit0_only(void) {
-    uint8_t mt2[21]; memset(mt2, 0, sizeof(mt2)); mt2[0] = 0x02; mt2[1] = 0xFE;  /* bit0 clear */
-    uint8_t last = 0x01, rep[16];
-    CHECK_EQ(mt2_usb_button_edge(mt2, 21, &last, rep), 1);     /* only bit0 counts -> 1->0 */
+static void test_click_report_release(void) {
+    uint8_t rep[16]; memset(rep, 0xEE, sizeof rep);
+    mt2_usb_click_report(0, rep);
     CHECK_EQ(rep[15], 0x00);
 }
 
@@ -153,14 +63,8 @@ static void test_absence_frame_is_empty_0x28_with_checksum(void) {
 static void run_tests(void) {
     test_checksum_trivial();
     test_checksum_live_vector();
-    test_reframe_emits_0x28_frame_with_valid_checksum();
-    test_reframe_lifecycle_make_then_drag();
-    test_split_seam_composes_like_fused();
-    test_reframe_rejects_non_touch_report();
-    test_button_edge_press_fills_byte15();
-    test_button_edge_no_change_no_dispatch();
-    test_button_edge_release_dispatches();
-    test_button_edge_masks_bit0_only();
+    test_click_report_press_maps_any_mask_to_byte15();
+    test_click_report_release();
     test_absence_frame_is_empty_0x28_with_checksum();
 }
 TEST_MAIN()
