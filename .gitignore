@@ -4,6 +4,7 @@
 *.d
 spike_bind
 .idea/
+.ai/
 
 # build outputs: unit tests -> build/tests/, pkg staging -> build/, the kext bundle
 build/
