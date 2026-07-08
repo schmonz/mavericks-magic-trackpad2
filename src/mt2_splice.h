@@ -54,6 +54,8 @@ typedef struct {
     void       *ctx;
 } mt2_splice_ops_t;
 
+/* CONTRACT: target must be non-NULL — the CLASS_NAME gate and the ops dereference it. Callers
+ * that can see a NULL target (e.g. the BT geometry install) guard it before calling. */
 int  mt2_splice_install(const mt2_splice_row_t *row, void *target,
                         const mt2_splice_ops_t *ops, mt2_splice_state_t *st);
 void mt2_splice_restore(void *target, const mt2_splice_row_t *row,

@@ -43,16 +43,18 @@ of our objects*, not another imperative special-case.
   watchdog) are per-transport config rows, and each queued convergence is a one-line flip
   with a known test. Realized 2026-07-07 by the readers engine unification; the fuller
   per-gate policy (`MT1_FIRM_RADIUS`, settle, geometry clamp) remains latent.
+- **`src/mt2_splice.{h,c}` + `kext-gesture/mt2_splice_kext.cpp`** — the interpose/splice as a
+  declarative install plan: a seam is a `const` row (kind MEM_SLOT | VTABLE_CLONE, gate NONE |
+  SLOT_POPULATED | CLASS_NAME, slots, shims); the engine owns save-before-write /
+  save-two-write-one / capture-from-clone / gate / restore-only-if-still-ours / idempotence /
+  restore-before-free, all host-tested against fake memory (`tests/test_splice.c`); the kext
+  supplies IOKit+`vtc_*` ops. All four seams (BT interrupt + control delegates, BNB geometry,
+  USB handleReport) are rows; the six `gOrig*`/`gCtrl*`/`g*VtableClone*` globals are retired
+  (the two `g*InterposedChannel` trackers stay — the caller's "which channel", not the engine's
+  "what"). Realized 2026-07-08. The panic-prone splice is now the most-tested code, not the least.
 
 **Latent targets (apply the shape here next — ranked by payoff):**
-1. **The interpose/splice as a declarative plan (highest leverage + stakes).** `MT2BTReader.cpp` manual-
-   starts a genuine BNB, yields the interrupt delegate, and interposes our MT2→MT1 shim on the delegate-
-   callback slot via `vtable_clone` + magic offsets in `src/mt2_stack.h`. `csm_teardown_steps()` already
-   models teardown as data; the latent object is the symmetric **install** plan — `{slot, save-original,
-   install-shim, restore}` as a table the adapter walks. Because this code can panic, a declarative plan
-   is unit-testable off-device (assert save/restore pairing + ordering + offset provenance) — turning the
-   scariest code into the most-checked. (= the `refactor-to-explainability` "magic interpose offsets".)
-2. **Transport presence as one object shared by kext *and* pane.** `mt2_pane_sm` models transport truth
+1. **Transport presence as one object shared by kext *and* pane.** `mt2_pane_sm` models transport truth
    `{BT,USB present}` for the UI; the kext's single-transport arbitration *and* the queued USB→BT handoff
    model the same reality independently. A shared transport-presence SM (same shape) that the handoff
    adapter reuses avoids a second ad-hoc SM over the identical truth.
@@ -98,6 +100,18 @@ on-device test — do NOT batch):**
    no-longer-varying dimensions.
 6. Cosmetic: rename `mt2_usb_reframe.{h,c}` to match its shrunken contents (now just the
    checksum / click-report / absence-frame byte helpers).
+
+**Splice engine — considered-and-declined + queued (2026-07-08):**
+- DECLINED: a single reverse-order global teardown walk. The four seams restore at genuinely
+  different lifecycle moments (BT delegates in-gate at `stop()`; geometry + USB inside `gh_stop`),
+  on different channels/threads; one ordered walk would FABRICATE a teardown sequence Apple's
+  object lifecycles don't want. Per-row restore-at-existing-site is correct here. Revisit only
+  if a real cross-seam ordering need appears (the row model makes it a small addition).
+- QUEUED (each a tested one-liner, not batched): (1) uniform guards across rows — today each row
+  reproduces its seam's exact current guards (e.g. only the MEM_SLOT delegate rows check
+  only-if-still-ours on restore; the class gate is CLONE-only); (2) the
+  `gOrigUsbHandleReport`/`captured_orig` value is read once at install — fold the read strictly
+  under the write's guard when uniform guards land.
 
 ## The cast
 
