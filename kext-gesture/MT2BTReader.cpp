@@ -45,6 +45,8 @@ extern "C" {
 #define VTC_ALLOC(sz)  IOMalloc(sz)
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"      /* instance-scoped vtable clone/override/restore */
+#include "mt2_splice_kext.h"   /* declarative interpose engine + kext ops (mt2_splice_kext_ops).
+                                * After vtable_clone.h so its VTC_ALLOC/FREE guard is satisfied. */
 
 /* Vtable-slot INDICES for the geometry override. The byte offsets are the canonical facts in
  * ../src/mt2_stack.h (the single build-consumed source; see docs/mt-stack/); these are thin local
@@ -98,9 +100,9 @@ static void *gCtrlOrigCb = 0;
 static IOService *gCtrlOrigTarget = 0;
 static IOBluetoothL2CAPChannel *gCtrlInterposedChannel = 0;
 
-/* BNB geometry: our transport instance's cloned vtable. */
-static vtc_clone_t gBnbVtableClone;
-static bool        gBnbVtableCloned = false;
+/* BNB geometry seam state (mt2_splice). The row is declared after the geometry shims it names
+ * (below); installBnbGeometry/removeBnbGeometry stay the call sites, timing unchanged. */
+static mt2_splice_state_t gBnbSpliceState;
 
 /* getMultitouchReport override on OUR transport instance (vtable slot 0xcc8). ABI:
  *   getMultitouchReport(transport, uchar reportId, uchar* buf, uint* len, int count).
@@ -134,6 +136,16 @@ extern "C" int mt2_bnb_get_multitouch_report_info(void *transport, unsigned char
     }
     return (int)0xe00002c7;
 }
+
+/* BNB geometry seam as a declarative row: 2-slot vtable clone (data 0xcc8 + info 0xcd8),
+ * class-gated to the genuine transport. The CLASS_NAME gate reproduces installBnbGeometry's
+ * abort-unless-BNBTrackpadDevice/BluetoothMultitouchTransport check. */
+static const mt2_splice_row_t kBnbGeometryRow = {
+    "bnb-geometry", MT2_SPLICE_VTABLE_CLONE, MT2_GATE_CLASS_NAME,
+    "BNBTrackpadDevice", "BluetoothMultitouchTransport",
+    GMR_SLOT_INDEX, (void *)&mt2_bnb_get_multitouch_report,
+    GMRINFO_SLOT_INDEX, (void *)&mt2_bnb_get_multitouch_report_info, BNB_VTABLE_SPAN
+};
 
 static uint32_t bt_uptime_ms(void) {
     clock_sec_t s; clock_usec_t u;
@@ -378,7 +390,7 @@ static void *bt_build_bnb_props(void) {
  * input seam is installed async by interposeTimerFired after BNB's interrupt channel appears. */
 static int bt_gh_interpose(gh_host_t *h) {
     ((com_schmonz_MT2BTReader *)h->ctx)->installBnbGeometry(h->obj);  /* geometry vtable clone (class-gated) */
-    return gBnbVtableCloned ? 0 : -1;       /* all-or-nothing: a failed clone is an interpose failure */
+    return gBnbSpliceState.installed ? 0 : -1;  /* all-or-nothing: a failed clone is an interpose failure */
 }
 static void bt_gh_restore(gh_host_t *h) {
     ((com_schmonz_MT2BTReader *)h->ctx)->removeBnbGeometry(h->obj);   /* vtc_restore of the geometry clone */
@@ -625,40 +637,26 @@ IOReturn com_schmonz_MT2BTReader::triggerInGate(OSObject * /*owner*/, void *arg0
  * the getMultitouchReport slot with our geometry answerer. Instance-scoped, so only this transport's
  * vtable pointer changes — the shared class vtable (and a co-connected genuine MT1's transport) is
  * untouched. Must run BEFORE the create trigger so BNB's AMD bring-up query is answered. */
+/* The safety gate (class must be BNBTrackpadDevice/BluetoothMultitouchTransport) and the two-slot
+ * clone (data 0xcc8 + info 0xcd8, info first) are now the splice engine's — kBnbGeometryRow carries
+ * the CLASS_NAME gate + both slots; the exact ABORT/FAILED/installed log behavior is preserved here. */
 void com_schmonz_MT2BTReader::installBnbGeometry(void *transport) {
-    if (!transport || gBnbVtableCloned) return;
-    /* Safety gate: we clone THIS object's vtable and write slot 0xcc8, valid only if it really is
-     * the BNBTrackpadDevice transport (its vtable has getMultitouchReport there). If the handle is
-     * ever something else, cloning + slot-write would corrupt an unrelated method -> panic. Verify
-     * the class name and ABORT rather than clone blind. (gGenuineBnb is set from allocClassWithName
-     * "BNBTrackpadDevice"; this also catches an offset/handle regression.) */
-    const char *cls = ((IOService *)transport)->getMetaClass()->getClassName();
-    if (!cls || (strcmp(cls, "BNBTrackpadDevice") != 0 &&
-                 strcmp(cls, "BluetoothMultitouchTransport") != 0)) {
-        IOLog("MT2BTReader: BNB geometry ABORT — transport %p is '%s', not BNBTrackpadDevice\n",
-              transport, cls ? cls : "(null)");
-        return;
-    }
-    MT2_DLOG(1, "BNB geometry target class = %s", cls);
-    if (vtc_clone_override(transport, BNB_VTABLE_SPAN, GMR_SLOT_INDEX,
-                           (void *)&mt2_bnb_get_multitouch_report, &gBnbVtableClone) == 0) {
-        /* The geometry query probes report length via getMultitouchReportInfo (0xcd8) FIRST; if that
-         * fails it never reaches getMultitouchReport (0xcc8). Override both on the same clone. */
-        vtc_override_slot(&gBnbVtableClone, GMRINFO_SLOT_INDEX,
-                          (void *)&mt2_bnb_get_multitouch_report_info);
-        gBnbVtableCloned = true;
+    if (!transport || gBnbSpliceState.installed) return;
+    int rc = mt2_splice_install(&kBnbGeometryRow, transport, &mt2_splice_kext_ops, &gBnbSpliceState);
+    if (rc == MT2_SPLICE_OK) {
         MT2_DLOG(1, "BNB geometry override installed on transport %p (data slot %lu, info slot %lu)",
                  transport, (unsigned long)GMR_SLOT_INDEX, (unsigned long)GMRINFO_SLOT_INDEX);
+    } else if (rc == MT2_SPLICE_ABORT) {
+        const char *cls = ((IOService *)transport)->getMetaClass()->getClassName();
+        IOLog("MT2BTReader: BNB geometry ABORT — transport %p is '%s', not BNBTrackpadDevice\n",
+              transport, cls ? cls : "(null)");
     } else {
-        IOLog("MT2BTReader: BNB geometry override FAILED to allocate\n");
+        IOLog("MT2BTReader: BNB geometry override FAILED (rc=%d)\n", rc);
     }
 }
 
 void com_schmonz_MT2BTReader::removeBnbGeometry(void *transport) {
-    if (!gBnbVtableCloned) return;
-    vtc_restore(transport, &gBnbVtableClone);
-    gBnbVtableCloned = false;
-    IOLog("MT2BTReader: BNB geometry override removed\n");
+    mt2_splice_restore(transport, &kBnbGeometryRow, &mt2_splice_kext_ops, &gBnbSpliceState);
 }
 
 void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventSource *ts) {
