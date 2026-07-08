@@ -35,6 +35,7 @@
 #include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
 #include "mt2_geometry.h"              /* MT2_SURFACE_WIDTH/HEIGHT — one knob shared with the BT report */
 #include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
+#include "mt2_splice_kext.h"           /* declarative interpose engine + kext ops (mt2_splice_kext_ops) */
 
 /* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
 #define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
@@ -47,8 +48,10 @@
  * see explanation.md "MT2USBReader bring-up". 50ms measured sufficient; don't delete it. */
 #define MT2_USB_ENABLE_SETTLE_MS     50
 
-static vtc_clone_t gUsbVtableClone;
-static bool        gUsbVtableCloned = false;
+/* USB handleReport seam state (mt2_splice). The row is declared after the shim it names
+ * (mt2_usb_handle_report, below); usb_gh_interpose/restore stay the gh-lifecycle call sites,
+ * so install/restore TIMING is unchanged. */
+static mt2_splice_state_t gUsbSpliceState;
 typedef IOReturn (*usb_handle_report_fn)(void *self, IOMemoryDescriptor *report,
                                          IOHIDReportType type, IOOptionBits options);
 static usb_handle_report_fn gOrigUsbHandleReport = 0;
@@ -167,6 +170,13 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     if (gPumpTimer) gPumpTimer->setTimeoutMS(USB_PUMP_SILENCE_MS);
     return rc;
 }
+
+/* USB handleReport seam as a declarative row: 1-slot vtable clone at 0x8b8, no gate. */
+static const mt2_splice_row_t kUsbHandleReportRow = {
+    "usb-handlereport", MT2_SPLICE_VTABLE_CLONE, MT2_GATE_NONE, 0, 0,
+    USB_HANDLEREPORT_SLOT_INDEX, (void *)&mt2_usb_handle_report,
+    /*slot2*/0, /*shim2*/0, USB_VTABLE_SPAN
+};
 
 /* Timer callback (workloop): the device has been silent for USB_PUMP_SILENCE_MS. Emit one zero-contact
  * absence frame into the genuine driver's handleReport so the recognizer's deferred per-frame commit
@@ -289,18 +299,14 @@ static void *usb_build_init_props(void) {
  * point the handleReport slot at mt2_usb_handle_report (THE SEAM). Instance-scoped, so only this
  * driver's vtable pointer changes; the shared class vtable is untouched. Saves the original for the shim. */
 static int usb_gh_interpose(gh_host_t *h) {
-    if (vtc_clone_override(h->obj, USB_VTABLE_SPAN, USB_HANDLEREPORT_SLOT_INDEX,
-                           (void *)&mt2_usb_handle_report, &gUsbVtableClone) != 0) return -1;
-    gOrigUsbHandleReport = (usb_handle_report_fn)
-        (((void **)gUsbVtableClone.orig_vptr)[USB_HANDLEREPORT_SLOT_INDEX]);
-    gUsbVtableCloned = true;
+    if (mt2_splice_install(&kUsbHandleReportRow, h->obj,
+                           &mt2_splice_kext_ops, &gUsbSpliceState) != MT2_SPLICE_OK) return -1;
+    gOrigUsbHandleReport = (usb_handle_report_fn)gUsbSpliceState.captured_orig;
     return 0;
 }
 static void usb_gh_restore(gh_host_t *h) {
-    if (gUsbVtableCloned) {
-        vtc_restore(h->obj, &gUsbVtableClone);
-        gUsbVtableCloned = false; gOrigUsbHandleReport = 0;
-    }
+    mt2_splice_restore(h->obj, &kUsbHandleReportRow, &mt2_splice_kext_ops, &gUsbSpliceState);
+    gOrigUsbHandleReport = 0;
 }
 static const gh_adapter_t kUsbAdapter = {
     gh_default_alloc, gh_default_class_ok, gh_default_init_attach, usb_gh_interpose,
