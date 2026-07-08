@@ -5,13 +5,13 @@
 # Kext-local C++ sources (incl. mt2_log + mt2_diag + gh_default_adapter, which are kext-only).
 set(KEXT_LOCAL_CPP
   MT2Gesture.cpp MT2GestureUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
-  mt2_log.cpp mt2_diag.cpp gh_default_adapter.cpp)
+  mt2_log.cpp mt2_diag.cpp gh_default_adapter.cpp mt2_splice_kext.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
   mt2_bt_decode mt1_encode mt2_usb_decode mt2_decode mt2_pipeline mt2_lifecycle
   mt2_session mt2_geometry mt2_usb_reframe mt2_connect_sm conn_trace
-  genuine_host mt2_coordinator mt2_battery)
+  genuine_host mt2_coordinator mt2_battery mt2_splice)
 set(KEXT_SHARED_SRCS "")
 foreach(c ${KEXT_SHARED_NAMES})
   list(APPEND KEXT_SHARED_SRCS ${CMAKE_SOURCE_DIR}/src/${c}.c)
