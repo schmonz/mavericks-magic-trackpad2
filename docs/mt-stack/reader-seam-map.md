@@ -6,6 +6,19 @@ Task-1 investigation (READ-ONLY). Maps every region of the two transport readers
 total) / `CROSS-CUTTING`, plus its intended target module. No code was moved; this
 guides the later extraction tasks.
 
+> **RESOLVED (2026-07-07, engine unification).** The "still duplicated" finding below is
+> fixed: both readers now feed ONE `mt2_session` via `MT2Gesture::submitFrame`, with the
+> three per-transport behavior deltas expressed as a policy row (`mt2_session_policy_t`:
+> liftoff shape / emit-empties / watchdog; rows `mt2_policy_bt` / `mt2_policy_usb` in
+> `src/mt2_session.c`) and delivery as a reader-registered `mt2_transport_sink_t`
+> (BT: encode → `handleTouchFrame`; USB: encode + checksum → chained `handleReport`).
+> USB's private lifecycle (`g_lc`), `usb_assemble_compactv4`/`mt2_usb_to_compactv4`, and
+> the raw-byte button edge are deleted; the USB absence pump remains reader-side and
+> untouched. Byte identity was proven by a parallel-run oracle before the old assembly
+> was deleted; `tests/test_reader_characterization.c` re-pins the engine path against the
+> UNCHANGED goldens. The line-number tables below describe the PRE-unification readers —
+> kept as the map that guided the extraction.
+
 ## The intended split (recap)
 
 - **PER-TRANSPORT**: open transport, read raw MT2 report, **decode** into a contact-set

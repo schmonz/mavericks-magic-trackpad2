@@ -92,8 +92,11 @@ layout, RE'd from `_MTCompactV4BinaryContactUnpack` (@0x5cd3):
 **Critical mismatch (the genuine-USB cursor blocker, 2026-06-24):** MT2 encodes finger-down in **`b3 & 0xC0`
 (`0x80`=down)** (`src/mt2_decode.c`), but CompactV4 reads state from **b6/b7**. X/Y are bit-identical so a
 pass-through reframe tracks position, but **state reads ≈0 (not touching)** → the recognizer ignores every
-contact → no cursor. The reframe (`src/mt2_usb_to_compactv4`) must **translate** MT2 `b3` state into the
-CompactV4 `b6[7:6]`/`b7[1:0]` bits, not pass bytes through. See `explanation.md` → genuine-USB cursor path.
+contact → no cursor. The reframe must **translate** MT2 `b3` state into the CompactV4
+`b6[7:6]`/`b7[1:0]` bits, not pass bytes through — the fix first lived in the fused
+`src/mt2_usb_to_compactv4` (deleted by the 2026-07-07 engine unification); today the shared session's
+`mt1_encode` carries the state translation for both transports. See `explanation.md` → genuine-USB
+cursor path.
 
 Geometry id → property (from `AppleMultitouchDevice::decodeDeviceProperty`):
 

@@ -38,6 +38,11 @@ of our objects*, not another imperative special-case.
   (`tests/test_pane_watch.m`).
 - **`kext-gesture/gh_default_adapter.cpp`** — half-realized: 7 shared generic callbacks with the provider
   threaded through a seam. The config-engine in miniature (a fuller engine waits on a real 3rd device).
+- **`mt2_session_policy_t` + rows (`src/mt2_session.{h,c}`)** — stream conditioning as
+  policy DATA, in embryo: the three observed BT/USB deltas (liftoff shape, emit-empties,
+  watchdog) are per-transport config rows, and each queued convergence is a one-line flip
+  with a known test. Realized 2026-07-07 by the readers engine unification; the fuller
+  per-gate policy (`MT1_FIRM_RADIUS`, settle, geometry clamp) remains latent.
 
 **Latent targets (apply the shape here next — ranked by payoff):**
 1. **The interpose/splice as a declarative plan (highest leverage + stakes).** `MT2BTReader.cpp` manual-
@@ -47,20 +52,16 @@ of our objects*, not another imperative special-case.
    install-shim, restore}` as a table the adapter walks. Because this code can panic, a declarative plan
    is unit-testable off-device (assert save/restore pairing + ordering + offset provenance) — turning the
    scariest code into the most-checked. (= the `refactor-to-explainability` "magic interpose offsets".)
-2. **Stream conditioning as a pure policy (highest mission value).** The RE'd gates are scattered magic
-   constants: `MT1_FIRM_RADIUS` (`src/mt1_encode.c` density), `MT2_SETTLE_MS` (`src/mt2_session.c`
-   settle-gate), geometry normalization (`src/mt2_geometry.c`, the edge-clamp fix), the downstream clamp
-   band (`MT2BTReader.cpp:172`). Extract a pure **conditioning policy** struct + `condition(frame,policy)
-   → frame`, pipeline as the thin adapter → each RE finding becomes a config dimension; a new device
-   becomes a config file. Gives every gate an off-device oracle (`mt2-behavior-tests-required`).
-3. **Transport presence as one object shared by kext *and* pane.** `mt2_pane_sm` models transport truth
+2. **Transport presence as one object shared by kext *and* pane.** `mt2_pane_sm` models transport truth
    `{BT,USB present}` for the UI; the kext's single-transport arbitration *and* the queued USB→BT handoff
    model the same reality independently. A shared transport-presence SM (same shape) that the handoff
    adapter reuses avoids a second ad-hoc SM over the identical truth.
 
-Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response table + thin HID adapter;
-`src/mt2_usb_reframe.c`'s `mt2_usb_button_edge` is already a clean pure edge-detector (the shape done
-small). Standing direction + running debt list: memory `mt2-refactor-to-explainability`.
+Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response table + thin HID adapter.
+(The former shape-done-small example here, `mt2_usb_reframe.c`'s raw-byte `mt2_usb_button_edge`, was
+deleted by the 2026-07-07 unification: the click edge now lives in the session — `mt2_click_changed`
+in `mt2_session_frame` dispatches `post_click` through the registered transport sink.) Standing
+direction + running debt list: memory `mt2-refactor-to-explainability`.
 
 **The public interface will be modeled after [VoodooInput](https://github.com/acidanthera/VoodooInput),
 possibly verbatim** (decided — see `decisions.md` → "Run VoodooInput on 10.9 / become a VoodooInput
@@ -80,6 +81,23 @@ IOKit matching binds Apple's native MT-HID driver to a virtual nub, and clients 
 devices into its contact format; we drive a *real* MT2 into Apple's *older* stack. So we adopt its
 **interface**, not its plumbing — becoming a VoodooInput *plugin* was evaluated and ruled wrong-direction
 (it doesn't wake the real device). Not built yet; credit the interface in CREDITS.md when we implement it.
+
+**Queued intentional convergences (post-unification, each a one-line policy flip + its own
+on-device test — do NOT batch):**
+1. USB `liftoff_shape` → `MT2_LIFTOFF_ABSENCE_PAIR` (adopt BT's proven single-liftoff;
+   test USB tap + phantom-double).
+2. USB `emit_empty_frames` → 0 (test USB idle stream + tap-drag). NOTE: today the empty
+   feed also carries contactless click edges — verify clicks survive the flip.
+3. USB `arm_watchdog` → 1 (test stuck-contact flush on USB). ORDER CONSTRAINT: this flip
+   must NOT precede flip 1 — `mt2_session_timer`'s flush emits the ABSENCE_PAIR shape
+   regardless of `liftoff_shape` (see the comment there), so arming the watchdog on a
+   PASSTHROUGH row would emit the wrong lift shape on a silence flush.
+4. THEN try removing the USB absence pump (only meaningful after 1–3 — the session's
+   liftoff + watchdog are its replacement).
+5. If all flips land, the rows become identical → collapse to one row and delete the
+   no-longer-varying dimensions.
+6. Cosmetic: rename `mt2_usb_reframe.{h,c}` to match its shrunken contents (now just the
+   checksum / click-report / absence-frame byte helpers).
 
 ## The cast
 
@@ -602,6 +620,12 @@ release(), no wait.
 
 Sibling to the BT section above. The reader keeps one-line pointers here; the full reasoning
 lives below so `MT2USBReader.cpp` stays legible.
+
+NB (RE'd 2026-07-07, 10.9 binary): Apple's `handleReport` itself dispatches `handleButton`
+(vtable slot 0xb28, call at handleReport+0x1fd) and contains a `semaphore_timedwait` on its
+user-client enqueue path — so the chained call under the engine's session lock can block for a
+bounded time; acceptable because contention on that lock is only the BT-only idle timer and
+transport-switch registration.
 
 ### Enable → settle → start ordering (panic hardening) (`sendEnable` / `settle`)
 
