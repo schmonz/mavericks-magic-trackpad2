@@ -28,7 +28,7 @@
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
 #include "mt2_usb_decode.h"            /* mt2_usb_decode -> VoodooInputEvent (the decode seam) */
-#include "mt2_usb_reframe.h"           /* mt2_apple_checksum + mt2_usb_click_report */
+#include "mt2_usb_bytes.h"           /* mt2_apple_checksum + mt2_usb_click_report */
 #include "mt1_encode.h"
 #include "MT2Gesture.h"                /* engine: connectionEstablished/submitFrame + sink type */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
@@ -296,7 +296,7 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     gGenuineSelf = fGenuine;   /* the USB sink's handleReport/handleButton target */
 
     /* Join the shared engine: register our policy row + sink, reset per-stream session state
-       (replaces the old mt2_usb_reframe_reset/gLastUsbButton reset — one reset point now).
+       (replaces the old mt2_usb_bytes_reset/gLastUsbButton reset — one reset point now).
        Frames cannot flow until the interpose above exists, so reset-before-first-frame holds.
        A report landing in the microsecond window between interpose-live and this registration
        is dropped-with-success (by the shim's gUsbReader guard, then by the engine's single-active

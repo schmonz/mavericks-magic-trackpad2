@@ -1,5 +1,5 @@
 #include "test.h"
-#include "../src/mt2_usb_reframe.h"
+#include "../src/mt2_usb_bytes.h"
 #include <string.h>
 
 static void test_checksum_trivial(void) {

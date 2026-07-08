@@ -1,4 +1,4 @@
-#include "mt2_usb_reframe.h"
+#include "mt2_usb_bytes.h"
 
 void mt2_apple_checksum(uint8_t *buf, size_t n) {
     if (n < 3) return;

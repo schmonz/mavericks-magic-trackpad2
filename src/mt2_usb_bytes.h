@@ -1,5 +1,5 @@
-#ifndef MT2_USB_REFRAME_H
-#define MT2_USB_REFRAME_H
+#ifndef MT2_USB_BYTES_H
+#define MT2_USB_BYTES_H
 #include <stddef.h>
 #include <stdint.h>
 
@@ -7,10 +7,9 @@
 extern "C" {
 #endif
 
-/* Genuine-USB byte-level helpers for MT2USBReader's registered transport sink: Apple's
- * handleReport checksum and the handleButton click report. The stream CONDITIONING that
- * used to live here (usb_assemble_compactv4's private lifecycle) moved into the shared
- * mt2_session engine (policy row mt2_policy_default) — see docs/mt-stack/reader-seam-map.md. */
+/* USB driver byte-format helpers for MT2USBReader's sink: Apple's handleReport additive
+ * checksum + the handleButton click report (byte 15). The stream conditioning that once
+ * lived here moved into the shared mt2_session engine. */
 
 /* Overwrite the last two bytes of buf with Apple's 16-bit additive checksum:
  * low=byte[n-2], high=byte[n-1], where the sum is over bytes[0 .. n-3].
