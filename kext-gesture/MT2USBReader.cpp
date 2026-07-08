@@ -4,10 +4,11 @@
  * Apple's genuine AppleUSBMultitouchDriver on it, seed the config it needs (geometry +
  * user-client, via the init dict), and send the MT2 0x02 USB multitouch-enable. SHARED
  * ENGINE (the ~97%) is what the seam feeds. There is ONE seam: mt2_usb_handle_report runs
- * in place of the genuine driver's handleReport, reframes each raw MT2 0x02 report into the
- * CompactV4 packet Apple's recognizer accepts (mt2_usb_to_compactv4), and chains the
- * original. Apple's driver owns the interface + interrupt pipe and does all the
- * contact/gesture/cursor work; we only translate the stream at its seam.
+ * in place of the genuine driver's handleReport, reframes each raw MT2 0x02 report by handing
+ * the decoded VoodooInputEvent to the shared session engine (policy row mt2_policy_usb) whose
+ * registered sink re-encodes + chains the original. Apple's driver owns the interface +
+ * interrupt pipe and does all the contact/gesture/cursor work; we only translate the stream
+ * at its seam.
  *
  * Dirty tricks, named where used: mt2_usb_handle_report (THE SEAM, the handleReport splice),
  * usb_gh_interpose (instance-scoped vtable clone), the pre-start 0x02 enable + settle, the
@@ -27,7 +28,9 @@
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
 #include "mt2_usb_decode.h"            /* mt2_usb_decode -> VoodooInputEvent (the decode seam) */
-#include "mt2_usb_reframe.h"           /* usb_assemble_compactv4 + button-edge/absence helpers */
+#include "mt2_usb_reframe.h"           /* mt2_usb_click_report + absence-frame helpers */
+#include "mt1_encode.h"
+#include "MT2Gesture.h"                /* engine: connectionEstablished/submitFrame + sink type */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
 #include "mt2_geometry.h"              /* MT2_SURFACE_WIDTH/HEIGHT — one knob shared with the BT report */
@@ -50,7 +53,24 @@ typedef IOReturn (*usb_handle_report_fn)(void *self, IOMemoryDescriptor *report,
                                          IOHIDReportType type, IOOptionBits options);
 static usb_handle_report_fn gOrigUsbHandleReport = 0;
 typedef void (*usb_handle_button_fn)(void *self, uint8_t *report);
-static uint8_t gLastUsbButton = 0;             /* last physical-button state seen (edge-gated) */
+
+/* Set by com_schmonz_MT2Gesture::start (same kext). */
+extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
+
+/* The reader instance = the session's source token (registered at connectionEstablished).
+ * Single device -> one global, like gGenuineSelf. */
+static IOService *gUsbReader = 0;
+
+/* The chained handleReport's IOReturn + the caller's type/options, threaded through the
+ * void-returning sink so mt2_usb_handle_report still returns Apple's real status. Safe NOT
+ * because of the session lock but because every access happens on the ONE thread that can run
+ * mt2_usb_handle_report (the genuine driver's interrupt-read completion; one outstanding read
+ * per pipe, re-armed serially — the same single-caller invariant the retired gLastUsbButton
+ * edge state relied on). The pump bypasses the shim and never touches these. If a second
+ * concurrent handleReport caller ever appears, these would mix type/options between calls. */
+static IOReturn           gChainRc      = kIOReturnSuccess;
+static IOHIDReportType    gChainType    = kIOHIDReportTypeInput;
+static IOOptionBits       gChainOptions = 0;
 
 /* Post-liftoff absence-frame pump: after the device falls silent at liftoff we emit zero-contact
  * frames so the recognizer's deferred per-frame tap commits (2-finger secondary click) don't starve.
@@ -70,18 +90,51 @@ static uint32_t usb_ts_22bit(void) {
     return (uint32_t)(((uint64_t)s * 1000 + u / 1000) & 0x3FFFFF);   /* monotonic ms, 22-bit */
 }
 
+/* USB transport sink (registered with the engine at connectionEstablished; calls arrive under
+ * the session lock). feed_frame is the second half of the old usb_assemble_compactv4: mt1_encode
+ * the session-conditioned frame (session policy row mt2_policy_usb reproduces the old assembly's
+ * conditioning byte-for-byte — proven by tests/test_usb_engine_equivalence.c), append Apple's
+ * checksum, wrap, and chain the ORIGINAL handleReport. post_click drives the self-driven
+ * handleButton (see the dirty-trick note at mt2_usb_handle_report). */
+static void usb_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
+    (void)ctx;
+    if (!gOrigUsbHandleReport || !gGenuineSelf) return;
+    uint8_t out[256];
+    int n = mt1_encode(frame, out, sizeof(out) - 2, usb_ts_22bit());
+    if (n <= 0) return;
+    out[n] = out[n + 1] = 0;
+    mt2_apple_checksum(out, (size_t)n + 2);
+    size_t outlen = (size_t)n + 2;
+    IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);
+    if (!md) { gChainRc = kIOReturnNoMemory; return; }
+    md->setLength(outlen);
+    md->writeBytes(0, out, outlen);
+    gChainRc = gOrigUsbHandleReport(gGenuineSelf, md, gChainType, gChainOptions);
+    md->release();
+}
+static void usb_sink_post_click(void *ctx, unsigned mask) {
+    (void)ctx;
+    if (!gGenuineSelf) return;
+    uint8_t rep[16];
+    mt2_usb_click_report(mask, rep);
+    usb_handle_button_fn hb =
+        (usb_handle_button_fn)((*(void ***)gGenuineSelf)[USB_HANDLEBUTTON_SLOT_INDEX]);
+    if (hb) hb(gGenuineSelf, rep);
+}
+static const mt2_transport_sink_t kUsbSink =
+    { usb_sink_feed_frame, usb_sink_post_click, /*inject_encoded*/ 0, 0 };
+
 /* THE SEAM (the reframe splice): runs in place of the genuine driver's handleReport (usb_gh_interpose
  * points the vtable slot here). Read the raw MT2 0x02 report, then — structurally mirroring the BT
- * reader (mt2_bt_decode -> submitFrame) — DECODE to the VoodooInputEvent seam (mt2_usb_decode) and run
- * the USB ASSEMBLY on it (usb_assemble_compactv4: drop-lifted + lifecycle + mt1_encode + checksum),
- * wrap in a fresh descriptor, and chain the original; non-touch reports pass through untouched.
- * extern "C" free fn; first arg is `this`. */
+ * reader (mt2_bt_decode -> submitFrame) — hand the decoded VoodooInputEvent to the shared session
+ * (policy row mt2_policy_usb); the registered kUsbSink encodes + checksums + chains the original.
+ * Non-touch reports pass through untouched. extern "C" free fn; first arg is `this`. */
 extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report,
                                           IOHIDReportType type, IOOptionBits options) {
     if (!gOrigUsbHandleReport) return kIOReturnError;
     if (!report) return gOrigUsbHandleReport(self, report, type, options);
 
-    uint8_t mt2[256], out[256];
+    uint8_t mt2[256];
     IOByteCount mn = report->getLength();
     if (mn == 0 || mn > sizeof(mt2)) return gOrigUsbHandleReport(self, report, type, options);
     report->readBytes(0, mt2, mn);
@@ -89,29 +142,23 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     if (mt2[0] != 0x02)                                   /* not a touch report: pass through untouched */
         return gOrigUsbHandleReport(self, report, type, options);
 
-    /* Dirty trick (self-driven handleButton): the genuine driver's handleButton is normally fed by a
-     * button-provider service our manual-start lacks, so it never fires. Detect the button edge in the
-     * report and drive handleButton ourselves (reuses Apple's dispatch to the already-wired driver). */
-    uint8_t btnrep[16];
-    if (mt2_usb_button_edge(mt2, (size_t)mn, &gLastUsbButton, btnrep)) {
-        usb_handle_button_fn hb = (usb_handle_button_fn)((*(void ***)self)[USB_HANDLEBUTTON_SLOT_INDEX]);
-        if (hb) hb(self, btnrep);
-    }
-
     VoodooInputEvent frame;
     if (mt2_usb_decode(mt2, (size_t)mn, &frame) != 0)          /* decode -> VoodooInputEvent (seam) */
         return gOrigUsbHandleReport(self, report, type, options);
-    size_t outlen = 0;
-    if (usb_assemble_compactv4(&frame, usb_ts_22bit(), out, sizeof(out), &outlen) != 0)  /* assembly */
-        return gOrigUsbHandleReport(self, report, type, options);
-    mt2_diag_frame(MT2_DIAG_USB, &frame, /*want_first=*/true);   /* shared: first-frame (lvl1) + per-frame edge (lvl2) */
+    mt2_diag_frame(MT2_DIAG_USB, &frame, /*want_first=*/true);   /* pre-session, matching BT's diag point */
 
-    IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);
-    if (!md) return kIOReturnNoMemory;
-    md->setLength(outlen);
-    md->writeBytes(0, out, outlen);
-    IOReturn rc = gOrigUsbHandleReport(self, md, type, options);
-    md->release();
+    /* Cross the seam, structurally identical to BT's shim: the SHARED session conditions the
+       frame (mt2_policy_usb = the old assembly byte-for-byte) and kUsbSink chains the original
+       handleReport, capturing its IOReturn so the USB stack still sees Apple's real status.
+       The physical-button edge now comes from the session's click path (same report[1] bit0,
+       via mt2_decode) instead of the retired raw-byte detector. A session-dropped frame is
+       swallowed and reports success — deliberate: there is no assembled frame to chain, and
+       passing the raw MT2 bytes through would fail Apple's validateChecksum. */
+    gChainType = type; gChainOptions = options;
+    gChainRc = kIOReturnSuccess;
+    if (gActiveMT2Gesture && gUsbReader)
+        gActiveMT2Gesture->submitFrame(gUsbReader, &frame);
+    IOReturn rc = gChainRc;
 
     /* A real report just arrived: refill the pump budget and (re)arm the silence timer, so the
      * post-liftoff absence pump fires only after the device falls quiet — never during a gesture. */
@@ -260,17 +307,26 @@ static const gh_adapter_t kUsbAdapter = {
 };
 
 /* Genuine-USB path, as a sequence of named steps (named alike to MT2BTReader where the action matches):
- * reset per-stream state, send the MT2 multitouch-enable, settle, host + interpose the genuine driver,
- * arm the absence pump. The enable→settle→start ORDER is load-bearing (panic hardening) — preserve it.
- * The genuine driver OWNS the interface + interrupt pipe; our reader must NOT open them. */
+ * reset per-stream diagnostics, send the MT2 multitouch-enable, settle, host + interpose the genuine
+ * driver, join the shared engine, arm the absence pump. The enable→settle→start ORDER is load-bearing
+ * (panic hardening) — preserve it. The genuine driver OWNS the interface + interrupt pipe; our reader
+ * must NOT open them. */
 bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     (void)provider;
 
-    resetTransportState();          /* fresh per-stream reframe + button-edge state */
+    resetTransportState();          /* fresh per-stream diagnostics */
     sendEnable();                   /* MT2 USB multitouch-enable (control transfer on fIntf) */
     settle();                       /* device leaves mouse mode before the AMD probes it */
     if (!manualStartGenuineAmd())   /* host the genuine AMD + interpose handleReport */
         return false;
+
+    /* Join the shared engine: register our policy row + sink, reset per-stream session state
+       (replaces the old mt2_usb_reframe_reset/gLastUsbButton reset — one reset point now).
+       Frames cannot flow until the interpose above exists, so reset-before-first-frame holds. */
+    gUsbReader = this;
+    if (gActiveMT2Gesture)
+        gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING, &mt2_policy_usb, &kUsbSink);
+
     armAbsencePump();               /* post-liftoff absence-frame heartbeat (deferred tap commits) */
 
     IOLog("MT2USBReader: genuine AppleUSBMultitouchDriver started + handleReport interposed (slot %lu)\n",
@@ -279,13 +335,11 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
     return true;
 }
 
-/* Step: zero the per-stream state (extracted from startGenuine). */
+/* Step: reset the per-stream diagnostics (lifecycle + button state now reset by the engine at
+ * connectionEstablished). A real re-enumeration re-observes report ids and re-arms the
+ * first-frame + gap markers; a screensaver does NOT re-enter here, so the gap heartbeat
+ * correctly spans the idle window. */
 void com_schmonz_MT2USBReader::resetTransportState() {
-    mt2_usb_reframe_reset();   /* fresh per-finger lifecycle history for this stream */
-    gLastUsbButton = 0;        /* fresh physical-button edge state for this stream */
-    /* Fresh shared diag for this stream: a real re-enumeration re-observes report ids and re-arms the
-     * first-frame + gap markers. A screensaver does NOT re-enter here, so the gap heartbeat correctly
-     * spans the idle window. */
     mt2_diag_reset(MT2_DIAG_USB);
 }
 
@@ -351,6 +405,11 @@ void com_schmonz_MT2USBReader::releaseInterface(void) {
     }
     if (gUsbWorkLoop) { gUsbWorkLoop->release(); gUsbWorkLoop = 0; }
     gPumpBudget = 0; gGenuineSelf = 0;
+
+    /* Deregister from the engine BEFORE the vtable restore: after connectionClosed returns, no
+       session effect can reach kUsbSink, so gh_stop can never race a feed into a dying target. */
+    if (gActiveMT2Gesture) gActiveMT2Gesture->connectionClosed(this);
+    gUsbReader = 0;
 
     /* genuine_host ordered, idempotent teardown: restore the vtable FIRST (avoids the in-flight
      * handleReport use-after-free), then terminate + release the genuine driver. State-aware + safe to

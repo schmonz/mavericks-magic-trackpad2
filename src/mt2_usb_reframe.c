@@ -18,6 +18,12 @@ static int             g_lc_ready = 0;
 
 void mt2_usb_reframe_reset(void) { mt2_lifecycle_reset(&g_lc); g_lc_ready = 1; }
 
+/* handleButton report from a session click mask. See header. */
+void mt2_usb_click_report(unsigned mask, uint8_t out[16]) {
+    for (int i = 0; i < 16; i++) out[i] = 0;
+    out[15] = mask ? 1 : 0;                     /* handleButton reads only report[0xf] */
+}
+
 /* Physical-button edge detector for the genuine-USB handleButton feed. See header. */
 int mt2_usb_button_edge(const uint8_t *mt2, size_t mt2_len, uint8_t *last, uint8_t *out_report) {
     if (!mt2 || !last || !out_report || mt2_len < 2) return 0;

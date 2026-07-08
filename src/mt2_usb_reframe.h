@@ -44,6 +44,12 @@ int mt2_usb_to_compactv4(const uint8_t *mt2, size_t mt2_len, uint32_t ts,
 /* Clear the per-finger lifecycle history (call at device start). */
 void mt2_usb_reframe_reset(void);
 
+/* Build the 16-byte AppleUSBMultitouchDriver::handleButton report from a session click mask
+ * (0 release / 0x1 primary / 0x2 two-finger secondary). handleButton reads only byte[15];
+ * any pressed mask maps to 1 — the secondary-vs-primary decision is Apple's on this path
+ * (driven by contact count), exactly as with the raw-bit edge detector this replaces. */
+void mt2_usb_click_report(unsigned mask, uint8_t out[16]);
+
 /* Physical-button edge for the genuine-USB path. The genuine AppleUSBMultitouchDriver gets the
  * button from a separate button-provider service (handleButton, fed via buttonPublished) that our
  * manual-start lacks — NOT from the MT frame — so the in-frame button bit can never click here.
