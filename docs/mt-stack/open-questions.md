@@ -326,7 +326,7 @@ plus disassembly of the ACTUAL running driver tell the real story:
   `validateChecksum`; `handleReport` just calls it.)
 - **Checksum is the hard gate, and OUR reframe PASSES it.** `validateChecksum` = `sum(buf[0..len-3]) mod
   0x10000` compared to `(buf[len-1]<<8)|buf[len-2]` (low byte at `len-2`, high at `len-1`). Our
-  `mt2_usb_reframe.c` matches. Proof from `system.log`: of 5000+ `checksum is incorrect` lines, EVERY one is
+  `mt2_usb_bytes.c` (the checksum helper, formerly in `mt2_usb_reframe.c`) matches. Proof from `system.log`: of 5000+ `checksum is incorrect` lines, EVERY one is
   a raw `0x2` packet (21/8/2-byte) from the PRIOR spike; there are ZERO failures for our `0x60` packets
   (17-byte/26-byte). Our reframed packets validate.
 - **Real blocker = validated packets are never DELIVERED.** After a valid checksum, `handleReport`

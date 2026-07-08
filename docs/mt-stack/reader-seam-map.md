@@ -10,11 +10,14 @@ guides the later extraction tasks.
 > fixed: both readers now feed ONE `mt2_session` via `MT2Gesture::submitFrame`, with the
 > three per-transport behavior deltas expressed as a policy row (`mt2_session_policy_t`:
 > liftoff shape / emit-empties / watchdog; rows `mt2_policy_bt` / `mt2_policy_usb` in
-> `src/mt2_session.c`) and delivery as a reader-registered `mt2_transport_sink_t`
+> `src/mt2_session.c`, which later — 2026-07-08 — converged into one `mt2_policy_default`)
+> and delivery as a reader-registered `mt2_transport_sink_t`
 > (BT: encode → `handleTouchFrame`; USB: encode + checksum → chained `handleReport`).
 > USB's private lifecycle (`g_lc`), `usb_assemble_compactv4`/`mt2_usb_to_compactv4`, and
-> the raw-byte button edge are deleted; the USB absence pump remains reader-side and
-> untouched. Byte identity was proven by a parallel-run oracle before the old assembly
+> the raw-byte button edge are deleted; the USB absence pump was removed 2026-07-08 when USB
+> adopted the shared session's liftoff + silence watchdog. (The convergence queue — see
+> `explanation.md` — completed 2026-07-08.) Byte identity was proven by a parallel-run oracle
+> before the old assembly
 > was deleted; `tests/test_reader_characterization.c` re-pins the engine path against the
 > UNCHANGED goldens. The line-number tables below describe the PRE-unification readers —
 > kept as the map that guided the extraction.

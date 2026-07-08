@@ -38,11 +38,14 @@ of our objects*, not another imperative special-case.
   (`tests/test_pane_watch.m`).
 - **`kext-gesture/gh_default_adapter.cpp`** — half-realized: 7 shared generic callbacks with the provider
   threaded through a seam. The config-engine in miniature (a fuller engine waits on a real 3rd device).
-- **`mt2_session_policy_t` + rows (`src/mt2_session.{h,c}`)** — stream conditioning as
+- **`mt2_session_policy_t` (`src/mt2_session.{h,c}`)** — stream conditioning as
   policy DATA, in embryo: the three observed BT/USB deltas (liftoff shape, emit-empties,
-  watchdog) are per-transport config rows, and each queued convergence is a one-line flip
-  with a known test. Realized 2026-07-07 by the readers engine unification; the fuller
-  per-gate policy (`MT1_FIRM_RADIUS`, settle, geometry clamp) remains latent.
+  watchdog) started as per-transport config rows, each a one-line flip with a known test.
+  Realized 2026-07-07 by the readers engine unification; the convergence then COMPLETED
+  2026-07-08 — every flip landed as its own tested change, the two rows converged into a
+  single `mt2_policy_default` shared by both transports, and the USB absence pump was
+  retired once USB adopted the shared liftoff + watchdog. The fuller per-gate policy
+  (`MT1_FIRM_RADIUS`, settle, geometry clamp) remains latent.
 - **`src/mt2_splice.{h,c}` + `kext-gesture/mt2_splice_kext.cpp`** — the interpose/splice as a
   declarative install plan: a seam is a `const` row (kind MEM_SLOT | VTABLE_CLONE, gate NONE |
   SLOT_POPULATED | CLASS_NAME, slots, shims); the engine owns save-before-write /
@@ -60,7 +63,8 @@ of our objects*, not another imperative special-case.
    adapter reuses avoids a second ad-hoc SM over the identical truth.
 
 Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response table + thin HID adapter.
-(The former shape-done-small example here, `mt2_usb_reframe.c`'s raw-byte `mt2_usb_button_edge`, was
+(The former shape-done-small example here, the raw-byte `mt2_usb_button_edge` in the former
+`mt2_usb_reframe.c` — now `mt2_usb_bytes.c` — was
 deleted by the 2026-07-07 unification: the click edge now lives in the session — `mt2_click_changed`
 in `mt2_session_frame` dispatches `post_click` through the registered transport sink.) Standing
 direction + running debt list: memory `mt2-refactor-to-explainability`.
@@ -84,22 +88,19 @@ devices into its contact format; we drive a *real* MT2 into Apple's *older* stac
 **interface**, not its plumbing — becoming a VoodooInput *plugin* was evaluated and ruled wrong-direction
 (it doesn't wake the real device). Not built yet; credit the interface in CREDITS.md when we implement it.
 
-**Queued intentional convergences (post-unification, each a one-line policy flip + its own
-on-device test — do NOT batch):**
-1. USB `liftoff_shape` → `MT2_LIFTOFF_ABSENCE_PAIR` (adopt BT's proven single-liftoff;
-   test USB tap + phantom-double).
-2. USB `emit_empty_frames` → 0 (test USB idle stream + tap-drag). NOTE: today the empty
-   feed also carries contactless click edges — verify clicks survive the flip.
-3. USB `arm_watchdog` → 1 (test stuck-contact flush on USB). ORDER CONSTRAINT: this flip
-   must NOT precede flip 1 — `mt2_session_timer`'s flush emits the ABSENCE_PAIR shape
-   regardless of `liftoff_shape` (see the comment there), so arming the watchdog on a
-   PASSTHROUGH row would emit the wrong lift shape on a silence flush.
-4. THEN try removing the USB absence pump (only meaningful after 1–3 — the session's
-   liftoff + watchdog are its replacement).
-5. If all flips land, the rows become identical → collapse to one row and delete the
-   no-longer-varying dimensions.
-6. Cosmetic: rename `mt2_usb_reframe.{h,c}` to match its shrunken contents (now just the
-   checksum / click-report / absence-frame byte helpers).
+**Intentional convergences — COMPLETED + on-device validated 2026-07-08:**
+1-3. USB `mt2_policy_usb` walked to BT's shape (`liftoff_shape` → `MT2_LIFTOFF_ABSENCE_PAIR`,
+   `emit_empty_frames` → 0, `arm_watchdog` → 1), landed as one tested flip each. USB now
+   conditions its stream identically to BT.
+4. The USB absence pump was removed — the session's ABSENCE_PAIR liftoff + `MT2_IDLE_MS`
+   silence watchdog cover post-liftoff framing on both transports. Validated on-device:
+   two-finger tap-secondary (the deferred-commit gesture the pump protected) still works.
+5. The two now-identical rows collapsed into one `mt2_policy_default` (both readers register
+   it); `mt2_policy_bt` / `mt2_policy_usb` are gone.
+6. `mt2_usb_reframe.{h,c}` renamed `mt2_usb_bytes.{h,c}` (checksum + click-report byte
+   helpers only — it no longer reframes; test renamed `test_usb_bytes.c`).
+Note: tap-drag was inconclusive on-device (macOS "Enable dragging" is off by default; the
+behaviour matches BT — not a regression).
 
 **Splice engine — considered-and-declined + queued (2026-07-08):**
 - DECLINED: a single reverse-order global teardown walk. The four seams restore at genuinely
@@ -107,11 +108,17 @@ on-device test — do NOT batch):**
   on different channels/threads; one ordered walk would FABRICATE a teardown sequence Apple's
   object lifecycles don't want. Per-row restore-at-existing-site is correct here. Revisit only
   if a real cross-seam ordering need appears (the row model makes it a small addition).
-- QUEUED (each a tested one-liner, not batched): (1) uniform guards across rows — today each row
-  reproduces its seam's exact current guards (e.g. only the MEM_SLOT delegate rows check
-  only-if-still-ours on restore; the class gate is CLONE-only); (2) the
-  `gOrigUsbHandleReport`/`captured_orig` value is read once at install — fold the read strictly
-  under the write's guard when uniform guards land.
+- DECLINED (2026-07-08, after inspection): uniform guards across rows. Each row reproduces its
+  seam's exact current guards per KIND (the MEM_SLOT delegate rows check only-if-still-ours on
+  restore; the class gate is CLONE-only). Adding a still-ours check to the CLONE restore to
+  match MEM_SLOT is RISKIER than the current unconditional `vtc_restore`: a wrong check would
+  SKIP a needed restore and leave a dangling shim (panic), whereas always-restore is the safe
+  pattern. Uniformity for its own sake trades safe for risky.
+- DECLINED (2026-07-08): fold the `gOrigUsbHandleReport`/`captured_orig` read strictly under the
+  write's guard (a supposed install-time TOCTOU). `captured_orig` is already read inside the
+  gated install path; the actual concern from review was a RUNTIME shim-vs-restore race (the
+  unload-while-streaming class), which this framing doesn't address. No clean install-time
+  TOCTOU exists.
 
 ## The cast
 
@@ -656,17 +663,25 @@ sufficient (reorder-only = storm; reorder + 50 ms = clean). The enable is a cont
 `fIntf` (valid since `start()`, independent of the AMD), so it is safe to send here, before
 `gh_start`. Don't delete the settle.
 
-### Post-liftoff absence-frame pump (`armAbsencePump` / `mt2_usb_pump_action`)
+### Post-liftoff commit-window framing (shared session, both transports)
 
-The genuine recognizer's deferred tap commits (e.g. `MTTapDragManager::sendPendingSecondaryTap`,
-the 2-finger TAP secondary click) run once PER FRAME and key off the frame timestamp; our device
-goes silent at liftoff, so an isolated tap's commit window starves. After the device falls silent
-we pump zero-contact frames (advancing wall-clock ts) for a window long enough to cover the
-double-tap commit window (~30 × 15 ms ≈ 450 ms). A new real report re-arms the silence timer
-(`mt2_usb_handle_report` refills `gPumpBudget` + resets the timer to `USB_PUMP_SILENCE_MS`), so we
-never pump while a gesture is active. (RE'd 2026-06-24; mirrors the retired synthetic path's
-`emit_with_liftoff` absence pump, extended for the longer secondary-tap window.) BT solves the
-same starvation inside the session's liftoff watchdog instead.
+DURABLE RE insight (why the starvation happens): the genuine recognizer's deferred tap commits
+(e.g. `MTTapDragManager::sendPendingSecondaryTap`, the 2-finger TAP secondary click) run once PER
+FRAME and key off the frame timestamp; our device goes silent at liftoff, so an isolated tap's
+commit window starves — nothing advances the recognizer's clock to reach the commit. (RE'd
+2026-06-24.)
+
+Historically USB solved this with its own reader-side absence pump (`armAbsencePump` /
+`mt2_usb_pump_action`): after silence it pumped zero-contact frames on advancing wall-clock ts for
+a window long enough to cover the double-tap commit (~30 × 15 ms ≈ 450 ms), re-arming
+(`gPumpBudget` / `USB_PUMP_SILENCE_MS`) on any new real report so it never pumped mid-gesture. BT
+instead solved it inside the shared session's liftoff + silence watchdog.
+
+Since the 2026-07-08 convergence BOTH transports solve it the same way, inside the shared
+`mt2_session`: `emit_with_liftoff` emits the ABSENCE_PAIR at liftoff, and the silence watchdog
+flushes on silence-with-contact — together these advance the recognizer's clock across the commit
+window. The USB pump (`gPumpBudget` / `USB_PUMP_*` / `mt2_usb_pump_action`) was retired 2026-07-08
+as redundant, validated by the two-finger tap-secondary gesture still committing on-device.
 
 ### Seed via the init dictionary, not setProperty (`usb_build_init_props`)
 
