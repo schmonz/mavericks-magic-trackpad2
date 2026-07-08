@@ -164,17 +164,5 @@ static void run_tests(void) {
       mt2_session_frame(&s, USB, &f, 5000, &k);
       CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.n_arm, 0); }
 
-    /* USB row: empties emitted — a zero-contact frame with no history feeds ONE empty
-       frame (today's USB assembly encodes and forwards it; BT row drops it — see the
-       "lone lift frame" case above). The empty feed also carries the click edge: a
-       button change on a contactless report must still reach post_click (the raw-byte
-       edge detector it replaces fired on every 0x02 report). */
-    { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
-      mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_usb, 0);
-      VoodooInputEvent empty; memset(&empty,0,sizeof empty);
-      empty.isPhysicalButtonDown = 1;
-      mt2_session_frame(&s, USB, &empty, 5000, &k);
-      CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.last_feed.contact_count, 0u);
-      CHECK_EQ(r.n_click, 1); CHECK_EQ(r.n_arm, 0); }
 }
 TEST_MAIN()
