@@ -87,17 +87,14 @@ IOService *gGenuineBnb = 0;
  * feeds decoded frames through gActiveMT2Gesture->submitFrame(gInterruptReader, ...). */
 static IOService *gInterruptReader = 0;
 
-/* Saved BNB delegate: triggerInGate injects the handler-create trigger through it (spawning BNB's
- * AMD) and stop()'s restore puts it back on the channel (single genuine device, like gGenuineBnb). */
-static void *gOrigCb = 0;
-static IOService *gOrigTarget = 0;
+/* Interrupt-delegate seam state (mt2_splice, MEM_SLOT). gInterposedChannel stays — it is the
+ * "which channel" tracker (where to run the restore), the caller's concern, not the engine's. */
+static mt2_splice_state_t gBtInterruptState;
 static IOBluetoothL2CAPChannel *gInterposedChannel = 0;
 
-/* Battery poll: the CONTROL channel (PSM 17) delegate, interposed SEPARATELY from the interrupt one so
- * the interrupt shim's gOrigCb is never clobbered. The control shim forwards EVERY PDU to BNB's original
- * (the control plane must stay intact) and only peeks report 0x90 responses. Single device → globals. */
-static void *gCtrlOrigCb = 0;
-static IOService *gCtrlOrigTarget = 0;
+/* Control-delegate seam state (battery channel). Separate state from the interrupt seam so the
+ * interrupt shim's saved cb is never clobbered. gCtrlInterposedChannel stays (the tracker). */
+static mt2_splice_state_t gBtControlState;
 static IOBluetoothL2CAPChannel *gCtrlInterposedChannel = 0;
 
 /* BNB geometry seam state (mt2_splice). The row is declared after the geometry shims it names
@@ -307,8 +304,22 @@ static void bt_control_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
     if (length > 0) mt2_diag_saw_id(MT2_DIAG_BT, (length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
     mt2_maybe_publish_battery(data, length);
     /* Forward to BNB's real delegate — the control plane depends on seeing every PDU. */
-    if (gCtrlOrigCb) ((bt_l2cap_cb_t)gCtrlOrigCb)(gCtrlOrigTarget, channel, length, data);
+    if (gBtControlState.saved_cb)
+        ((bt_l2cap_cb_t)gBtControlState.saved_cb)(
+            (IOService *)gBtControlState.saved_target, channel, length, data);
 }
+
+/* The two BT L2CAP delegate seams as declarative rows (MEM_SLOT: swap the cb at +0x110, the
+ * engine saves both cb and the adjacent +0x118 target). SLOT_POPULATED gate = the old
+ * "not set yet / already ours -> NotReady" precondition. */
+static const mt2_splice_row_t kBtInterruptRow = {
+    "bt-interrupt", MT2_SPLICE_MEM_SLOT, MT2_GATE_SLOT_POPULATED, 0, 0,
+    L2CAP_DELEGATE_CB_OFF, (void *)&bt_interpose_shim, 0, 0, 0
+};
+static const mt2_splice_row_t kBtControlRow = {
+    "bt-control", MT2_SPLICE_MEM_SLOT, MT2_GATE_SLOT_POPULATED, 0, 0,
+    L2CAP_DELEGATE_CB_OFF, (void *)&bt_control_shim, 0, 0, 0
+};
 
 /* Runs in-gate (the channel's Bluetooth workloop): the only place IOBluetoothFamily
  * allows IOBluetoothObject calls. arg0 is the reader. */
@@ -531,21 +542,18 @@ IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg
 /* In the channel's command gate: read BNB's current delegate callback (channel+0x110) and,
  * if BNB has registered it, swap in our shim (saving the original for the shim to forward to).
  * We overwrite ONLY the callback pointer; the target slot (+0x118) keeps BNB's own target,
- * which the shim forwards via gOrigTarget. newDataIn re-reads +0x110 per packet, so the swap
+ * which the shim forwards via the saved target. newDataIn re-reads +0x110 per packet, so the swap
  * takes effect immediately. Returns NotReady until BNB's listenAt has populated the slot. */
 IOReturn com_schmonz_MT2BTReader::interposeInGate(OSObject * /*owner*/, void *arg0,
                                                   void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
-    uint8_t *c = (uint8_t *)ch;
-    void **cbslot = (void **)(c + L2CAP_DELEGATE_CB_OFF);
-    void *cur = *cbslot;
-    if (!cur || cur == (void *)&bt_interpose_shim) return kIOReturnNotReady;  /* not set yet / already ours */
-    gOrigCb = cur;
-    gOrigTarget = (IOService *)*(void **)(c + L2CAP_DELEGATE_CB_OFF + 8);      /* +0x118 target */
-    *cbslot = (void *)&bt_interpose_shim;
+    int rc = mt2_splice_install(&kBtInterruptRow, ch, &mt2_splice_kext_ops, &gBtInterruptState);
+    if (rc == MT2_SPLICE_NOT_READY) return kIOReturnNotReady;   /* slot not set / already ours */
+    if (rc != MT2_SPLICE_OK) return kIOReturnError;
     gInterposedChannel = ch;
-    IOLog("MT2BTReader: Path A interpose installed (origCb=%p origTgt=%p)\n", gOrigCb, gOrigTarget);
-    bt_conntrace(CSM_INTERPOSED, CSM_EV_INTERPOSE_OK, ch, gGenuineBnb, gOrigCb, 0);
+    IOLog("MT2BTReader: Path A interpose installed (origCb=%p origTgt=%p)\n",
+          gBtInterruptState.saved_cb, gBtInterruptState.saved_target);
+    bt_conntrace(CSM_INTERPOSED, CSM_EV_INTERPOSE_OK, ch, gGenuineBnb, gBtInterruptState.saved_cb, 0);
     return kIOReturnSuccess;
 }
 
@@ -553,28 +561,23 @@ IOReturn com_schmonz_MT2BTReader::interposeInGate(OSObject * /*owner*/, void *ar
 IOReturn com_schmonz_MT2BTReader::restoreInGate(OSObject * /*owner*/, void *arg0,
                                                 void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
-    void **cbslot = (void **)((uint8_t *)ch + L2CAP_DELEGATE_CB_OFF);
-    if (*cbslot == (void *)&bt_interpose_shim && gOrigCb) *cbslot = gOrigCb;
+    mt2_splice_restore(ch, &kBtInterruptRow, &mt2_splice_kext_ops, &gBtInterruptState);
     return kIOReturnSuccess;
 }
 
 /* In the CONTROL channel's gate: save BNB's control-channel delegate and swap in bt_control_shim,
  * so we can sniff GET_REPORT(0x90) responses. Same save-and-swap as interposeInGate but on separate
- * globals (gCtrlOrigCb/…). arg0 = the control channel (the control reader's own fChannel). Returns
+ * state (gBtControlState). arg0 = the control channel (the control reader's own fChannel). Returns
  * NotReady until BNB has populated the slot. */
 IOReturn com_schmonz_MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, void *arg0,
                                                          void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
-    uint8_t *c = (uint8_t *)ch;
-    void **cbslot = (void **)(c + L2CAP_DELEGATE_CB_OFF);
-    void *cur = *cbslot;
-    if (!cur || cur == (void *)&bt_control_shim) return kIOReturnNotReady;   /* not set yet / already ours */
-    gCtrlOrigCb = cur;
-    gCtrlOrigTarget = (IOService *)*(void **)(c + L2CAP_DELEGATE_CB_OFF + 8); /* +0x118 target */
-    *cbslot = (void *)&bt_control_shim;
+    int rc = mt2_splice_install(&kBtControlRow, ch, &mt2_splice_kext_ops, &gBtControlState);
+    if (rc == MT2_SPLICE_NOT_READY) return kIOReturnNotReady;
+    if (rc != MT2_SPLICE_OK) return kIOReturnError;
     gCtrlInterposedChannel = ch;
     IOLog("MT2BTReader: battery control interpose installed (origCb=%p origTgt=%p)\n",
-          gCtrlOrigCb, gCtrlOrigTarget);
+          gBtControlState.saved_cb, gBtControlState.saved_target);
     return kIOReturnSuccess;
 }
 
@@ -582,8 +585,7 @@ IOReturn com_schmonz_MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, v
 IOReturn com_schmonz_MT2BTReader::controlRestoreInGate(OSObject * /*owner*/, void *arg0,
                                                        void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
-    void **cbslot = (void **)((uint8_t *)ch + L2CAP_DELEGATE_CB_OFF);
-    if (*cbslot == (void *)&bt_control_shim && gCtrlOrigCb) *cbslot = gCtrlOrigCb;
+    mt2_splice_restore(ch, &kBtControlRow, &mt2_splice_kext_ops, &gBtControlState);
     return kIOReturnSuccess;
 }
 
@@ -615,8 +617,9 @@ IOReturn com_schmonz_MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg
     return kIOReturnSuccess;
 }
 
-/* B1-drive probe: inject the 0x60/0x02 handler-create trigger into BNB's own data callback (gOrigCb),
- * which we saved when installing the interpose. Runs in the interrupt channel's gate — the same
+/* B1-drive probe: inject the 0x60/0x02 handler-create trigger into BNB's own data callback (the
+ * interrupt seam's saved cb), which we saved when installing the interpose. Runs in the interrupt
+ * channel's gate — the same
  * context BNB's real data callback runs in. arg0 = the interposed interrupt channel. */
 IOReturn com_schmonz_MT2BTReader::triggerInGate(OSObject * /*owner*/, void *arg0,
                                                 void * /*a1*/, void * /*a2*/, void * /*a3*/) {
@@ -626,8 +629,9 @@ IOReturn com_schmonz_MT2BTReader::triggerInGate(OSObject * /*owner*/, void *arg0
      * no body-parse fault). */
     static const uint8_t kTrigger[16] = { 0xA1, MT2_TRIGGER_REPORT_ID, 0x02 };
     typedef void (*l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
-    if (gOrigCb) {
-        ((l2cap_cb_t)gOrigCb)(gOrigTarget, ch, (unsigned short)sizeof(kTrigger), (void *)kTrigger);
+    if (gBtInterruptState.saved_cb) {
+        ((l2cap_cb_t)gBtInterruptState.saved_cb)(
+            (IOService *)gBtInterruptState.saved_target, ch, (unsigned short)sizeof(kTrigger), (void *)kTrigger);
         IOLog("MT2BTReader: B1-drive injected 0x60/0x02 handler-create trigger into BNB\n");
     }
     return kIOReturnSuccess;
@@ -722,7 +726,7 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
                  * trigger is about to spawn answers its bring-up geometry query from our constants
                  * (the MTDevice is born with correct dims; a late install would be too late). */
                 self->installBnbGeometry(gGenuineBnb);
-                /* Interpose is in (gOrigCb = BNB's data cb). Inject the handler-create trigger ONCE,
+                /* Interpose is in (saved cb = BNB's data cb). Inject the handler-create trigger ONCE,
                  * in this same channel gate, so BNB spawns its own AMD before the re-enable phase.
                  * (gInterposedChannel is now set; this success branch runs once.) */
                 gate->runAction(&com_schmonz_MT2BTReader::triggerInGate, ch);
@@ -772,7 +776,6 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
         IOCommandGate *gate = ((IOBluetoothObject *)gInterposedChannel)->getCommandGate();
         if (gate) gate->runAction(&com_schmonz_MT2BTReader::restoreInGate, gInterposedChannel);
         gInterposedChannel = 0;
-        gOrigCb = 0; gOrigTarget = 0;
     }
     /* Battery: restore BNB's original control-channel delegate too (separate save-and-swap), so the
      * about-to-be-freed bt_control_shim is never called. Same single-device global pattern. */
@@ -780,7 +783,6 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
         IOCommandGate *gate = ((IOBluetoothObject *)gCtrlInterposedChannel)->getCommandGate();
         if (gate) gate->runAction(&com_schmonz_MT2BTReader::controlRestoreInGate, gCtrlInterposedChannel);
         gCtrlInterposedChannel = 0;
-        gCtrlOrigCb = 0; gCtrlOrigTarget = 0;
     }
     /* Path A: tear down the manually-started genuine BNBTrackpadDevice before we go away, or it
      * outlives the channel it was started on. Plain terminate() + release(), NO waitQuiet — the BNB

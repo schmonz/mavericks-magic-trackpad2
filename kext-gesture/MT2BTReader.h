@@ -59,7 +59,7 @@ public:
      * it back to multitouch (report 0x31). arg0 = the control reader (self). */
     static IOReturn reEnableInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
     /* B1-drive probe — in the INTERRUPT channel's gate: inject a synthetic 0x60/0x02 report into
-     * BNB's own data callback (gOrigCb) so BNB runs createMultitouchHandler and spawns its own
+     * BNB's own data callback (the interrupt seam's saved cb) so BNB runs createMultitouchHandler and spawns its own
      * AppleMultitouchDevice (S2.16/S2.17). arg0 = the interposed interrupt channel. */
     static IOReturn triggerInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
 
