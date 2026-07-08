@@ -24,6 +24,8 @@
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
 #include "MT2Gesture.h"
+#include "amd_shim.h"          /* AppleMultitouchDevice handleTouchFrame / handlePointerEventFromDevice */
+#include "mt1_encode.h"
 
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
  * with C++ linkage on both sides — no extern "C". */
@@ -139,6 +141,52 @@ static uint32_t bt_uptime_ms(void) {
     return (uint32_t)(s * 1000 + u / 1000);
 }
 
+/* Encode clock for the BT feed: kernel uptime in ms — the SAME clock the sink used before it
+ * moved here from MT2Gesture (clock_get_uptime, not clock_get_system_microtime), so the frame
+ * timestamps are unchanged by the move. */
+static uint32_t bt_encode_uptime_ms(void) {
+    uint64_t abs_t, ns;
+    clock_get_uptime(&abs_t);
+    absolutetime_to_nanoseconds(abs_t, &ns);
+    return (uint32_t)(ns / 1000000ULL);
+}
+
+/* BT transport sink (registered with the engine at connectionEstablished; calls arrive under
+ * the session lock). Delivery target = the AMD the genuine BNB spawned, read LIVE from
+ * gGenuineBnb+0x1b0 on every call — a reconnect swaps the node under us, and the old per-frame
+ * setBnbTarget refresh did exactly this read. NULL-guards drop deliveries during bring-up. */
+static void *bt_bnb_amd(void) {
+    return gGenuineBnb ? *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF) : 0;
+}
+static void bt_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
+    (void)ctx;
+    void *amd = bt_bnb_amd();
+    if (!amd) return;
+    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point. */
+    if (frame->contact_count > 0)
+        MT2_DLOG(2, "feed x=%d y=%d -> bnbAMD", frame->transducers[0].currentCoordinates.x,
+                 frame->transducers[0].currentCoordinates.y);
+    uint8_t mt1[256];
+    int n = mt1_encode(frame, mt1, sizeof(mt1), bt_encode_uptime_ms());
+    if (n <= 0) return;
+    ((AppleMultitouchDevice *)amd)->handleTouchFrame(mt1, (unsigned int)n);
+}
+static void bt_sink_post_click(void *ctx, unsigned mask) {
+    (void)ctx;
+    void *amd = bt_bnb_amd();
+    if (!amd) return;
+    MT2_DLOG(2, "post_click mask=0x%x -> bnbAMD", mask);
+    ((AppleMultitouchDevice *)amd)->handlePointerEventFromDevice(0, 0, mask, 0);
+}
+static IOReturn bt_sink_inject(void *ctx, const unsigned char *bytes, unsigned int len) {
+    (void)ctx;
+    void *amd = bt_bnb_amd();
+    if (!amd) return kIOReturnNotReady;
+    return ((AppleMultitouchDevice *)amd)->handleTouchFrame((unsigned char *)bytes, len);
+}
+static const mt2_transport_sink_t kBtSink =
+    { bt_sink_feed_frame, bt_sink_post_click, bt_sink_inject, 0 };
+
 /* Connect-flap measurement: each connection attempt gets an id (bumped on control-channel open); we
  * emit one canonical CONNTRACE line per transition through the SHARED conn_trace_format() (kernel emit
  * and `re/conn-trace` parsing can't drift). Gated at debug.mt2_log>=1. */
@@ -223,13 +271,10 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
      * FUNCTIONAL CSM_STEADY above, not a duplicate observational marker. */
     mt2_diag_frame(MT2_DIAG_BT, &tf, /*want_first=*/false);
 
-    /* Cross the seam: hand the decoded frame to the SHARED session (drop-lifted + lifecycle + liftoff),
-     * sink targeting BNB's own spawned AMD. A raw feed with no lifecycle states janked the cursor. */
-    if (gActiveMT2Gesture && gInterruptReader) {
-        void *amd = gGenuineBnb ? *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF) : 0;
-        gActiveMT2Gesture->setBnbTarget(amd);
+    /* Cross the seam: hand the decoded frame to the SHARED session; the registered BT sink
+       (kBtSink) encodes and delivers to BNB's own spawned AMD. */
+    if (gActiveMT2Gesture && gInterruptReader)
         gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
-    }
 }
 
 /* Delegate-callback ABI: IOBluetoothL2CAPChannel::newDataIn invokes (channel+0x110) as
@@ -272,7 +317,8 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         gInterruptReader = self;   /* the session source; the Path A hybrid shim feeds frames as this */
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
         if (gActiveMT2Gesture)
-            gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN);
+            gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
+                                                     &mt2_policy_bt, &kBtSink);
     }
 
     /* PSM 19 (interrupt): genuine BNB owns this channel's delegate; we do NOT listen on it ourselves
@@ -694,8 +740,10 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
     /* If we're the interrupt reader that armed the session source, clear it so the Path A
      * hybrid shim stops feeding through a freed instance. */
     if (gInterruptReader == this) gInterruptReader = 0;
-    /* Stop the full-BNB session sink from feeding a now-stale BNB AMD pointer. */
-    if (gActiveMT2Gesture) gActiveMT2Gesture->setBnbTarget(0);
+    /* Deregister from the engine: after this returns no session effect can reach our sink.
+       No-op unless we are the active source (the interrupt reader) — the control reader's
+       stop leaves the session alone; its delivery already dies via gGenuineBnb = 0 below. */
+    if (gActiveMT2Gesture) gActiveMT2Gesture->connectionClosed(this);
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */

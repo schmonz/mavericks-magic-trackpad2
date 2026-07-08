@@ -6,8 +6,9 @@
  * manually-started AppleUSBMultitouchDriver owns the interface. This nub:
  *   - hosts the shared mt2_session (settle gate, MakeTouch/Touching/BreakTouch lifecycle, liftoff)
  *     that the in-kernel readers feed via connectionEstablished()/submitFrame(); and
- *   - owns the click sink, which feeds the conditioned stream + device-button edges to that genuine
- *     AMD through fBnbTarget (set by the BT interpose; see MT2BTReader.cpp setBnbTarget).
+ *   - dispatches the session's effects to the active reader's registered transport sink
+ *     (registered at connectionEstablished, deregistered at connectionClosed) — encode and
+ *     delivery are the reader's business; this shell owns only session + lock + timer.
  * It also advertises a debug/test user client (inject pre-encoded 0x28 frames) and the
  * debug.mt2_log sysctl.
  *
@@ -22,9 +23,7 @@
 #include <kern/clock.h>
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOWorkLoop.h>
-#include "amd_shim.h"          /* AppleMultitouchDevice handleTouchFrame / handlePointerEventFromDevice */
 #include "MT2Gesture.h"
-#include "mt1_encode.h"
 #include "mt2_log.h"           /* gMT2LogLevel, MT2_DLOG, sysctl register/unregister */
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
@@ -37,30 +36,16 @@ static uint32_t uptime_ms(void) {
     return (uint32_t)(ns / 1000000ULL);
 }
 
-/* Sink: post a device-button edge (mask 0/0x1/0x2) to the genuine AMD's native button path — the
- * physical click + two-finger right-click edges the recognizer's tap path can't produce on its own.
- * fBnbTarget is the genuine spawned AppleMultitouchDevice (set by the BT interpose); NULL-guard so an
- * edge arriving before bring-up is dropped rather than crashing. */
+/* Sink trampolines: dispatch each session effect to the ACTIVE reader's registered transport
+ * sink (fXport). NULL-guarded so a watchdog fire after connectionClosed() is a no-op. Encode
+ * and delivery are the READER's business now — this shell owns only session + lock + timer. */
 void com_schmonz_MT2Gesture::sink_post_click(void *ctx, unsigned mask) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
-    if (!self->fBnbTarget) return;
-    MT2_DLOG(2, "post_click mask=0x%x -> bnbAMD", mask);
-    ((AppleMultitouchDevice *)self->fBnbTarget)->handlePointerEventFromDevice(0, 0, mask, 0);
+    if (self->fXport.post_click) self->fXport.post_click(self->fXport.ctx, mask);
 }
-/* Sink: MT1-encode the session-conditioned touch frame (lifecycle states + liftoff) and feed it to
- * the genuine spawned AppleMultitouchDevice (fBnbTarget), which Apple's recognizer turns into cursor
- * + gestures. NULL-guard for frames arriving before the BT interpose sets the target. */
 void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
-    if (!self->fBnbTarget) return;
-    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point, to
-     * correlate the faithful decoded position against the recognizer's normalization. */
-    if (frame->contact_count > 0)
-        MT2_DLOG(2, "feed x=%d y=%d -> bnbAMD", frame->transducers[0].currentCoordinates.x, frame->transducers[0].currentCoordinates.y);
-    uint8_t mt1[256];
-    int n = mt1_encode(frame, mt1, sizeof(mt1), uptime_ms());
-    if (n <= 0) return;
-    ((AppleMultitouchDevice *)self->fBnbTarget)->handleTouchFrame(mt1, (unsigned int)n);
+    if (self->fXport.feed_frame) self->fXport.feed_frame(self->fXport.ctx, frame);
 }
 /* Sink: (re)arm the silence-watchdog timer. */
 void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
@@ -68,14 +53,31 @@ void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
     if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(ms);
 }
 
-/* A reader (BT/USB) announces its transport; the session resets and arms settle. */
-void com_schmonz_MT2Gesture::connectionEstablished(IOService *source,
-                                                   mt2_transport_mode_t mode) {
+/* A reader announces its transport: register its policy row + delivery sink, reset the session. */
+void com_schmonz_MT2Gesture::connectionEstablished(IOService *source, mt2_transport_mode_t mode,
+                                                   const mt2_session_policy_t *policy,
+                                                   const mt2_transport_sink_t *sink) {
     if (fSessionLock) IOLockLock(fSessionLock);
     if (fIdleTimer) fIdleTimer->cancelTimeout();
-    mt2_session_connect(&fSession, (uintptr_t)source, mode, &mt2_policy_bt, uptime_ms());
+    fXport = *sink;
+    mt2_session_connect(&fSession, (uintptr_t)source, mode, policy, uptime_ms());
     if (fSessionLock) IOLockUnlock(fSessionLock);
     IOLog("MT2Gesture: connection established (src=%p mode=%d)\n", source, (int)mode);
+}
+
+/* Deregister: after this returns no sink callback of this reader's runs. Under the same lock
+ * submitFrame and the timer serialize on; a racing frame either completes first or is dropped
+ * by the single-active guard; the lifecycle reset makes a late timer flush produce nothing. */
+void com_schmonz_MT2Gesture::connectionClosed(IOService *source) {
+    if (fSessionLock) IOLockLock(fSessionLock);
+    if ((uintptr_t)source == fSession.active_source) {
+        if (fIdleTimer) fIdleTimer->cancelTimeout();
+        fXport.feed_frame = 0; fXport.post_click = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
+        fSession.active_source = 0;
+        mt2_lifecycle_reset(&fSession.lifecycle);
+        IOLog("MT2Gesture: connection closed (src=%p)\n", source);
+    }
+    if (fSessionLock) IOLockUnlock(fSessionLock);
 }
 /* A reader submits one decoded frame; the session decides what reaches the device. */
 void com_schmonz_MT2Gesture::submitFrame(IOService *source, const VoodooInputEvent *tf) {
@@ -84,13 +86,17 @@ void com_schmonz_MT2Gesture::submitFrame(IOService *source, const VoodooInputEve
     if (fSessionLock) IOLockUnlock(fSessionLock);
 }
 
-/* DEBUG/TEST seam (user client selector 0): inject an already-encoded MT1 0x28 report straight to
- * the genuine AMD (fBnbTarget), same as sink_feed_frame's final step. Bypasses the session so a test
- * tool can run the session/encode in userspace and feed the exact bytes. Returns the device's status
- * (e.g. ~0xE00002BC if not yet ready) — benign, never panics. */
+/* DEBUG/TEST seam (user client selector 0): route already-encoded 0x28 bytes through the active
+ * transport's inject_encoded (BT: straight to the genuine AMD's handleTouchFrame, as before).
+ * NotReady when no transport (or one without inject support) is registered. Improvement over the
+ * old fBnbTarget guard: inject now works as soon as the AMD spawns, not only after the first touch
+ * frame cached it — hands-free testing needs no priming touch. */
 IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *bytes, unsigned int len) {
-    if (!fBnbTarget) return kIOReturnNotReady;
-    return ((AppleMultitouchDevice *)fBnbTarget)->handleTouchFrame((unsigned char *)bytes, len);
+    IOReturn rc = kIOReturnNotReady;
+    if (fSessionLock) IOLockLock(fSessionLock);
+    if (fXport.inject_encoded) rc = fXport.inject_encoded(fXport.ctx, bytes, len);
+    if (fSessionLock) IOLockUnlock(fSessionLock);
+    return rc;
 }
 /* The silence-watchdog timer fired; let the session flush any outstanding BreakTouch. */
 void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /*s*/) {
@@ -110,7 +116,6 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     if (!IOService::start(provider)) {
         return false;
     }
-    fBnbTarget = 0;
     gActiveMT2Gesture = this;   /* let the in-kernel readers feed us */
     mt2_log_register();         /* debug.mt2_log sysctl (single-instance nub owns its lifetime) */
 
@@ -133,6 +138,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
     fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
     fSink.ctx = this;
+    fXport.feed_frame = 0; fXport.post_click = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
     fSessionLock = IOLockAlloc();   /* serializes timer vs submitFrame fSession access */
     fPipeWL = IOWorkLoop::workLoop();
     fIdleTimer = 0;
@@ -150,7 +156,8 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
 
     /* The genuine BNB (BT) / genuine AppleUSBMultitouchDriver (USB) spawn and drive the real
      * AppleMultitouchDevice that is the input source and the prefpane target. This nub creates no
-     * device of its own; the session sink feeds that genuine AMD via fBnbTarget. */
+     * device of its own; the session's effects reach it through the active reader's registered
+     * transport sink. */
     IOLog("MT2Gesture: nub up — genuine AMD drives input + owns the pane\n");
     return true;
 }

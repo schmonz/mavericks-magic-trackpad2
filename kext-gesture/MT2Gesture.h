@@ -1,32 +1,44 @@
 #ifndef MT2GESTURE_H
 #define MT2GESTURE_H
 #include <IOKit/IOService.h>
-#include "amd_shim.h"
 #include "mt2_session.h"
 
 /* The transport nub + session/conditioning core. It creates NO multitouch device of its own —
  * Apple's genuine driver does (BNBTrackpadDevice over BT, AppleUSBMultitouchDriver over USB). The
  * in-kernel readers (MT2BTReader, MT2USBReader) submit decoded frames through
- * connectionEstablished()/submitFrame(); the session conditions them and the sink feeds the genuine
- * AMD via fBnbTarget. See MT2Gesture.cpp. */
+ * connectionEstablished()/submitFrame(); the session conditions them and the ACTIVE reader's
+ * registered transport sink delivers to Apple's genuine consumer. See MT2Gesture.cpp. */
 class IOTimerEventSource;
 class IOWorkLoop;
 
+/* Per-transport delivery, registered by the active reader at connectionEstablished().
+ *   feed_frame:     encode + deliver one session-conditioned frame to Apple's genuine consumer
+ *                   (BT: mt1_encode -> handleTouchFrame; USB: mt1_encode + checksum -> handleReport).
+ *   post_click:     deliver a device-button edge (mask 0 release / 0x1 primary / 0x2 secondary).
+ *   inject_encoded: DEBUG seam — deliver already-encoded 0x28 bytes (the user client's feedFrame);
+ *                   NULL = unsupported on this transport (returns kIOReturnNotReady).
+ * All calls arrive under the engine's session lock; implementations must not re-enter the engine. */
+typedef struct {
+    void (*feed_frame)(void *ctx, const VoodooInputEvent *frame);
+    void (*post_click)(void *ctx, unsigned mask);
+    IOReturn (*inject_encoded)(void *ctx, const unsigned char *bytes, unsigned int len);
+    void *ctx;
+} mt2_transport_sink_t;
+
 class com_schmonz_MT2Gesture : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2Gesture)
-    void *fBnbTarget;                     /* the genuine spawned AppleMultitouchDevice (BNB+0x1b0 over
-                                             BT). The session sink feeds THIS the conditioned
-                                             (lifecycle/liftoff) stream + device-button edges. */
-    mt2_session_t fSession;               /* pure functional core: owns all post-decode
-                                             logic (settle/guard/lift-drop/decel/click) */
-    mt2_session_sink_t fSink;             /* effects seam: callbacks drive IOKit */
-    IOWorkLoop *fPipeWL;                  /* hosts the decel timer */
-    IOTimerEventSource *fIdleTimer;       /* the idle/decel timer the session arms */
-    IOLock *fSessionLock;                 /* serializes all fSession access: the timer
-                                             fires on fPipeWL while submitFrame runs on
-                                             the caller's transport workloop */
+    mt2_session_t fSession;               /* pure functional core: owns all post-decode logic */
+    mt2_session_sink_t fSink;             /* effects seam handed to the session: trampolines below */
+    mt2_transport_sink_t fXport;          /* the ACTIVE reader's delivery, registered at
+                                             connectionEstablished, cleared at connectionClosed */
+    IOWorkLoop *fPipeWL;                  /* hosts the watchdog timer */
+    IOTimerEventSource *fIdleTimer;       /* the silence-watchdog timer the session arms */
+    IOLock *fSessionLock;                 /* serializes all fSession + fXport access: the timer
+                                             fires on fPipeWL while submitFrame runs on the
+                                             caller's transport workloop */
 
-    /* Sink callbacks (ctx = this): translate session effects into IOKit calls. */
+    /* Session-sink trampolines (ctx = this): dispatch each session effect to fXport.
+       NULL-guarded — after connectionClosed() a late watchdog fire must be a no-op. */
     static void sink_post_click(void *ctx, unsigned mask);
     static void sink_feed_frame(void *ctx, const VoodooInputEvent *frame);
     static void sink_arm_timer(void *ctx, uint32_t ms);
@@ -34,17 +46,19 @@ public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
 
-    /* Point the session sink at the genuine spawned AMD (or NULL to detach before it is freed). */
-    void setBnbTarget(void *amd) { fBnbTarget = amd; }
-
-    /* Session-backed transport path: a reader arms a connection, then submits decoded
-     * VoodooInputEvent frames; the session decides what reaches the device via the sink. */
-    void connectionEstablished(IOService *source, mt2_transport_mode_t mode);
+    /* Session-backed transport path: a reader arms a connection (registering its policy row +
+     * delivery sink), then submits decoded VoodooInputEvent frames; the session decides what
+     * reaches the device via the registered sink. connectionClosed() deregisters: after it
+     * returns, no sink callback of that reader's will run (clear-under-lock + lifecycle reset). */
+    void connectionEstablished(IOService *source, mt2_transport_mode_t mode,
+                               const mt2_session_policy_t *policy,
+                               const mt2_transport_sink_t *sink);
+    void connectionClosed(IOService *source);
     void submitFrame(IOService *source, const VoodooInputEvent *tf);
     static void idleTimeout(OSObject *owner, IOTimerEventSource *sender);
 
-    /* DEBUG/TEST seam: the user client routes injected encoded 0x28 bytes here, straight
-     * to the genuine AMD (bypasses the session) for hands-free on-device testing. */
+    /* DEBUG/TEST seam: the user client routes injected encoded 0x28 bytes here, through the
+     * active transport's inject_encoded (bypasses the session). NotReady if none registered. */
     IOReturn feedFrame(const unsigned char *bytes, unsigned int len);
 };
 #endif
