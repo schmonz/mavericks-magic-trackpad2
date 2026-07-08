@@ -319,6 +319,8 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         if (gActiveMT2Gesture)
             gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
                                                      &mt2_policy_bt, &kBtSink);
+        else
+            IOLog("MT2BTReader: ENGINE NOT PUBLISHED at interrupt bind — input will be dead until reconnect (registration race)\n");
     }
 
     /* PSM 19 (interrupt): genuine BNB owns this channel's delegate; we do NOT listen on it ourselves
@@ -789,6 +791,12 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
     if (fManualBnb) {
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
         gLastBattBnb = 0;  /* forget the torn-down node so a reused address can't false-match */
+        /* Drain any in-flight sink delivery that read gGenuineBnb before the clear above, and
+         * make the clear visible to later deliveries (the store alone is no barrier), BEFORE
+         * gh_stop restores the vtable + terminates the BNB. Closes the (previously tolerated)
+         * watchdog-flush-vs-teardown window on the control reader's stop, which never goes
+         * through connectionClosed (only the interrupt reader is the registered source). */
+        if (gActiveMT2Gesture) gActiveMT2Gesture->quiesceDelivery();
         /* genuine_host ordered teardown: removeBnbGeometry (vtc_restore the geometry clone) BEFORE
          * terminate — so BNB tears down through Apple's own code, not our override — then release. */
         gh_stop(&fHost, &kBtAdapter);

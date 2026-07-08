@@ -54,6 +54,12 @@ public:
                                const mt2_session_policy_t *policy,
                                const mt2_transport_sink_t *sink);
     void connectionClosed(IOService *source);
+
+    /* Barrier for teardown paths that clear delivery targets OUTSIDE the engine (e.g. the BT
+     * control reader nulling gGenuineBnb before tearing the genuine BNB down): acquire+release
+     * the session lock, so any in-flight sink delivery completes and the caller's prior stores
+     * are visible to later sink calls before the caller proceeds to destroy the target. */
+    void quiesceDelivery(void);
     void submitFrame(IOService *source, const VoodooInputEvent *tf);
     static void idleTimeout(OSObject *owner, IOTimerEventSource *sender);
 

@@ -323,10 +323,16 @@ bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
 
     /* Join the shared engine: register our policy row + sink, reset per-stream session state
        (replaces the old mt2_usb_reframe_reset/gLastUsbButton reset — one reset point now).
-       Frames cannot flow until the interpose above exists, so reset-before-first-frame holds. */
+       Frames cannot flow until the interpose above exists, so reset-before-first-frame holds.
+       A report landing in the microsecond window between interpose-live and this registration
+       is dropped-with-success (by the shim's gUsbReader guard, then by the engine's single-active
+       guard once gUsbReader is set) — acceptable: the device was enabled 50ms ago and idle, and
+       the old code's first consumer was this same instant. */
     gUsbReader = this;
     if (gActiveMT2Gesture)
         gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING, &mt2_policy_usb, &kUsbSink);
+    else
+        IOLog("MT2USBReader: ENGINE NOT PUBLISHED at bring-up — input will be dead until replug (registration race)\n");
 
     armAbsencePump();               /* post-liftoff absence-frame heartbeat (deferred tap commits) */
 

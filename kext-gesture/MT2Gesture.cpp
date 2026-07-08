@@ -79,6 +79,16 @@ void com_schmonz_MT2Gesture::connectionClosed(IOService *source) {
     }
     if (fSessionLock) IOLockUnlock(fSessionLock);
 }
+
+/* See header. Deliberately does NOT clear fXport or the session: the caller is not the
+ * registered source (that's connectionClosed's job) — it only needs in-flight delivery drained
+ * + a memory barrier for its target-clearing stores. */
+void com_schmonz_MT2Gesture::quiesceDelivery(void) {
+    if (!fSessionLock) return;
+    IOLockLock(fSessionLock);
+    IOLockUnlock(fSessionLock);
+}
+
 /* A reader submits one decoded frame; the session decides what reaches the device. */
 void com_schmonz_MT2Gesture::submitFrame(IOService *source, const VoodooInputEvent *tf) {
     if (fSessionLock) IOLockLock(fSessionLock);
@@ -116,7 +126,6 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     if (!IOService::start(provider)) {
         return false;
     }
-    gActiveMT2Gesture = this;   /* let the in-kernel readers feed us */
     mt2_log_register();         /* debug.mt2_log sysctl (single-instance nub owns its lifetime) */
 
     /* DEBUG/TEST seam: advertise a user client so userspace tools can inject encoded
@@ -132,7 +141,9 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSession.mode = MT2_EVENT_DRIVEN;
     fSession.settle_until_ms = 0;
     fSession.last_button = 0;
-    fSession.policy = mt2_policy_bt;
+    fSession.policy = mt2_policy_bt;   /* inert default — active_source==0 drops all frames until
+                                          a reader's connectionEstablished installs its real row;
+                                          bt row chosen arbitrarily to keep the struct initialized. */
     mt2_lifecycle_reset(&fSession.lifecycle);
     fSink.post_click = &com_schmonz_MT2Gesture::sink_post_click;
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
@@ -158,12 +169,22 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
      * AppleMultitouchDevice that is the input source and the prefpane target. This nub creates no
      * device of its own; the session's effects reach it through the active reader's registered
      * transport sink. */
+
+    /* Publish LAST: readers may call connectionEstablished the moment this is visible, so every
+     * engine invariant (session fields, lock, timer, sink slots) must already hold. */
+    gActiveMT2Gesture = this;
+
     IOLog("MT2Gesture: nub up — genuine AMD drives input + owns the pane\n");
     return true;
 }
 
 void com_schmonz_MT2Gesture::stop(IOService *provider) {
-    /* Tear the watchdog timer down FIRST so a late fire can't drive the sink during teardown. */
+    /* Unpublish FIRST (mirror of start()'s publish-last), then drain: a reader that loaded the
+     * pointer before the clear is either inside a locked engine call (drained here) or will
+     * NULL-check and skip. Only then is it safe to tear the lock and timer down. */
+    if (gActiveMT2Gesture == this) gActiveMT2Gesture = 0;
+    quiesceDelivery();
+    /* Tear the watchdog timer down next so a late fire can't drive the sink during teardown. */
     if (fIdleTimer) {
         fIdleTimer->cancelTimeout();
         if (fPipeWL) fPipeWL->removeEventSource(fIdleTimer);
@@ -173,7 +194,6 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
     /* Timer is fully removed above (no more idleTimeout), so the lock has no more
      * users and is safe to free. */
     if (fSessionLock) { IOLockFree(fSessionLock); fSessionLock = 0; }
-    if (gActiveMT2Gesture == this) gActiveMT2Gesture = 0;
     mt2_log_unregister();   /* remove debug.mt2_log before the kext can unload */
     IOService::stop(provider);
 }
