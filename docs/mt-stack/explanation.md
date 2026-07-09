@@ -72,6 +72,12 @@ of our objects*, not another imperative special-case.
    (Phase B, on-device) is extracting the ONE shared IOKit observer that both userspace consumers
    read from — today the prefpane's osax and the queued USB→BT handoff still watch transport edges
    independently.
+   CANONICAL SERVICE NAMES for that observer = `AppleUSBMultitouchDriver` (USB) + `BNBTrackpadDevice`
+   (BT) — the names the pane already uses. Measured on-device 2026-07-09 (10.9.5): on a physical USB
+   unplug, `AppleUSBMultitouchDriver` terminates only ~0.038 ms AFTER `com_schmonz_MT2USBReader` (the
+   name the handoff watches today), so unifying the handoff onto the Apple-driver edge wakes BT no
+   later in any perceptible sense. Ordering is structural (the dependent reader tears down before its
+   provider), not racy; on plug the Apple driver appears first, our reader ~29 ms later.
 
 Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response table + thin HID adapter.
 (The former shape-done-small example here, the raw-byte `mt2_usb_button_edge` in the former
