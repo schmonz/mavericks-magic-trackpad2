@@ -30,10 +30,13 @@ of our objects*, not another imperative special-case.
 - **`src/mt2_connect_sm.{h,c}`** — pure BT connect/teardown state machine (`csm_step(state,event) →
   {next,action}`; `csm_teardown_steps()` is teardown as an ordered *declarative list*). The kext is the
   adapter. Tested exhaustively in `tests/test_connect_sm.c`.
-- **`src/mt2_pane_sm.{h,c}`** — pure Trackpad-prefpane transport SM (states/events/actions + reconcile);
-  the osax (`tools/mt2_prefpane_refresh/mt2_prefpane_refresh.c`) is a thin adapter that maps IOKit
-  edges + a poll to events and performs render actions. Delivery (osax / SIMBL bundle / DYLD dylib) is
-  *orthogonal* to the logic — three build targets, one payload. Tested in `tests/test_pane_sm.c`.
+- **`src/mt2_presence.{h,c}`** — pure transport-PRESENCE SM (states/events/transport-transition
+  actions + reconcile). One of three separate presence-adjacent concerns, deliberately NOT fused:
+  presence (`mt2_presence`), arbitration (`mt2_session.active_source` / the `mt2_coordinator` seam),
+  and bring-up (`mt2_connect_sm`).
+  The osax (`tools/mt2_prefpane_refresh/mt2_prefpane_refresh.c`) is a thin adapter that maps IOKit
+  edges + a poll to events and performs the render actions. Delivery (osax / SIMBL bundle / DYLD dylib) is
+  *orthogonal* to the logic — three build targets, one payload. Tested in `tests/test_presence.c`.
 - **`mt2_should_inject`** in the launch watcher — pure inject-decision + thin AppKit adapter
   (`tests/test_pane_watch.m`).
 - **`kext-gesture/gh_default_adapter.cpp`** — half-realized: 7 shared generic callbacks with the provider
@@ -57,10 +60,18 @@ of our objects*, not another imperative special-case.
   "what"). Realized 2026-07-08. The panic-prone splice is now the most-tested code, not the least.
 
 **Latent targets (apply the shape here next — ranked by payoff):**
-1. **Transport presence as one object shared by kext *and* pane.** `mt2_pane_sm` models transport truth
-   `{BT,USB present}` for the UI; the kext's single-transport arbitration *and* the queued USB→BT handoff
-   model the same reality independently. A shared transport-presence SM (same shape) that the handoff
-   adapter reuses avoids a second ad-hoc SM over the identical truth.
+1. **Transport presence is a named composable piece, not one unified object.** `mt2_presence`
+   is the shared truth `{BT,USB present}` + debounce, meant to be consumed by the two USERSPACE
+   observers (prefpane render + USB→BT handoff) via one shared IOKit observer. The kext's single-transport
+   ARBITRATION stays separate (the device self-arbitrates — cabling USB drops BT — so
+   `mt2_coordinator` is a deliberately EMPTY composition seam). A transition-heavy future device
+   plugs its logic into that coordinator seam or swaps a richer presence/arbitration piece; we do
+   NOT fold everything into one state object (that would bake MT2's "arbitration is trivial"
+   assumption into the shared shape).
+   The presence/arbitration SEPARATION and coordinator-as-seam are decided; the remaining step
+   (Phase B, on-device) is extracting the ONE shared IOKit observer that both userspace consumers
+   read from — today the prefpane's osax and the queued USB→BT handoff still watch transport edges
+   independently.
 
 Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response table + thin HID adapter.
 (The former shape-done-small example here, the raw-byte `mt2_usb_button_edge` in the former
@@ -433,7 +444,7 @@ debug rows only). So there is **no pane selector to swizzle**. **To make Rename 
 MIRROR**, folded into the osax already injected into System Prefs (`mt2_prefpane_refresh.c`, aux tick
 ~1.5 s): each tick read the MT2's `displayName`; if it CHANGED (user renamed) →
 `SET_REPORT(Feature,0x55,newName)` → `remoteNameRequest:` → `setDisplayName:nil` (auto-clear, user's
-choice). **GATE** the write to `gPsm==PSM_BT` + no transport transition in flight, keeping the
+choice). **GATE** the write to a present BT-transport MT2 (a pane-independent BT-presence signal — NOT `gPresence==PRESENCE_BT`, since renames happen on the Bluetooth pane where the Trackpad-pane SM may never have armed) + skip any in-flight transition (`gPresence==PRESENCE_HOLD`), keeping the
 in-System-Prefs SET_REPORT out of the getReport-panic scenario (`docs/mt-stack/open-questions.md` /
 `mt2-usb-bringup-getreport-panic`). All four primitives are validated on-device; only the ~40-line osax
 integration + a gated System-Prefs reload/test remain. This SUPERSEDES the standalone

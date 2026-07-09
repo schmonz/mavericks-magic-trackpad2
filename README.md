@@ -70,8 +70,8 @@ honest as the device connects, disconnects, or switches transport.
   `mt2_pipeline`/`mt2_session`/`mt2_lifecycle` (settle / lift-drop / decel /
   click logic), `mt2_geometry` + `mt2_usb_reframe` (injected sensor geometry
   and the CompactV4 reframe), `mt2_coordinator`/`mt2_connect_sm` (transport
-  arbitration), and `touch_model.h`. `mt2_pane_sm` is the pure state machine
-  behind the prefpane refresh. `vhid_mt1` is a kextless research path kept
+  arbitration), and `touch_model.h`. `mt2_presence` is the pure transport-presence
+  state machine behind the prefpane refresh. `vhid_mt1` is a kextless research path kept
   for reference.
 - `kext-gesture/` — `MT2Gesture`, the one shipped kext: the `MT2USBReader` and
   `MT2BTReader` transport readers that manual-start + interpose Apple's genuine
