@@ -212,7 +212,7 @@ interrupt `+0xe0`, control `+0xe8`, notifier `+0x110`, timer `+0x118` (these are
 driver's* layout, for understanding the discipline — not offsets we use). Our `stop()` already
 applies this shape to our own owned objects.
 
-## Cursor actuation personalities (`kext-gesture/Info.plist`)
+## Cursor actuation personalities (`kext-gesture/Info.plist.in`)
 
 The cursor moves only if an `AppleMultitouchHIDEventDriver` binds the AMD's `IOHIDInterface` (→
 `IOHIDPointing`). Two static personalities, both Apple's `IOClass`, differing only in match identity:

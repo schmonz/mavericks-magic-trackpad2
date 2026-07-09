@@ -68,16 +68,22 @@ set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/conn_trace.c
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
+# Stamp the product version (MT2_VERSION, single source of truth in the top CMakeLists) into the kext's
+# Info.plist at configure time, exactly as the pkg/appcast already derive from it. CFBundleVersion must be
+# a kextload-valid numeric version, so it takes MT2_VERSION_NUMERIC; the display string keeps the full
+# MT2_VERSION (may carry a -pre/-rc suffix). @ONLY so only @VAR@ tokens are touched.
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
+
 # Assemble the .kext bundle as a TRACKED output (not a fire-once POST_BUILD): it DEPENDS on the target's
 # binary file, so it regenerates whenever the binary relinks OR the bundle goes missing. CMake relinks the
 # binary whenever any source/object changed (the dependency it now tracks for us), so the bundle stays in
 # lockstep -- no stale bundle, no "deleted it and nothing rebuilt it" gap.
 set(KEXT_BUNDLE ${CMAKE_BINARY_DIR}/MT2Gesture.kext)
 add_custom_command(OUTPUT ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
-  DEPENDS mt2gesture_kext $<TARGET_FILE:mt2gesture_kext> ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist
+  DEPENDS mt2gesture_kext $<TARGET_FILE:mt2gesture_kext> ${CMAKE_CURRENT_BINARY_DIR}/Info.plist
   COMMAND ${CMAKE_COMMAND} -E make_directory ${KEXT_BUNDLE}/Contents/MacOS
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mt2gesture_kext> ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist ${KEXT_BUNDLE}/Contents/Info.plist
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/Info.plist ${KEXT_BUNDLE}/Contents/Info.plist
   COMMENT "Assembling MT2Gesture.kext")
 
 # `kext` stays the public target name (reload / kext-load / pkg / characterize all depend on it).
