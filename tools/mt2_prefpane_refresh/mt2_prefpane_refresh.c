@@ -53,7 +53,7 @@
 #include <IOKit/hid/IOHIDDevice.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <ApplicationServices/ApplicationServices.h>
-#include "mt2_pane_sm.h"
+#include "mt2_presence.h"
 #include "mt2_single_load.h"
 
 #define LOG(...) syslog(LOG_NOTICE, "[MT2PaneRefresh] " __VA_ARGS__)
@@ -71,7 +71,7 @@
  * ============================================================================================ */
 
 static id          gPane = NULL;          /* the live Trackpad pane instance (captured on didSelect) */
-static psm_state_t gPsm  = PSM_NONE;       /* the SM state; the adapter's only decision state */
+static presence_state_t gPresence  = PRESENCE_NONE;       /* the SM state; the adapter's only decision state */
 
 static int responds(id obj, SEL s) {
     return obj && ((signed char (*)(id, SEL, SEL))objc_msgSend)(
@@ -258,15 +258,15 @@ static int mt2_read_node_battery(void) {
 
 /* The device's battery % + whether it's charging. The % is ONE value regardless of transport (same
  * device), HELD so a transition shows it instantly; charging is a TRANSPORT property (on USB you're on
- * the cable -> charging, or charged at 100%; on BT you're on battery), inferred from gPsm rather than
+ * the cable -> charging, or charged at 100%; on BT you're on battery), inferred from gPresence rather than
  * waiting for the slow USB HID read. Debug override wins. A fresh BT node reads 0/absent until the
  * kext's first poll — treat that as the un-polled sentinel and hold the last value (a truly 0% MT2 is
  * dead + disconnected). Returns -1 only if the battery has never been known. */
 static int mt2_battery_now(int *charging) {
-    *charging = (gPsm == PSM_USB);
+    *charging = (gPresence == PRESENCE_USB);
     int ov = mt2_batt_override();
     if (ov >= 0 && ov <= 100) return ov;
-    if (gPsm == PSM_BT) {
+    if (gPresence == PRESENCE_BT) {
         int pct = mt2_read_node_battery();
         if (pct >= 1 && pct <= 100) gDevicePct = pct;
     }
@@ -310,7 +310,7 @@ static void mt2_refresh_usb_battery(void) {
         if (mt2_usb_read_battery(&p, &c)) {          /* c (charging byte) is ignored — inferred from transport */
             if (p >= 1 && p != gDevicePct) LOG("usb-battery: read %d%%", p);
             if (p >= 1 && p <= 100) gDevicePct = p;
-            if (gPsm == PSM_USB) { int ch; int pct = mt2_battery_now(&ch); if (pct >= 0) mt2_paint_battery(front_window_content(), pct, ch); }
+            if (gPresence == PRESENCE_USB) { int ch; int pct = mt2_battery_now(&ch); if (pct >= 0) mt2_paint_battery(front_window_content(), pct, ch); }
         }
     });
 }
@@ -326,8 +326,8 @@ static void mt2_refresh_usb_battery(void) {
  * Fast (BT read = a quick IOKit lookup; USB paints the cache), so perform() calls it synchronously —
  * the correct value lands in the SAME runloop turn as the render, so there is no flash. */
 static void mt2_render_battery(id root) {
-    if (gPsm == PSM_HOLD) return;   /* removal window: the _checkBatteryTimer swizzle corrects any 0 in-flight */
-    if (gPsm == PSM_NONE) {
+    if (gPresence == PRESENCE_HOLD) return;   /* removal window: the _checkBatteryTimer swizzle corrects any 0 in-flight */
+    if (gPresence == PRESENCE_NONE) {
         if (gBattPainted) {
             id ctl = NULL, pf = NULL, sl = NULL;
             find_battery_row(root, 0, &ctl, &pf, &sl);
@@ -341,7 +341,7 @@ static void mt2_render_battery(id root) {
     }
     int charging; int pct = mt2_battery_now(&charging);
     if (pct >= 0) mt2_paint_battery(root, pct, charging);
-    if (gPsm == PSM_USB) mt2_refresh_usb_battery();
+    if (gPresence == PRESENCE_USB) mt2_refresh_usb_battery();
 }
 
 /* ============================================================================================
@@ -407,15 +407,15 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
  * action; perform() applies it against the live pane and then makes the battery row correct.
  * ============================================================================================ */
 
-/* Perform one SM action against the live pane. RENDER_* drives Apple's own controller update:
+/* Perform one SM action against the live pane. ON_* drives Apple's own controller update:
  * loadMainView only when the view type must change (NoTrackpad<->Trackpad), else just set the
  * battery via the real _magicTrackpadAction(connected). We OWN that selector (see my_magicAction),
  * so this is the only place it fires. */
 static void mt2_inject_about_tab(id root);   /* fwd: (re)inject the About tab after a render (idempotent) */
-static void perform(psm_action_t a) {
+static void perform(presence_action_t a) {
     if (!gPane) return;
     switch (a) {
-    case PSM_ACT_RENDER_NONE:
+    case PRESENCE_ACT_ABSENT:
         if (current_view_is_trackpad()) {
             /* Clean any "(charging)" off the outgoing battery field NOW, while the trackpad view still
              * exists, BEFORE loadMainView switches to NoTrackpad. The field is reused when BT later
@@ -426,10 +426,10 @@ static void perform(psm_action_t a) {
             SEL lmv = sel_registerName("loadMainView");
             if (responds(gPane, lmv)) ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
         }
-        LOG("perform: RENDER_NONE (NoTrackpad)");
+        LOG("perform: ABSENT (NoTrackpad)");
         break;
-    case PSM_ACT_RENDER_BT:
-    case PSM_ACT_RENDER_USB: {
+    case PRESENCE_ACT_ON_BT:
+    case PRESENCE_ACT_ON_USB: {
         /* Rebuild the view only on a real change to/from the trackpad view (e.g. leaving NoTrackpad).
          * A BT<->USB switch stays on the trackpad view, so the faithful replay below does the in-place
          * transport update — no loadMainView, no movie-reload blink. */
@@ -437,19 +437,19 @@ static void perform(psm_action_t a) {
             SEL lmv = sel_registerName("loadMainView");
             if (responds(gPane, lmv)) ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
         }
-        gOrigMagicAction_call(a == PSM_ACT_RENDER_BT ? 1 : 0);
-        LOG("perform: %s", a == PSM_ACT_RENDER_BT ? "RENDER_BT" : "RENDER_USB");
+        gOrigMagicAction_call(a == PRESENCE_ACT_ON_BT ? 1 : 0);
+        LOG("perform: %s", a == PRESENCE_ACT_ON_BT ? "ON_BT" : "ON_USB");
         break;
     }
-    case PSM_ACT_HOLD: LOG("perform: HOLD (keep view; arm window)"); break;
-    case PSM_ACT_NONE: break;
+    case PRESENCE_ACT_HOLD: LOG("perform: HOLD (keep view; arm window)"); break;
+    case PRESENCE_ACT_NONE: break;
     }
     /* ONE place for every battery behavior: after any state render, make the battery row correct for
      * the new transport state (USB/BT paint / NoTrackpad hide). Fast + non-blocking (the HID read is
      * async inside mt2_render_battery), so it lands in the SAME runloop turn as the render — no flash,
      * and the USB paint appears immediately instead of a tick later. The aux tick calls the same
      * function as the steady-state belt. */
-    if (a == PSM_ACT_RENDER_NONE || a == PSM_ACT_RENDER_BT || a == PSM_ACT_RENDER_USB) {
+    if (a == PRESENCE_ACT_ABSENT || a == PRESENCE_ACT_ON_BT || a == PRESENCE_ACT_ON_USB) {
         mt2_render_battery(front_window_content());
         mt2_inject_about_tab(front_window_content());  /* loadMainView rebuilds the tab strip on a
                                                         * reconnect -> re-inject the About tab NOW, not on the tick */
@@ -462,22 +462,22 @@ static int gGen = 0;
 /* Run one event through the SM and perform its action on the main thread. gGen serializes the
  * pending HOLD timer: entering HOLD arms a window timer tagged with `my`; any LATER resolving
  * event bumps gGen so the in-flight timer's `my != gGen` guard fires and it no-ops (superseded).
- * A no-op event (PSM_ACT_NONE — a duplicate/stale edge) must NOT bump gGen: doing so would cancel
- * a live HOLD timer without rescheduling, stranding the SM in PSM_HOLD (reconcile won't resolve
+ * A no-op event (PRESENCE_ACT_NONE — a duplicate/stale edge) must NOT bump gGen: doing so would cancel
+ * a live HOLD timer without rescheduling, stranding the SM in PRESENCE_HOLD (reconcile won't resolve
  * HOLD->NONE by design). So only HOLD arms, and only a real resolution supersedes. */
-static void sm_event(psm_event_t e) {
-    psm_result_t r = psm_step(gPsm, e);
-    gPsm = r.next;
+static void sm_event(presence_event_t e) {
+    presence_result_t r = presence_step(gPresence, e);
+    gPresence = r.next;
     perform(r.action);
-    if (r.action == PSM_ACT_HOLD) {
+    if (r.action == PRESENCE_ACT_HOLD) {
         int my = ++gGen;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)REMOVE_CHECK_MS * NSEC_PER_MSEC),
                        dispatch_get_main_queue(), ^{
             if (my != gGen) return;
-            psm_result_t rr = psm_step(gPsm, PSM_EV_REMOVAL_ELAPSED);
-            gPsm = rr.next; perform(rr.action);
+            presence_result_t rr = presence_step(gPresence, PRESENCE_EV_REMOVAL_ELAPSED);
+            gPresence = rr.next; perform(rr.action);
         });
-    } else if (r.action != PSM_ACT_NONE) {
+    } else if (r.action != PRESENCE_ACT_NONE) {
         ++gGen;   /* a real resolution supersedes a pending hold timer; a no-op leaves it alone */
     }
 }
@@ -486,9 +486,9 @@ static void sm_event(psm_event_t e) {
 static void sm_reconcile(void) {
     int bt  = service_present("BNBTrackpadDevice");
     int usb = service_present("AppleUSBMultitouchDriver");
-    psm_result_t r = psm_reconcile(gPsm, bt, usb);
-    if (r.action != PSM_ACT_NONE) LOG("reconcile bt=%d usb=%d -> action", bt, usb);
-    gPsm = r.next;
+    presence_result_t r = presence_reconcile(gPresence, bt, usb);
+    if (r.action != PRESENCE_ACT_NONE) LOG("reconcile bt=%d usb=%d -> action", bt, usb);
+    gPresence = r.next;
     perform(r.action);
 }
 
@@ -511,10 +511,10 @@ static void dev_changed(void *ref, io_iterator_t it) {
     drain(it);
     const char *tag = ref ? (const char *)ref : "?";
     LOG("device change: %s", tag);
-    if      (!strcmp(tag, "BT+"))  sm_event(PSM_EV_BT_APPEAR);
-    else if (!strcmp(tag, "BT-"))  sm_event(PSM_EV_BT_REMOVE);
-    else if (!strcmp(tag, "USB+")) sm_event(PSM_EV_USB_APPEAR);
-    else if (!strcmp(tag, "USB-")) sm_event(PSM_EV_USB_REMOVE);
+    if      (!strcmp(tag, "BT+"))  sm_event(PRESENCE_EV_BT_APPEAR);
+    else if (!strcmp(tag, "BT-"))  sm_event(PRESENCE_EV_BT_REMOVE);
+    else if (!strcmp(tag, "USB+")) sm_event(PRESENCE_EV_USB_APPEAR);
+    else if (!strcmp(tag, "USB-")) sm_event(PRESENCE_EV_USB_REMOVE);
 }
 
 /* Arm live IOKit observers on BOTH transports (BNBTrackpadDevice + AppleUSBMultitouchDriver),
@@ -1269,9 +1269,9 @@ static void dump_view_tree(id view, int depth) {
  * backtrace). The write self-gates to a present BLUETOOTH-transport MT2 (mt2_name_write_onboard skips
  * USB, which has no room anyway); since the MT2 drives ONE transport at a time (cabling USB drops BT),
  * "a BT HID is present" means no USB bring-up storm is in flight. We additionally skip a known in-flight
- * transition (gPsm==PSM_HOLD). So a single deliberate write never lands during transport churn. NB the
- * gate is NOT gPsm==PSM_BT: renames happen on the Bluetooth pane, where the Trackpad-pane SM that drives
- * gPsm may never have armed (gPsm==PSM_NONE) — BT presence is the correct, pane-independent signal. */
+ * transition (gPresence==PRESENCE_HOLD). So a single deliberate write never lands during transport churn. NB the
+ * gate is NOT gPresence==PRESENCE_BT: renames happen on the Bluetooth pane, where the Trackpad-pane SM that drives
+ * gPresence may never have armed (gPresence==PRESENCE_NONE) — BT presence is the correct, pane-independent signal. */
 
 /* The paired MT2 IOBluetoothDevice (CoD 0x594 = peripheral+pointing, digitizer minor 0x25), or NULL.
  * IOBluetooth is resident whenever the BT pane has been shown (where Rename happens). */
@@ -1357,7 +1357,7 @@ static void mt2_name_mirror_tick(void) {
         return;
     }
     /* A real user rename to a non-empty name. */
-    if (gPsm == PSM_HOLD) {                        /* known transport transition in flight — never write during churn */
+    if (gPresence == PRESENCE_HOLD) {                        /* known transport transition in flight — never write during churn */
         if (!gNameDeferLogged) { LOG("name-mirror: pending rename \"%s\" (transition in flight) — waiting", s); gNameDeferLogged = 1; }
         return;                                   /* leave baseline unchanged so we retry next tick */
     }

@@ -4,7 +4,7 @@
 add_library(mt2core STATIC
   mt2_decode.c mt2_usb_decode.c mt2_bt_decode.c mt1_encode.c
   mt2_pipeline.c mt2_lifecycle.c mt2_session.c mt2_geometry.c
-  mt2_usb_bytes.c mt2_connect_sm.c mt2_pane_sm.c conn_trace.c genuine_host.c
+  mt2_usb_bytes.c mt2_connect_sm.c mt2_presence.c conn_trace.c genuine_host.c
   mt2_coordinator.c vhid_mt1.c mt2_battery.c mt2_single_load.c mt2_splice.c)
 # kext-gesture/ is PUBLIC because mt2_splice.h includes vtable_clone.h from there;
 # consumers (e.g. test_splice) that pull in mt2_splice.h inherit the path.
