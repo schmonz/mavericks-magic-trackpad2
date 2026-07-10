@@ -30,6 +30,15 @@ static NSString *const kAvailableUpdateKey = @"MT2AvailableUpdateVersion";
 // both unnecessary and undesirable -- we terminate immediately on a no-update result.
 static BOOL gBackground = NO;
 
+// Background-check watchdog. Sparkle's silent background check can hang before calling ANY delegate
+// (a network/appcast stall) -> no dialog, no exit, the helper lingers in the Dock forever (observed
+// 2026-07-07, "no dialog, wouldn't quit"). In --background mode we arm this timer at check-start and
+// CANCEL it the instant either delegate fires (found/not-found); if neither does, Sparkle hung, so we
+// force-exit. Cancel-on-resolution means it can NEVER kill a legit update dialog or an in-progress
+// install (those already called a delegate). Foreground (manual) checks are untouched.
+static const NSTimeInterval kBackgroundWatchdogSeconds = 120.0;
+static NSTimer *gWatchdog = nil;
+
 // Sparkle 1.x relaunches the host after a .pkg install and there is no config to suppress it. We drop
 // a marker just before relaunch so the relaunched instance exits quietly instead of re-checking.
 static NSString *const kRelaunchMarker = @"/tmp/.mt2updater-relaunched";
@@ -41,9 +50,16 @@ static NSString *const kRelaunchMarker = @"/tmp/.mt2updater-relaunched";
     (void)updater;
     [[NSData data] writeToFile:kRelaunchMarker atomically:YES];
 }
-- (void)terminateNow { [NSApp terminate:nil]; }
+- (void)terminateNow { NSLog(@"[MT2Updater] terminating"); [NSApp terminate:nil]; }
+- (void)cancelWatchdog { [gWatchdog invalidate]; gWatchdog = nil; }
+- (void)watchdogFired:(NSTimer *)t {
+    (void)t; gWatchdog = nil;
+    NSLog(@"[MT2Updater] watchdog: background check didn't resolve in %.0fs, forcing exit", kBackgroundWatchdogSeconds);
+    [NSApp terminate:nil];
+}
 - (void)updater:(SUUpdater *)updater didFindValidUpdate:(SUAppcastItem *)item {
     (void)updater;
+    [self cancelWatchdog];   // check resolved (found) -> a real dialog/install follows; don't force-exit
     // Record the available version so the prefpane's About tab can show an "Update available" hint even
     // if the user dismisses Sparkle's dialog without installing. Fires on both user + background checks.
     NSString *v = [item respondsToSelector:@selector(displayVersionString)] ? [item displayVersionString] : nil;
@@ -51,15 +67,22 @@ static NSString *const kRelaunchMarker = @"/tmp/.mt2updater-relaunched";
         [[NSUserDefaults standardUserDefaults] setObject:v forKey:kAvailableUpdateKey];
         [[NSUserDefaults standardUserDefaults] synchronize];
     }
+    // DIAGNOSTIC: in background mode Sparkle now PRESENTS its update dialog and waits for the user — an
+    // unattended daily run (pane closed) therefore lingers in the Dock until someone dismisses it. This
+    // line marks that state so a "stuck updater" can be told apart from a genuine no-terminate hang.
+    NSLog(@"[MT2Updater] update found: %@%@", (v.length ? v : @"(unknown)"),
+          gBackground ? @" — background: Sparkle presents its dialog and WAITS for the user (unattended -> lingers)" : @"");
 }
 - (void)updaterDidNotFindUpdate:(SUUpdater *)updater {
     (void)updater;
+    [self cancelWatchdog];   // check resolved (no update) -> we exit on our own below
     // Up to date -> clear any stale "update available" hint the pane might be showing.
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:kAvailableUpdateKey];
     [[NSUserDefaults standardUserDefaults] synchronize];
     // Background (scheduled) mode shows no alert -> nothing to wait for; exit right away so the
     // LSUIElement process never lingers.
-    if (gBackground) { [NSApp terminate:nil]; return; }
+    if (gBackground) { NSLog(@"[MT2Updater] no update; background -> terminating now"); [NSApp terminate:nil]; return; }
+    NSLog(@"[MT2Updater] no update; foreground -> terminate after the up-to-date alert is dismissed");
     // Sparkle 1.27 calls this delegate BEFORE it shows its modal "You're up-to-date!" alert
     // (SUUIBasedUpdateDriver -didNotFindUpdate: delegate first, then a blocking -runModal). Calling
     // [NSApp terminate:] here killed the app before that alert could appear -- so a manual check
@@ -76,7 +99,7 @@ static NSString *const kRelaunchMarker = @"/tmp/.mt2updater-relaunched";
                afterDelay:0.0
                   inModes:@[NSDefaultRunLoopMode]];
 }
-- (void)userDidCancelDownload:(SUUpdater *)updater   { (void)updater; [NSApp terminate:nil]; }
+- (void)userDidCancelDownload:(SUUpdater *)updater   { (void)updater; NSLog(@"[MT2Updater] download cancelled -> terminating"); [NSApp terminate:nil]; }
 @end
 
 static MT2UpdaterDelegate *gDelegate;  // strong; SUUpdater.delegate is unretained in 1.x
@@ -88,6 +111,10 @@ int main(int argc, const char **argv) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];  /* normal foreground app (see Info.plist) */
+
+        NSString *selfVersion = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+        NSLog(@"[MT2Updater] start: mode=%@ version=%@", gBackground ? @"background" : @"foreground",
+              selfVersion.length ? selfVersion : @"(unknown)");
 
         // Sparkle relaunched us after a successful install (it dropped a marker in
         // updaterWillRelaunchApplication:). Show one "you're updated" confirmation, since the update
@@ -125,15 +152,26 @@ int main(int argc, const char **argv) {
         // Background (daily LaunchAgent) mode HONORS that checkbox: checkForUpdatesInBackground is an
         // explicit call Sparkle runs regardless of the setting, so gate it ourselves — auto-checks OFF
         // means the daily agent does nothing. (A user-initiated check is never gated.)
-        if (gBackground && ![ud boolForKey:@"SUEnableAutomaticChecks"]) return 0;
+        if (gBackground && ![ud boolForKey:@"SUEnableAutomaticChecks"]) {
+            NSLog(@"[MT2Updater] background: auto-check disabled -> exiting");
+            return 0;
+        }
 
         [NSApp activateIgnoringOtherApps:YES];                 // LSUIElement: bring Sparkle's dialog forward
         gDelegate = [[MT2UpdaterDelegate alloc] init];
         SUUpdater *updater = [SUUpdater sharedUpdater];         // host bundle = this app (SUFeedURL/SUPublicEDKey)
         [updater setDelegate:gDelegate];
         if (gBackground) {
+            NSLog(@"[MT2Updater] background: starting silent check (watchdog %.0fs)", kBackgroundWatchdogSeconds);
+            // Arm the watchdog in common modes so it still fires if Sparkle enters a nested runloop;
+            // it's cancelled the moment a delegate resolves the check.
+            gWatchdog = [NSTimer timerWithTimeInterval:kBackgroundWatchdogSeconds
+                                                target:gDelegate selector:@selector(watchdogFired:)
+                                              userInfo:nil repeats:NO];
+            [[NSRunLoop mainRunLoop] addTimer:gWatchdog forMode:NSRunLoopCommonModes];
             [updater checkForUpdatesInBackground];             // silent: UI only if an update exists
         } else {
+            NSLog(@"[MT2Updater] foreground: starting check");
             [updater checkForUpdates:nil];                     // user-initiated: always shows UI
         }
         [NSApp run];
