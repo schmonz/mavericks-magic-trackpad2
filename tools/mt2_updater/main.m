@@ -11,7 +11,7 @@
 @interface SUUpdater : NSObject
 + (SUUpdater *)sharedUpdater;
 - (void)checkForUpdates:(id)sender;                 // user-initiated: always shows UI
-- (void)checkForUpdatesInBackground;                // scheduled/silent: shows UI only if an update exists
+- (void)checkForUpdateInformation;                  // scheduled: PROBING check -> calls delegates, NO UI ever
 - (void)setDelegate:(id)delegate;
 @end
 
@@ -59,19 +59,25 @@ static NSString *const kRelaunchMarker = @"/tmp/.mt2updater-relaunched";
 }
 - (void)updater:(SUUpdater *)updater didFindValidUpdate:(SUAppcastItem *)item {
     (void)updater;
-    [self cancelWatchdog];   // check resolved (found) -> a real dialog/install follows; don't force-exit
-    // Record the available version so the prefpane's About tab can show an "Update available" hint even
-    // if the user dismisses Sparkle's dialog without installing. Fires on both user + background checks.
+    // Record the available version so the prefpane's About tab can show an "Update available" hint.
     NSString *v = [item respondsToSelector:@selector(displayVersionString)] ? [item displayVersionString] : nil;
     if (v.length) {
         [[NSUserDefaults standardUserDefaults] setObject:v forKey:kAvailableUpdateKey];
         [[NSUserDefaults standardUserDefaults] synchronize];
     }
-    // DIAGNOSTIC: in background mode Sparkle now PRESENTS its update dialog and waits for the user — an
-    // unattended daily run (pane closed) therefore lingers in the Dock until someone dismisses it. This
-    // line marks that state so a "stuck updater" can be told apart from a genuine no-terminate hang.
-    NSLog(@"[MT2Updater] update found: %@%@", (v.length ? v : @"(unknown)"),
-          gBackground ? @" — background: Sparkle presents its dialog and WAITS for the user (unattended -> lingers)" : @"");
+    if (gBackground) {
+        // Background is a SILENT probe (checkForUpdateInformation) -> there is NO dialog and nothing to
+        // wait for; we've recorded the pane hint, so exit immediately. This is the fix for the
+        // unattended-linger family: a scheduled check that finds an update must never leave a blocking
+        // dialog up. The user installs from the About tab (a foreground, UI check).
+        [self cancelWatchdog];
+        NSLog(@"[MT2Updater] update available: %@ — recorded pane hint; background probe -> exit", v.length ? v : @"(unknown)");
+        [NSApp terminate:nil];
+        return;
+    }
+    // Foreground (manual): let Sparkle present its normal update dialog. The watchdog is background-only,
+    // so there's nothing to cancel here.
+    NSLog(@"[MT2Updater] update available: %@ — foreground: presenting Sparkle's update dialog", v.length ? v : @"(unknown)");
 }
 - (void)updaterDidNotFindUpdate:(SUUpdater *)updater {
     (void)updater;
@@ -126,21 +132,38 @@ int main(int argc, const char **argv) {
         NSFileManager *fm = [NSFileManager defaultManager];
         if ([fm fileExistsAtPath:kRelaunchMarker]) {
             NSDate *stamp = [[fm attributesOfItemAtPath:kRelaunchMarker error:NULL] fileModificationDate];
-            [fm removeItemAtPath:kRelaunchMarker error:NULL];               // always clear — never let it persist
             BOOL fresh = stamp && [[NSDate date] timeIntervalSinceDate:stamp] < 300.0;
-            if (fresh && !gBackground) {
-                [NSApp activateIgnoringOtherApps:YES];
-                NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-                NSAlert *done = [[NSAlert alloc] init];
-                [done setMessageText:@"Mavericks Trackpad 2 updated"];
-                [done setInformativeText:(ver.length
-                    ? [NSString stringWithFormat:@"The trackpad driver was updated to version %@ and is ready to use.", ver]
-                    : @"The trackpad driver was updated and is ready to use.")];
-                [done addButtonWithTitle:@"OK"];
-                [done runModal];
-                return 0;
+            if (gBackground) {
+                // A fresh marker means an update JUST installed. The postinstall reloads the
+                // daily-check LaunchAgent, whose RunAtLoad fires a background instance mid-install --
+                // don't run a redundant check right after an install, and DON'T consume the marker:
+                // leave it so Sparkle's FOREGROUND relaunch shows the single "updated" confirmation
+                // (whichever races first must not steal it). Only a STALE marker is cleared here.
+                if (fresh) {
+                    NSLog(@"[MT2Updater] fresh post-install marker; background -> exit (no check, marker kept)");
+                    return 0;
+                }
+                [fm removeItemAtPath:kRelaunchMarker error:NULL];   // stale -> clear, fall through to a check
+            } else {
+                [fm removeItemAtPath:kRelaunchMarker error:NULL];   // foreground consumes the marker
+                if (fresh) {
+                    // The update changed the kext/daemon/pane, not this helper, so there's otherwise NO
+                    // visible signal -- show one confirmation. Our own (just-replaced) bundle version IS
+                    // the new version. Freshness gate stops a stale marker from popping a bogus dialog.
+                    NSLog(@"[MT2Updater] post-install relaunch; showing 'updated to %@' confirmation",
+                          selfVersion.length ? selfVersion : @"(unknown)");
+                    [NSApp activateIgnoringOtherApps:YES];
+                    NSAlert *done = [[NSAlert alloc] init];
+                    [done setMessageText:@"Mavericks Trackpad 2 updated"];
+                    [done setInformativeText:(selfVersion.length
+                        ? [NSString stringWithFormat:@"The trackpad driver was updated to version %@ and is ready to use.", selfVersion]
+                        : @"The trackpad driver was updated and is ready to use.")];
+                    [done addButtonWithTitle:@"OK"];
+                    [done runModal];
+                    return 0;
+                }
+                // stale foreground marker -> fall through to a normal check
             }
-            // stale marker (or background mode) -> fall through to a normal check
         }
 
         // The About-tab "Check automatically" checkbox is the SINGLE control for auto-updates (default OFF).
@@ -149,9 +172,9 @@ int main(int argc, const char **argv) {
         NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
         if ([ud objectForKey:@"SUEnableAutomaticChecks"] == nil) [ud setBool:NO forKey:@"SUEnableAutomaticChecks"];
 
-        // Background (daily LaunchAgent) mode HONORS that checkbox: checkForUpdatesInBackground is an
-        // explicit call Sparkle runs regardless of the setting, so gate it ourselves — auto-checks OFF
-        // means the daily agent does nothing. (A user-initiated check is never gated.)
+        // Background (daily LaunchAgent) mode HONORS that checkbox: the probe runs regardless of the
+        // setting, so gate it ourselves — auto-checks OFF means the daily agent does nothing.
+        // (A user-initiated check is never gated.)
         if (gBackground && ![ud boolForKey:@"SUEnableAutomaticChecks"]) {
             NSLog(@"[MT2Updater] background: auto-check disabled -> exiting");
             return 0;
@@ -162,14 +185,18 @@ int main(int argc, const char **argv) {
         SUUpdater *updater = [SUUpdater sharedUpdater];         // host bundle = this app (SUFeedURL/SUPublicEDKey)
         [updater setDelegate:gDelegate];
         if (gBackground) {
-            NSLog(@"[MT2Updater] background: starting silent check (watchdog %.0fs)", kBackgroundWatchdogSeconds);
-            // Arm the watchdog in common modes so it still fires if Sparkle enters a nested runloop;
-            // it's cancelled the moment a delegate resolves the check.
+            NSLog(@"[MT2Updater] background: starting silent probe (watchdog %.0fs)", kBackgroundWatchdogSeconds);
+            // Watchdog backstop: force-exit if the probe hangs before any delegate fires. The probe
+            // itself shows no UI, so the delegates (found/not-found) resolve quickly and we exit; the
+            // watchdog only matters for a network/appcast stall.
             gWatchdog = [NSTimer timerWithTimeInterval:kBackgroundWatchdogSeconds
                                                 target:gDelegate selector:@selector(watchdogFired:)
                                               userInfo:nil repeats:NO];
             [[NSRunLoop mainRunLoop] addTimer:gWatchdog forMode:NSRunLoopCommonModes];
-            [updater checkForUpdatesInBackground];             // silent: UI only if an update exists
+            // PROBING check: calls didFindValidUpdate/updaterDidNotFindUpdate but shows NO UI, so a
+            // scheduled/unattended run can never leave a blocking dialog up. The pane's About tab
+            // surfaces any found update via the hint we record; the user installs from there.
+            [updater checkForUpdateInformation];
         } else {
             NSLog(@"[MT2Updater] foreground: starting check");
             [updater checkForUpdates:nil];                     // user-initiated: always shows UI
