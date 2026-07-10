@@ -632,12 +632,50 @@ Both pre-existing (NOT the capture-race render fix `e730175`, NOT the presence-S
   can't distinguish a USB-unplug-handoff from a genuine USB power-off faster than ~1s, so you can't just
   "hold longer" (a real power-off would then show a stale view). Levers: make BT wake *reliably* <1300ms, or
   widen HOLD and accept a longer stale view on a real power-off. Needs its own investigation.
-- **② BT power-on tap-to-stream.** On BT power-on the device registers (BNBTrackpadDevice present) but does
-  NOT stream multitouch until a touch — kext log `MT2BTReader: … retrying gently until first frame`. Our SM
-  renders `ON_BT` correctly (0 skips, device present), but the pane momentarily shows NoTrackpad until the
-  user taps to produce the first frame. Kext/device-level (related to [[bt-reconnect-enable-fails]] and the
-  BT-idle-needs-tap behavior), not the pane render. Fix likely = provoke the first frame on reconnect
-  (device-side enable/nudge) so no tap is needed.
+- **② BT power-on / reconnect tap-to-stream** — see the dedicated analysis section below.
+
+## ② BT power-on tap-to-stream — off-device analysis (2026-07-10)
+On BT (re)connect the device registers (`BNBTrackpadDevice`) but the pane momentarily shows NoTrackpad until
+a touch (`MT2BTReader: … retrying gently until first frame`). Our SM renders `ON_BT` correctly (0 skips,
+device present). Pre-existing; kext/device-level; related to [[bt-reconnect-enable-fails]].
+
+**Mechanism (banked, MT2BTReader.cpp + reference.md/explanation.md).** Control (PSM17) + interrupt (PSM19)
+channels bind → the `0xF1` enable is DEFERRED to `reEnableInGate` (firing it pre-OPEN blocks ~14s and flaps
+the link) → `interposeTimerFired` re-sends `0xF1` (250ms ×8, then 1s "gently") because BNB's `handleStart`
+knocks the device back to mouse mode (report 0x02) after our initial enable; the loop stops when
+`bt_interpose_shim` decodes the first REAL `0x31` frame (`gSteadyConn = gConnId`).
+
+**KEY REFRAME — the naive fix is a dead end.** MT2-over-BT is EVENT-DRIVEN (`src/mt2_pipeline.h`
+`MT2_EVENT_DRIVEN` = "size-0 contact on lift, then silence"): an idle device emits NOTHING, so a *real* first
+frame is physically impossible without a touch. So "provoke the first frame device-side (enable/nudge)"
+cannot work. It's a **bootstrap circularity**: the kext (and the pane, downstream) treat BT as functional
+only once a frame flows, but an untouched device sends none — everything waits on the tap.
+
+**Fix shape — a SYNTHETIC kickstart frame; reuse the feed we own, NOT the deleted synthetic driver**
+([[mt2-synthetic-removal-plan]] was removed for genuine-reuse and must NOT be revived — we keep Apple's
+recognizer). We already own the feed into the genuine AMD and already synthesize frames in the session
+(absence/pump/lifecycle, `mt2_session.c`); inject one empty/liftoff `0x31` on reconnect (which
+`mt2_bt_decode`→`mt2_decode` accepts — it is the device's own idle shape) to bring the AMD/pane up without a
+touch.
+
+**CRUX RISK + mitigation (decouple display from device-mode).** A synthetic frame fixes the DISPLAY but not
+the device's MODE — if the enable hasn't landed (device still mouse-mode, the `bt-reconnect-enable-fails`
+case), the pane would LIE (shows BT; a real touch → rejected `0x02`). Mitigation: inject the synthetic frame
+for the pane but KEEP the re-enable retry running — `gSteadyConn` is set ONLY by `bt_interpose_shim` on a
+REAL decode, so the synthetic frame never satisfies the enable gate and the retry continues until the device
+genuinely streams. Residual = a brief "pane says BT but touch not yet live" window in the rare enable-slow
+case (measure on-device).
+
+**Off-device wall (needs the console):** (1) a reliable "the enable landed / device is in multitouch mode"
+signal short of a real frame — `reEnableInGate` does raw `fChannel->sendTo(...)` FIRE-AND-FORGET (returns
+`kIOReturnSuccess` regardless; the raw L2CAP write carries no device ACK, unlike BNB's `_simpleSetReport`
+which returns `0xe00002bc` on failure), and there is no known mode-query GET_REPORT (only the `0x90` battery
+poll). (2) what actually makes the pane REVERT to NoTrackpad after `BT+` — our SM renders `ON_BT` on
+`BNBTrackpadDevice` PRESENCE, and the pane's own detection keys on that presence too (loadMainView RE), so on
+paper it should stay BT; the revert isn't explained by our SM (no `perform: ABSENT` in the log) or the banked
+pane-detection RE. Instrument `loadMainView`'s detection result at `BT+`, whether `BNBTrackpadDevice` briefly
+flaps, and whether the AMD is up pre-touch. **This also de-risks ① (USB→BT flash): once `BT+` reliably means
+a functional streaming trackpad, the pane resolves cleanly instead of flashing present-but-dead.**
 
 ## Three-finger-drag toggle — prior RE (2026-07-03), superseded by the 2026-07-10 recharacterization above
 
