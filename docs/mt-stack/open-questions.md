@@ -666,16 +666,29 @@ REAL decode, so the synthetic frame never satisfies the enable gate and the retr
 genuinely streams. Residual = a brief "pane says BT but touch not yet live" window in the rare enable-slow
 case (measure on-device).
 
-**Off-device wall (needs the console):** (1) a reliable "the enable landed / device is in multitouch mode"
-signal short of a real frame — `reEnableInGate` does raw `fChannel->sendTo(...)` FIRE-AND-FORGET (returns
-`kIOReturnSuccess` regardless; the raw L2CAP write carries no device ACK, unlike BNB's `_simpleSetReport`
-which returns `0xe00002bc` on failure), and there is no known mode-query GET_REPORT (only the `0x90` battery
-poll). (2) what actually makes the pane REVERT to NoTrackpad after `BT+` — our SM renders `ON_BT` on
-`BNBTrackpadDevice` PRESENCE, and the pane's own detection keys on that presence too (loadMainView RE), so on
-paper it should stay BT; the revert isn't explained by our SM (no `perform: ABSENT` in the log) or the banked
-pane-detection RE. Instrument `loadMainView`'s detection result at `BT+`, whether `BNBTrackpadDevice` briefly
-flaps, and whether the AMD is up pre-touch. **This also de-risks ① (USB→BT flash): once `BT+` reliably means
-a functional streaming trackpad, the pane resolves cleanly instead of flashing present-but-dead.**
+**Pane-revert half — RESOLVED by disasm 2026-07-10 (CORRECTS the earlier "the pane keys on BNBTrackpadDevice
+presence" note).** `-[Trackpad loadMainView]` (@0x225d, `tools/re disasm Trackpad`) picks the nib: it defaults
+`mBaseNibName="NoTrackpad"`, and on `IOServiceGetMatchingService(BNBTrackpadDevice)` it sets `mFoundBTTrackpad=1`
+(@0x23a0) BUT then FALLS THROUGH — the trackpad nib (`mBaseNibName="MTTrackpadController"` @0x2421) is assigned
+ONLY if `AppleUSBMultitouchDriver` is present (`jne` @0x23c7) OR a service publishes
+`ApplePreferenceIdentifier=="com.apple.AppleMultitouchTrackpad"` (IOPropertyMatch @0x2414). So on BT the
+trackpad-VIEW gate is the **functional-AMD property**, NOT `BNBTrackpadDevice` presence (that only drives
+art/battery via `mFoundBTTrackpad` → `_pickMovie`). ⇒ at `BT+` the nub is present but the AMD hasn't published
+`com.apple.AppleMultitouchTrackpad` yet → `loadMainView` → NoTrackpad, until the multitouch chain is functional.
+Corollary: our SM (which renders `ON_BT` on BNBTrackpadDevice presence) CANNOT force the trackpad view via
+`loadMainView` until the AMD publishes that property — the honest fix is to make the AMD functional, not to
+force the nib (forcing it would paint a working view over a still-dead device — the same lie as an ungated
+synthetic frame).
+
+**Remaining off-device wall (needs the console):** (1) **does the AMD publish `com.apple.AppleMultitouchTrackpad`
+on-spawn (createMultitouchHandler / the 0x60 trigger, pre-touch) or only after processing a first frame?** —
+this decides whether a synthetic kickstart frame makes the pane resolve, and whether ② is "spawn/feed the AMD"
+vs "the property genuinely needs real data". (2) the enable-landed signal — `reEnableInGate` does raw
+`fChannel->sendTo(...)` FIRE-AND-FORGET (returns `kIOReturnSuccess` regardless; no device ACK, unlike BNB's
+`_simpleSetReport`→`0xe00002bc`); no known mode-query GET_REPORT (only `0x90` battery). Quick on-device probe
+when a BT device is functional: `ioreg -l | grep -B25 "com.apple.AppleMultitouchTrackpad"` to find the
+publishing node + WHEN it appears relative to BT+/first-frame. **This de-risks ① too: once `BT+` reliably means
+the AMD has published its property, the pane resolves cleanly instead of flashing present-but-dead.**
 
 ## Three-finger-drag toggle — prior RE (2026-07-03), superseded by the 2026-07-10 recharacterization above
 
