@@ -1,5 +1,7 @@
 #ifndef MT2_PIPELINE_H
 #define MT2_PIPELINE_H
+/* Pure conditioning primitives for the pipeline's CONDITION stage. See the
+   Translate/Condition/Inject banner atop mt2_session.c for the whole picture. */
 #include "voodoo_input.h"
 #include <stdint.h>
 
@@ -15,9 +17,12 @@ int mt2_settle_passed(uint32_t now_ms, uint32_t settle_until_ms);
    contact_count := number of real contacts kept. EVENT_DRIVEN only. From MT2BTReader. */
 void mt2_drop_lifted(VoodooInputEvent *frame);
 
-/* Click edge (ported from MT2Gesture::feedFrame). On a change of button bit,
-   writes mask (0 release / 0x1 primary / 0x2 two-finger secondary) and returns 1. */
-int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
+/* Button edge: returns 1 when the device's physical-button bit CHANGED since
+   *last_button, writing a faithful mapping of that real hardware button + finger
+   count to Apple's click mask (0 release / 0x1 primary / 0x2 two-finger secondary).
+   Translation of a hardware button, NOT a synthesized click.
+   (Ported from MT2Gesture::feedFrame.) */
+int mt2_button_edge(unsigned button, int nfingers, unsigned *last_button,
                       unsigned *out_mask);
 
 #define MT2_IDLE_MS  35u   /* silence-detect after a contact */

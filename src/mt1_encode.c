@@ -92,7 +92,12 @@ int mt1_encode(const VoodooInputEvent *frame, uint8_t *buf, size_t cap, uint32_t
          * and keep distinct ids per slot, all within 1..5. */
         int finger_id = ((i + 1) % 5) + 1;   /* slot0->2(index), 1->3, 2->4, 3->5, 4->1 */
 
-        /* Contact size feeds the native tap-to-click strength gate. The recognizer
+        /* CONDITIONING (unit rescale, not fabrication): MT2 and the MT1 recognizer use
+         * different size/radii units, so a real touch's raw values fall below Apple's
+         * strength gate and get rejected. We rescale into the range that gate expects;
+         * we do not invent pressure. Below is the RE that fixes the exact scale.
+         *
+         * Contact size feeds the native tap-to-click strength gate. The recognizer
          * computes density = size*400/radii and requires it > 0.75 (RE'd in
          * MultitouchHID: MTChordCycling::tapHasValidTimingAndStrength reads
          * MTContact+0x5c, sourced from this size field). MT2's size units are far

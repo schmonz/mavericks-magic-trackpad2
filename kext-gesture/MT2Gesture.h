@@ -12,15 +12,16 @@ class IOTimerEventSource;
 class IOWorkLoop;
 
 /* Per-transport delivery, registered by the active reader at connectionEstablished().
- *   feed_frame:     encode + deliver one session-conditioned frame to Apple's genuine consumer
- *                   (BT: mt1_encode -> handleTouchFrame; USB: mt1_encode + checksum -> handleReport).
- *   post_click:     deliver a device-button edge (mask 0 release / 0x1 primary / 0x2 secondary).
- *   inject_encoded: DEBUG seam — deliver already-encoded 0x28 bytes (the user client's feedFrame);
- *                   NULL = unsupported on this transport (returns kIOReturnNotReady).
+ *   feed_frame:       encode + deliver one session-conditioned frame to Apple's genuine consumer
+ *                     (BT: mt1_encode -> handleTouchFrame; USB: mt1_encode + checksum -> handleReport).
+ *   post_button_edge: forward a change in the device's REAL physical button as Apple's click mask
+ *                     (0 release / 0x1 primary / 0x2 secondary) — a hardware button, not a synth click.
+ *   inject_encoded:   DEBUG seam — deliver already-encoded 0x28 bytes (the user client's feedFrame);
+ *                     NULL = unsupported on this transport (returns kIOReturnNotReady).
  * All calls arrive under the engine's session lock; implementations must not re-enter the engine. */
 typedef struct {
     void (*feed_frame)(void *ctx, const VoodooInputEvent *frame);
-    void (*post_click)(void *ctx, unsigned mask);
+    void (*post_button_edge)(void *ctx, unsigned mask);
     IOReturn (*inject_encoded)(void *ctx, const unsigned char *bytes, unsigned int len);
     void *ctx;
 } mt2_transport_sink_t;
@@ -39,7 +40,7 @@ class com_schmonz_MT2Gesture : public IOService {
 
     /* Session-sink trampolines (ctx = this): dispatch each session effect to fXport.
        NULL-guarded — after connectionClosed() a late watchdog fire must be a no-op. */
-    static void sink_post_click(void *ctx, unsigned mask);
+    static void sink_post_button_edge(void *ctx, unsigned mask);
     static void sink_feed_frame(void *ctx, const VoodooInputEvent *frame);
     static void sink_arm_timer(void *ctx, uint32_t ms);
 public:

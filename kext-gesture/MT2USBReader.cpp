@@ -88,7 +88,7 @@ static uint32_t usb_ts_22bit(void) {
  * the session-conditioned frame (session policy row mt2_policy_default reproduces the old assembly's
  * conditioning byte-for-byte — proven by a parallel-run oracle before the old assembly was deleted,
  * and permanently re-pinned by tests/test_reader_characterization.c's unchanged goldens), append Apple's
- * checksum, wrap, and chain the ORIGINAL handleReport. post_click drives the self-driven
+ * checksum, wrap, and chain the ORIGINAL handleReport. post_button_edge drives the self-driven
  * handleButton (see the dirty-trick note at mt2_usb_handle_report). */
 static void usb_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
     (void)ctx;
@@ -106,7 +106,7 @@ static void usb_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
     gChainRc = gOrigUsbHandleReport(gGenuineSelf, md, gChainType, gChainOptions);
     md->release();
 }
-static void usb_sink_post_click(void *ctx, unsigned mask) {
+static void usb_sink_post_button_edge(void *ctx, unsigned mask) {
     (void)ctx;
     if (!gGenuineSelf) return;
     uint8_t rep[16];
@@ -116,7 +116,7 @@ static void usb_sink_post_click(void *ctx, unsigned mask) {
     if (hb) hb(gGenuineSelf, rep);
 }
 static const mt2_transport_sink_t kUsbSink =
-    { usb_sink_feed_frame, usb_sink_post_click, /*inject_encoded*/ 0, 0 };
+    { usb_sink_feed_frame, usb_sink_post_button_edge, /*inject_encoded*/ 0, 0 };
 
 /* THE SEAM (the reframe splice): runs in place of the genuine driver's handleReport (usb_gh_interpose
  * points the vtable slot here). Read the raw MT2 0x02 report, then — structurally mirroring the BT

@@ -180,11 +180,11 @@ static void bt_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
     if (n <= 0) return;
     ((AppleMultitouchDevice *)amd)->handleTouchFrame(mt1, (unsigned int)n);
 }
-static void bt_sink_post_click(void *ctx, unsigned mask) {
+static void bt_sink_post_button_edge(void *ctx, unsigned mask) {
     (void)ctx;
     void *amd = bt_bnb_amd();
     if (!amd) return;
-    MT2_DLOG(2, "post_click mask=0x%x -> bnbAMD", mask);
+    MT2_DLOG(2, "post_button_edge mask=0x%x -> bnbAMD", mask);
     ((AppleMultitouchDevice *)amd)->handlePointerEventFromDevice(0, 0, mask, 0);
 }
 static IOReturn bt_sink_inject(void *ctx, const unsigned char *bytes, unsigned int len) {
@@ -194,7 +194,7 @@ static IOReturn bt_sink_inject(void *ctx, const unsigned char *bytes, unsigned i
     return ((AppleMultitouchDevice *)amd)->handleTouchFrame((unsigned char *)bytes, len);
 }
 static const mt2_transport_sink_t kBtSink =
-    { bt_sink_feed_frame, bt_sink_post_click, bt_sink_inject, 0 };
+    { bt_sink_feed_frame, bt_sink_post_button_edge, bt_sink_inject, 0 };
 
 /* Connect-flap measurement: each connection attempt gets an id (bumped on control-channel open); we
  * emit one canonical CONNTRACE line per transition through the SHARED conn_trace_format() (kernel emit

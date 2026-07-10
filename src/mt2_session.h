@@ -10,7 +10,7 @@
    (the shell encodes + feeds). CONTRACT: all three callbacks must be non-NULL —
    the session calls them on hot paths with no NULL checks. */
 typedef struct {
-    void (*post_click)(void *ctx, unsigned mask);
+    void (*post_button_edge)(void *ctx, unsigned mask);
     void (*feed_frame)(void *ctx, const VoodooInputEvent *frame);
     void (*arm_timer)(void *ctx, uint32_t ms);
     void *ctx;

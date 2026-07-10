@@ -39,9 +39,9 @@ static uint32_t uptime_ms(void) {
 /* Sink trampolines: dispatch each session effect to the ACTIVE reader's registered transport
  * sink (fXport). NULL-guarded so a watchdog fire after connectionClosed() is a no-op. Encode
  * and delivery are the READER's business now — this shell owns only session + lock + timer. */
-void com_schmonz_MT2Gesture::sink_post_click(void *ctx, unsigned mask) {
+void com_schmonz_MT2Gesture::sink_post_button_edge(void *ctx, unsigned mask) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
-    if (self->fXport.post_click) self->fXport.post_click(self->fXport.ctx, mask);
+    if (self->fXport.post_button_edge) self->fXport.post_button_edge(self->fXport.ctx, mask);
 }
 void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
@@ -72,7 +72,7 @@ void com_schmonz_MT2Gesture::connectionClosed(IOService *source) {
     if (fSessionLock) IOLockLock(fSessionLock);
     if ((uintptr_t)source == fSession.active_source) {
         if (fIdleTimer) fIdleTimer->cancelTimeout();
-        fXport.feed_frame = 0; fXport.post_click = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
+        fXport.feed_frame = 0; fXport.post_button_edge = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
         fSession.active_source = 0;
         mt2_lifecycle_reset(&fSession.lifecycle);
         IOLog("MT2Gesture: connection closed (src=%p)\n", source);
@@ -145,11 +145,11 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
                                           a reader's connectionEstablished installs its real row;
                                           the default row keeps the struct initialized. */
     mt2_lifecycle_reset(&fSession.lifecycle);
-    fSink.post_click = &com_schmonz_MT2Gesture::sink_post_click;
+    fSink.post_button_edge = &com_schmonz_MT2Gesture::sink_post_button_edge;
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
     fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
     fSink.ctx = this;
-    fXport.feed_frame = 0; fXport.post_click = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
+    fXport.feed_frame = 0; fXport.post_button_edge = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
     fSessionLock = IOLockAlloc();   /* serializes timer vs submitFrame fSession access */
     fPipeWL = IOWorkLoop::workLoop();
     fIdleTimer = 0;

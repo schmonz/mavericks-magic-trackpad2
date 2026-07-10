@@ -11,7 +11,7 @@ static void rec_click(void *c, unsigned m){ rec_t*r=c; r->n_click++; r->last_mas
 static void rec_feed (void *c, const VoodooInputEvent *f){ rec_t*r=c; if(r->n_feed<8) r->feeds[r->n_feed]=*f; r->n_feed++; r->last_feed=*f; }
 static void rec_arm  (void *c, uint32_t ms){ rec_t*r=c; r->n_arm++; r->last_arm=ms; }
 static mt2_session_sink_t mk(rec_t *r){
-    mt2_session_sink_t s; s.post_click=rec_click; s.feed_frame=rec_feed; s.arm_timer=rec_arm; s.ctx=r; return s;
+    mt2_session_sink_t s; s.post_button_edge=rec_click; s.feed_frame=rec_feed; s.arm_timer=rec_arm; s.ctx=r; return s;
 }
 #define BT  0xB7
 #define USB 0x5B

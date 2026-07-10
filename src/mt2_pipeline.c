@@ -14,7 +14,7 @@ void mt2_drop_lifted(VoodooInputEvent *frame) {
     frame->contact_count = kept;
 }
 
-int mt2_click_changed(unsigned button, int nfingers, unsigned *last_button,
+int mt2_button_edge(unsigned button, int nfingers, unsigned *last_button,
                       unsigned *out_mask) {
     button = button ? 1u : 0u;
     if (button == *last_button) return 0;

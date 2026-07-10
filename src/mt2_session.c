@@ -1,5 +1,25 @@
 #include "mt2_session.h"
 
+/* ===========================================================================
+ * mt2_session — the CONDITION stage of the input pipeline.
+ *
+ * The driver does three jobs; only ONE of them lives here:
+ *   TRANSLATE  faithfully reframe the MT2's native frames into the report
+ *              Apple's genuine driver expects (mt2_decode -> mt2_session ->
+ *              mt1_encode / mt2_usb_bytes). We change FORMAT, never meaning.
+ *   CONDITION  the only thing we SHAPE: settle gate, contact lifecycle
+ *              (MakeTouch/BreakTouch), liftoff shaping, silence watchdog.
+ *              This file. We shape the frame STREAM so Apple's recognizer can
+ *              run cleanly; we never invent contacts, clicks, or gestures.
+ *   INJECT     what the device's wire can't carry but Apple's path needs:
+ *              sensor geometry and the device-button gate, seeded into the
+ *              genuine driver by the readers (see MT2USBReader/MT2BTReader).
+ *
+ * Recognition — cursor, gestures, tap-to-click, right-click — is entirely
+ * Apple's. We hand its recognizer a faithful, well-conditioned stream and get
+ * out of the way. See docs/mt-stack/explanation.md (load-bearing principle).
+ * =========================================================================== */
+
 /* The single MT2 conditioning policy — both transports converged to it. */
 const mt2_session_policy_t mt2_policy_default = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
 
@@ -14,18 +34,16 @@ void mt2_session_connect(mt2_session_t *s, uintptr_t source,
     mt2_lifecycle_reset(&s->lifecycle);      /* next contacts read as new; none pending an end */
 }
 
+/* Deliver one conditioned frame to Apple's recognizer. If the device's REAL
+   physical-button bit changed since the last frame, forward that edge first —
+   the mask is a faithful mapping of the hardware button + finger count to Apple's
+   primary/secondary click code, NOT a synthesized click. */
 static void emit(mt2_session_t *s, const VoodooInputEvent *tf,
                  const mt2_session_sink_t *sink) {
     unsigned mask = 0;
-    if (mt2_click_changed((unsigned)tf->isPhysicalButtonDown, tf->contact_count, &s->last_button, &mask))
-        sink->post_click(sink->ctx, mask);
+    if (mt2_button_edge((unsigned)tf->isPhysicalButtonDown, tf->contact_count, &s->last_button, &mask))
+        sink->post_button_edge(sink->ctx, mask);
     sink->feed_frame(sink->ctx, tf);
-}
-
-static int frame_has_breaktouch(const VoodooInputEvent *f) {
-    for (int i = 0; i < (int)f->contact_count; i++)
-        if (f->transducers[i].state == TS_END) return 1;
-    return 0;
 }
 
 /* 1 iff the frame is a PURE lift -- has contacts and every one is BreakTouch (TS_END), i.e. a
@@ -38,7 +56,10 @@ static int frame_all_breaktouch(const VoodooInputEvent *f) {
     return 1;
 }
 
-/* On a FULL lift, emit a zero-contact (absence) frame -- NOT the BreakTouch frame then an absence
+/* CONDITIONING, not click synthesis: the tap-to-click decision is entirely Apple's
+   recognizer's; here we only shape WHEN it sees the lift so it can finalize its own tap.
+
+   On a FULL lift, emit a zero-contact (absence) frame -- NOT the BreakTouch frame then an absence
    frame -- and then a SECOND absence frame as a "pump".
 
    The first absence frame is what finalizes the path liftoff AND is required for tap recognition

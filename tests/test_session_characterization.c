@@ -1,15 +1,15 @@
 /* Characterization net for the mt2_session SECOND output channel and control paths that the
  * frame-byte net (test_encode / test_reader_characterization) structurally cannot see: the
- * hardware button EDGE (post_click), the settle gate, the single-active-source guard, the
+ * hardware button EDGE (post_button_edge), the settle gate, the single-active-source guard, the
  * full-lift absence+pump, and the timer/watchdog flush.
  *
  * test_session.c already asserts these behaviors by COUNTS. This file is the complementary
- * net: it records EVERY sink callback (post_click / feed_frame / arm_timer) in ORDER into one
+ * net: it records EVERY sink callback (post_button_edge / feed_frame / arm_timer) in ORDER into one
  * log and pins the exact call SEQUENCE + mask/contact values. A refactor that reorders emit()'s
- * "post_click before feed_frame", drops the pump absence, changes a click mask, or loses the
+ * "post_button_edge before feed_frame", drops the pump absence, changes a click mask, or loses the
  * watchdog arm passes the count-based checks in narrow cases but fails here. These are
  * CHARACTERIZATION tests: they capture what the code does TODAY (a near-miss almost deleted
- * post_click as "dead"); they intentionally fail if the button/timer/liftoff paths change, so
+ * post_button_edge as "dead"); they intentionally fail if the button/timer/liftoff paths change, so
  * the change is a conscious re-pin, not a silent regression. */
 #include "../src/mt2_session.h"
 #include "test.h"
@@ -30,7 +30,7 @@ static void rec_click(void *c, unsigned m)                    { ev_t e={0}; e.ki
 static void rec_feed (void *c, const VoodooInputEvent *f)     { ev_t e={0}; e.kind=EV_FEED; e.contact_count=f->contact_count; put(c,e); }
 static void rec_arm  (void *c, uint32_t ms)                   { ev_t e={0}; e.kind=EV_ARM; e.ms=ms; put(c,e); }
 static mt2_session_sink_t mk(rec_t *r){
-    mt2_session_sink_t s; s.post_click=rec_click; s.feed_frame=rec_feed; s.arm_timer=rec_arm; s.ctx=r; return s;
+    mt2_session_sink_t s; s.post_button_edge=rec_click; s.feed_frame=rec_feed; s.arm_timer=rec_arm; s.ctx=r; return s;
 }
 
 #define BT  0xB7
@@ -50,12 +50,12 @@ static VoodooInputEvent contact(int x, int pressure, int button) {
     return f;
 }
 
-/* 1. Button EDGE -> post_click. One contact, physical button 0 -> 1 -> 1 -> 0 across four frames.
- *    post_click fires ONLY on the two edges (down: 1-finger mask 0x1; up: mask 0x0), NEVER on the
+/* 1. Button EDGE -> post_button_edge. One contact, physical button 0 -> 1 -> 1 -> 0 across four frames.
+ *    post_button_edge fires ONLY on the two edges (down: 1-finger mask 0x1; up: mask 0x0), NEVER on the
  *    held frame, and emit() posts the click BEFORE the frame it belongs to. feed_frame fires every
  *    frame; the watchdog arms every frame the contact stays down. (Mask values read from
- *    mt2_click_changed in src/mt2_pipeline.c: button-down 1 finger => 0x1, release => 0x0.) */
-static void s1_button_edge_post_click(void) {
+ *    mt2_button_edge in src/mt2_pipeline.c: button-down 1 finger => 0x1, release => 0x0.) */
+static void s1_button_edge(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
     mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
 
@@ -64,9 +64,9 @@ static void s1_button_edge_post_click(void) {
     VoodooInputEvent f2 = contact(50, 20, 1);  mt2_session_frame(&s, USB, &f2, 5010, &k);
     VoodooInputEvent f3 = contact(50, 20, 0);  mt2_session_frame(&s, USB, &f3, 5015, &k);
 
-    /* frame0 (no edge, 0==0): FEED, ARM  -- no post_click */
+    /* frame0 (no edge, 0==0): FEED, ARM  -- no post_button_edge */
     /* frame1 (edge 0->1, 1 finger): CLICK 0x1, FEED, ARM */
-    /* frame2 (held 1==1): FEED, ARM      -- no spurious post_click */
+    /* frame2 (held 1==1): FEED, ARM      -- no spurious post_button_edge */
     /* frame3 (edge 1->0): CLICK 0x0, FEED, ARM */
     CHECK_EQ(r.n, 10);
     EXPECT_FEED (r,0,1); EXPECT_ARM(r,1,MT2_IDLE_MS);
@@ -75,7 +75,7 @@ static void s1_button_edge_post_click(void) {
     EXPECT_CLICK(r,7,0x0u); EXPECT_FEED(r,8,1); EXPECT_ARM(r,9,MT2_IDLE_MS);
 }
 
-/* 2. Two-finger physical click -> the SECONDARY (right-click) mask. mt2_click_changed keys the
+/* 2. Two-finger physical click -> the SECONDARY (right-click) mask. mt2_button_edge keys the
  *    mask on the contact count at the edge: 2 fingers down => 0x2 (vs 1 finger => 0x1). Pin that
  *    the click posts before the frame and carries 0x2. */
 static void s2_twofinger_secondary_mask(void) {
@@ -92,7 +92,7 @@ static void s2_twofinger_secondary_mask(void) {
 
 /* 3. Settle GATE. With MT2_SETTLE_MS=0 connect never opens a real window, so the gate branch in
  *    mt2_session_frame is characterized directly by seeding settle_until_ms: a frame with
- *    now_ms < settle_until is fully dropped (no post_click, no feed, no arm); a frame at/after it
+ *    now_ms < settle_until is fully dropped (no post_button_edge, no feed, no arm); a frame at/after it
  *    flows. This pins that the gate blocks EVERYTHING, not just the frame. */
 static void s3_settle_gate_blocks(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
@@ -120,7 +120,7 @@ static void s4_single_source_guard(void) {
 /* 5. Full-lift ABSENCE + PUMP. Contact down, then a frame where it lifts (pressure 0). drop_lifted
  *    removes it, the lifecycle appends its BreakTouch, and emit_with_liftoff replaces that single
  *    all-BreakTouch frame with TWO empty (contact_count==0) frames -- absence (finalize) + pump --
- *    NOT a BreakTouch frame followed by an absence. No post_click; no watchdog re-arm (cleanly
+ *    NOT a BreakTouch frame followed by an absence. No post_button_edge; no watchdog re-arm (cleanly
  *    lifted, prev_ids cleared). */
 static void s5_full_lift_absence_pump(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
@@ -161,7 +161,7 @@ static void s6_timer_watchdog_flush(void) {
 }
 
 static void run_tests(void) {
-    s1_button_edge_post_click();
+    s1_button_edge();
     s2_twofinger_secondary_mask();
     s3_settle_gate_blocks();
     s4_single_source_guard();

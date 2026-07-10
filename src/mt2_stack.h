@@ -41,8 +41,10 @@
                                                /*   startMultitouchThreaded. re/xref-offset.      */
 #define MT2_OFF_BNB_INTERRUPT_CHANNEL    0xf0   /* [BUILD] BNBDevice::_interruptChannel            */
 #define MT2_OFF_L2CAP_DELEGATE_CB        0x110  /* [BUILD] IOBluetoothL2CAPChannel delegate cb     */
-                                               /*   fn-ptr; target is at +0x118. re/xref-offset   */
-                                               /*   on newDataIn.                                 */
+                                               /*   fn-ptr; the target is the ADJACENT word       */
+                                               /*   +0x118 (= cb + sizeof(void*)) — which the      */
+                                               /*   mt2_splice MEM_SLOT engine saves/restores as  */
+                                               /*   "slot+8". re/xref-offset on newDataIn.        */
 #define MT2_OFF_AMD_HANDLER_OBJ          0xa8   /* [REF] AMD getReport handler object; layout      */
                                                /*   {report fn @+0x0, refcon +0x8,                */
                                                /*    reportinfo fn @+0x20, refcon +0x28}.         */

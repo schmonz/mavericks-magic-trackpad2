@@ -21,16 +21,16 @@ static void run_tests(void) {
     CHECK_EQ(up.contact_count, 0);
 
     unsigned last = 0, mask = 0xdead;
-    CHECK_EQ(mt2_click_changed(0, 0, &last, &mask), 0);
-    CHECK_EQ(mt2_click_changed(1, 1, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
-    CHECK_EQ(mt2_click_changed(1, 1, &last, &mask), 0);
-    CHECK_EQ(mt2_click_changed(0, 0, &last, &mask), 1); CHECK_EQ(mask, 0x0u);
+    CHECK_EQ(mt2_button_edge(0, 0, &last, &mask), 0);
+    CHECK_EQ(mt2_button_edge(1, 1, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
+    CHECK_EQ(mt2_button_edge(1, 1, &last, &mask), 0);
+    CHECK_EQ(mt2_button_edge(0, 0, &last, &mask), 1); CHECK_EQ(mask, 0x0u);
     last = 0;
-    CHECK_EQ(mt2_click_changed(1, 2, &last, &mask), 1); CHECK_EQ(mask, 0x2u);
+    CHECK_EQ(mt2_button_edge(1, 2, &last, &mask), 1); CHECK_EQ(mask, 0x2u);
     last = 0;  /* fallback: any finger count other than 2 -> primary 0x1 */
-    CHECK_EQ(mt2_click_changed(1, 3, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
+    CHECK_EQ(mt2_button_edge(1, 3, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
     last = 0;
-    CHECK_EQ(mt2_click_changed(1, 0, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
+    CHECK_EQ(mt2_button_edge(1, 0, &last, &mask), 1); CHECK_EQ(mask, 0x1u);
 
     mt2_decel_t d;
     VoodooInputEvent held = {0}; held.contact_count = 1; held.transducers[0].currentCoordinates.pressure = 20; held.transducers[0].currentCoordinates.x = 77;

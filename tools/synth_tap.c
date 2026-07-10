@@ -56,7 +56,7 @@ static void sink_feed(void *ctx, const touch_frame_t *f) {
         fflush(stdout);
     }
 }
-static void sink_click(void *ctx, unsigned mask) { (void)ctx; printf("  post_click mask=0x%x\n", mask); fflush(stdout); }
+static void sink_click(void *ctx, unsigned mask) { (void)ctx; printf("  post_button_edge mask=0x%x\n", mask); fflush(stdout); }
 static void sink_arm(void *ctx, uint32_t ms) { (void)ctx; (void)ms; }
 
 /* Inject ONE raw zero-contact frame (a "pump" frame). The recognizer flushes a tap's
@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
     if (kr != KERN_SUCCESS) { fprintf(stderr, "IOServiceOpen 0x%x\n", kr); return 1; }
 
     mt2_session_t s; memset(&s, 0, sizeof s);
-    mt2_session_sink_t sink; sink.post_click = sink_click; sink.feed_frame = sink_feed;
+    mt2_session_sink_t sink; sink.post_button_edge = sink_click; sink.feed_frame = sink_feed;
     sink.arm_timer = sink_arm; sink.ctx = 0;
 
     uint32_t now = elapsed_ms();
