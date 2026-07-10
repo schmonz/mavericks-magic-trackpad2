@@ -59,26 +59,21 @@ of our objects*, not another imperative special-case.
   (the two `g*InterposedChannel` trackers stay — the caller's "which channel", not the engine's
   "what"). Realized 2026-07-08. The panic-prone splice is now the most-tested code, not the least.
 
-**Latent targets (apply the shape here next — ranked by payoff):**
-1. **Transport presence is a named composable piece, not one unified object.** `mt2_presence`
-   is the shared truth `{BT,USB present}` + debounce, meant to be consumed by the two USERSPACE
-   observers (prefpane render + USB→BT handoff) via one shared IOKit observer. The kext's single-transport
-   ARBITRATION stays separate (the device self-arbitrates — cabling USB drops BT — so
-   `mt2_coordinator` is a deliberately EMPTY composition seam). A transition-heavy future device
-   plugs its logic into that coordinator seam or swaps a richer presence/arbitration piece; we do
-   NOT fold everything into one state object (that would bake MT2's "arbitration is trivial"
-   assumption into the shared shape).
-   The presence/arbitration SEPARATION and coordinator-as-seam are decided; the remaining step
-   (Phase B, on-device) is extracting the ONE shared IOKit observer that both userspace consumers
-   read from — today the prefpane's osax and the queued USB→BT handoff still watch transport edges
-   independently.
-   CANONICAL SERVICE NAMES for that observer = `AppleUSBMultitouchDriver` (USB) + `BNBTrackpadDevice`
-   (BT) — the names the pane already uses. Measured on-device 2026-07-09 (10.9.5): on a physical USB
-   unplug, `AppleUSBMultitouchDriver` terminates only ~0.038 ms AFTER `com_schmonz_MT2USBReader` (the
-   name the handoff watches today), so unifying the handoff onto the Apple-driver edge wakes BT no
-   later in any perceptible sense. Ordering is structural (the dependent reader tears down before its
-   provider), not racy; on plug the Apple driver appears first, our reader ~29 ms later.
+**Realized: transport presence as a named composable piece, not one unified object (2026-07-09).**
+`src/mt2_presence_observer.{h,c}` is one IOKit adapter over the pure `mt2_presence` SM (notification
+arming + removal-window HOLD timer + supersession), consumed by BOTH userspace observers — the prefpane
+osax (uses the SM's rendered action) and the USB→BT handoff daemon (keys on the raw event
+`PRESENCE_EV_USB_REMOVE`, since a HOLD action can't tell a USB drop from a BT drop). Canonical service
+names `AppleUSBMultitouchDriver` (USB) + `BNBTrackpadDevice` (BT); the observer replaced the handoff's
+ad-hoc `com_schmonz_MT2USBReader`-terminate edge (measured coincident within ~0.038 ms on-device
+2026-07-09, so no perceptible handoff delay). The kext's single-transport ARBITRATION stayed separate
+(the device self-arbitrates — cabling USB drops BT — so `mt2_coordinator` is a deliberately EMPTY
+composition seam); a transition-heavy future device plugs into that seam or swaps a richer
+presence/arbitration piece rather than folding everything into one state object. Validated on-device
+over a full BT→USB→BT cycle (HOLD coalescing prevents the switch-gap flash; handoff wakes BT on unplug
+with no tap); the pane shrank ~116 lines onto a one-line render callback (`46e8f09`).
 
+**Latent targets (apply the shape here next — ranked by payoff):**
 Smaller: `src/vhid_mt1.c`'s feature-report acks → a pure report-id→response table + thin HID adapter.
 (The former shape-done-small example here, the raw-byte `mt2_usb_button_edge` in the former
 `mt2_usb_reframe.c` — now `mt2_usb_bytes.c` — was
