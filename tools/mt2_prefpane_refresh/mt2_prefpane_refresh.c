@@ -371,11 +371,55 @@ static void my_magicAction(id self, SEL _cmd, id arg, signed char connected) {
     }
 }
 
+/* Find the live MTTrackpadController (the render target). Prefer the CURRENT view's controller
+ * (gPane.mCurrentController.mController) over the singleton to avoid staleness; NULL on the NoTrackpad
+ * view (no trackpad controller exists — nothing to replay; the view-change loadMainView handles it). */
+static id find_mt_controller(void) {
+    Class mtc = objc_getClass("MTTrackpadController");
+    if (!mtc || !gPane) return NULL;
+    Ivar cc = class_getInstanceVariable(object_getClass(gPane), "mCurrentController");
+    id cur = cc ? object_getIvar(gPane, cc) : NULL;
+    if (cur) {
+        Ivar mc = class_getInstanceVariable(object_getClass(cur), "mController");
+        id ctrl = mc ? object_getIvar(cur, mc) : NULL;
+        if (ctrl && ((signed char (*)(id, SEL, Class))objc_msgSend)(
+                ctrl, sel_registerName("isKindOfClass:"), mtc)) return ctrl;
+    }
+    if (((signed char (*)(id, SEL, SEL))objc_msgSend)(
+            mtc, sel_registerName("respondsToSelector:"), sel_registerName("sharedController")))
+        return ((id (*)(id, SEL))objc_msgSend)(mtc, sel_registerName("sharedController"));
+    return NULL;
+}
+
+/* Eager-capture (self,arg) straight from the pane's ivars, so the faithful replay is ready BEFORE the
+ * first transition. Without this, perform() fires on the presence edge before the pane's own
+ * _magicTrackpadAction lands (my_magicAction), the replay skips, and a same-view switch (no loadMainView)
+ * leaves stale art — the capture-race. self = the MTTrackpadController; arg = its
+ * mMagicTrackpadServiceObserver (the IOServiceObserver whose armIterators the body calls). Both are stable
+ * for the pane's life (so one capture is reusable). VERIFY arg respondsToSelector:armIterators before use,
+ * so a wrong object can never doesNotRecognizeSelector (the Task-5 regression). No render, no loadMainView. */
+static void eager_capture_magic(void) {
+    if (gMagicCtrl && gMagicArg) return;
+    id ctrl = find_mt_controller();
+    if (!ctrl) { LOG("eager-capture: no MTTrackpadController yet"); return; }
+    Ivar iv = class_getInstanceVariable(object_getClass(ctrl), "mMagicTrackpadServiceObserver");
+    id obs = iv ? object_getIvar(ctrl, iv) : NULL;
+    if (!obs) { LOG("eager-capture: %s has nil mMagicTrackpadServiceObserver (iv=%p)", object_getClassName(ctrl), (void*)iv); return; }
+    if (!responds(obs, sel_registerName("armIterators"))) {
+        LOG("eager-capture: observer %s does not respond to armIterators", object_getClassName(obs)); return;
+    }
+    gMagicCtrl = ctrl; gMagicArg = obs;
+    LOG("eager-captured magic (self=%s, arg=%s) — replay ready before first transition",
+        object_getClassName(ctrl), object_getClassName(obs));
+}
+
 /* Replay the pane's OWN _magicTrackpadAction faithfully: the captured (self=controller, arg) with the
- * SM's `connected`. The body does [arg armIterators], so arg MUST be the pane object the runtime handed
- * us — passing the controller there was the doesNotRecognizeSelector regression. Until a device event has
- * let us capture the pair, skip (bootstrap renders natively via loadMainView on a view change). */
+ * SM's `connected`. The body does [arg armIterators], so arg MUST be the pane's observer, never the
+ * controller (that was the doesNotRecognizeSelector regression). If the autonomous call hasn't captured
+ * the pair yet, eager-capture it from the ivars first (fixes the same-view capture-race); only if that
+ * also fails (e.g. the NoTrackpad view) do we skip and let the view-change loadMainView render natively. */
 static void gOrigMagicAction_call(int connected) {
+    if (!gMagicCtrl || !gMagicArg) eager_capture_magic();
     if (!gOrigMagicAction || !gPane || !gMagicCtrl || !gMagicArg) {
         LOG("gOrigMagicAction_call: (self,arg) not captured yet -> skip replay");
         return;
