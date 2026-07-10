@@ -464,3 +464,35 @@ the delegates (so we record the About-tab "update available" hint) but shows NO 
 120 s watchdog backstops a pre-delegate hang. **Principle: background is silent, the pane hint informs,
 all update dialogs are foreground/manual only.** (`4631997`, `159c36e`.) Reopening criterion: none
 foreseen — a scheduled task should never block on unattended UI.
+
+### Pref-dict Stage 2 — no accidental seed gaps; the divergences are genuine (2026-07-10)
+Stage 1 (`24efb39`) shared the identical seeds + named the genuine per-transport values (parser-options
+0x2F/0x27), byte-identical (proven on both transports via `ioreg` before/after). Stage 2
+(diagnose-then-reconcile) diagnosed every USB-only seed on-device:
+- `Driver is Ready` / `HIDDefaultBehavior="Trackpad"` — genuine USB-manual-start needs; BT's BNB provides
+  equivalents; BT works fully without them.
+- `MultitouchPreferences` / `TrackpadUserPreferences` — USB seeds them (no system pre-population at
+  manual-start init); BT gets system-populated ones; both transports fully functional.
+- `TrackpadThreeFingerDrag` — the USB node DOES publish it; the toggle shows on a fresh USB launch. Its
+  live-USB drop is a query-timing race (`open-questions.md`), NOT a seed gap.
+⇒ **NO accidental seed gaps to reconcile — the divergences are genuine/structural** (the genuine-reuse-tax
+ledger above). Stage 2's honest outcome was documentation, not code. Reopening: only if a future device or
+transport reveals a real capability gap the seeds should close.
+
+### Presence-SM unification is faithful — verified line-by-line + full matrix (2026-07-10)
+`46e8f09` was committed "validated on a BT→USB→BT happy path"; the full state-change matrix was NOT
+re-walked at the time. Re-walked 2026-07-10: the shared `mt2_presence_observer` (`obs_sm_event` /
+`obs_dev_changed` / `presence_observer_reconcile` / `presence_observer_create`) is a verbatim,
+behaviour-identical lift of the removed inline `sm_event`/`dev_changed`/`sm_reconcile`/`arm_observer` (same
+HOLD/`gen` supersession, same 4 observer specs, same synchronous perform path; `perform` untouched). The
+unification is NOT the cause of the stale-video symptom. **Lesson (re-affirmed): the render/suppression seam
+is NOT host-testable — walk the FULL transport matrix (`prefpane-test-runthrough.md`) after ANY change to
+the observer / perform / capture path, not a happy-path glance.**
+
+### Capture-race stale video — eager-capture the (self,arg) pair, don't re-add the blink (2026-07-10, e730175)
+Root cause + fix detail in `prefpane-test-runthrough.md` "Full re-walk (2026-07-10)". Decision: rather than
+re-add the forced `loadMainView` that `6231b53` removed (it blinks), read `(self,arg)` straight from the
+pane's ivars just-in-time (`eager_capture_magic`: `find_mt_controller` + `mMagicTrackpadServiceObserver`) so
+the faithful in-place replay is always armed before the first transition — no blink, no rebuild. Guarded by
+`respondsToSelector:armIterators` (a wrong arg was the Task-5 doesNotRecognizeSelector regression).
+Validated across the full matrix (0 skips every row).

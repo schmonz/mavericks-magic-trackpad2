@@ -600,7 +600,46 @@ watcher (no SIMBL). The FULL clean-room matrix was re-run on-device through the 
 runthrough/baseline in `prefpane-test-runthrough.md`. MAIN goal (reliable live USB detection) met; only-open
 = the cosmetic single-flash on a redraw (SECONDARY; Apple's `loadMainView` own rebuild, not our logic).
 
-## Three-finger-drag toggle: shown on BT, hidden on USB — mechanism RE'd, cause still open (2026-07-03)
+## Three-finger-drag toggle: a live-USB availability RACE (RECHARACTERIZED 2026-07-10)
+
+> **UPDATE 2026-07-10 — NOT "hidden on USB", NOT "Apple's per-transport difference".** On-device (Stage-2
+> pref-dict work + the full prefpane matrix re-walk): the 3FD toggle **shows on a FRESH launch on USB** and
+> the USB node DOES publish top-level `TrackpadThreeFingerDrag=true` (confirmed via `tools/re ioreg-props
+> AppleUSBMultitouchDriver`). It drops only on a **LIVE USB appearance** (a BT→USB switch, or a
+> NoTrackpad→USB power-on — even though that fires `loadMainView`). So `_isServiceAvailable:
+> @"TrackpadThreeFingerDrag"` (= `IOServiceGetMatchingService` for a node with that top-level property)
+> **races the USB node's property publication**: fresh launch → node already populated → available; live
+> appearance → query runs before the just-appeared node is queryable → unavailable → the gesture row isn't
+> built. BT shows it live because BT's 3FD availability comes from persistent system state, not a
+> just-appeared node. **Supersedes the old "shown on BT / hidden on USB" framing AND the runthrough's
+> "difference is Apple's, not ours" note — both WRONG.**
+>
+> **Fix direction (not built):** re-evaluate 3FD availability AFTER the USB node settles — a short deferred
+> gesture-availability refresh on a USB appearance, or have the 2s reconcile tick force a gesture-array
+> rebuild once it sees a matching USB node. The SEED is already correct (Stage 1 proved it byte-identical);
+> this is purely a query-timing fix. Repro: live BT→USB switch with the pane open → 3FD row absent;
+> relaunch → present.
+
+## Prefpane transition cosmetics — two Apple-level-UX items (surfaced 2026-07-10 matrix re-walk)
+Both pre-existing (NOT the capture-race render fix `e730175`, NOT the presence-SM unification); both block
+"Apple-level UX" on transport transitions. Recorded so we come back to them.
+
+- **① USB→BT NoTrackpad flash.** On a USB unplug, the USB driver terminates immediately but BT is deep-idle;
+  the handoff daemon wakes it in ~1–1.5s. The removal-window **HOLD (1300ms)** absorbs the gap IFF BT wakes
+  within it (→ same-view switch, no flash); when BT wakes slower, HOLD elapses → brief NoTrackpad → then BT.
+  So it's variable BT-wake latency vs a fixed 1300ms window. NoTrackpad is device-truth-correct during the
+  gap, but cosmetically jarring. **Constraint (decisions.md "USB enumeration timing"):** at removal time you
+  can't distinguish a USB-unplug-handoff from a genuine USB power-off faster than ~1s, so you can't just
+  "hold longer" (a real power-off would then show a stale view). Levers: make BT wake *reliably* <1300ms, or
+  widen HOLD and accept a longer stale view on a real power-off. Needs its own investigation.
+- **② BT power-on tap-to-stream.** On BT power-on the device registers (BNBTrackpadDevice present) but does
+  NOT stream multitouch until a touch — kext log `MT2BTReader: … retrying gently until first frame`. Our SM
+  renders `ON_BT` correctly (0 skips, device present), but the pane momentarily shows NoTrackpad until the
+  user taps to produce the first frame. Kext/device-level (related to [[bt-reconnect-enable-fails]] and the
+  BT-idle-needs-tap behavior), not the pane render. Fix likely = provoke the first frame on reconnect
+  (device-side enable/nudge) so no tap is needed.
+
+## Three-finger-drag toggle — prior RE (2026-07-03), superseded by the 2026-07-10 recharacterization above
 
 **User goal:** parity — expose the three-finger-drag toggle (and the working gesture) on USB as on BT.
 

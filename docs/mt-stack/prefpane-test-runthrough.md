@@ -81,6 +81,42 @@ NOT host-testable — the on-device matrix is the oracle for it. (Also noticed +
 the BT UI exposes a three-finger-drag toggle the USB UI doesn't — the faithful replay reproduces the full
 per-transport render, so the difference is Apple's, not ours.)
 
+## Full re-walk after the presence-SM unification (2026-07-10) — caught a real capture-race
+The presence-SM unification (`46e8f09`) extracted the inline `sm_event`/`dev_changed`/`sm_reconcile`/
+`arm_observer` into the shared `mt2_presence_observer`; it was committed "on-device validated" on a
+BT→USB→BT happy path but the FULL matrix was never re-walked. Walking it exposed a **stale-video
+capture-race** (NOT introduced by the unification — the observer is a verbatim, line-by-line-faithful
+lift; latent since `6231b53` removed the forced-loadMainView fallback):
+
+- **Root cause.** `perform(ON_BT/ON_USB)` does an in-place `_magicTrackpadAction` replay and calls
+  `loadMainView` only on a view-TYPE change. The replay needs the `(self,arg)` pair, captured LAZILY by
+  `my_magicAction` when the pane's own `_magicTrackpadAction` eventually fires. On a same-view BT↔USB
+  switch (no NoTrackpad in between), `perform` fires on the presence edge BEFORE that capture lands →
+  `skip replay` → the video/art stays on the outgoing transport. It rendered right only when the switch
+  happened to pass through NoTrackpad (forcing `loadMainView`) or the capture happened to win — accidental.
+- **Fix (`e730175`).** `eager_capture_magic()` reads the pair straight from the pane's ivars the moment a
+  replay needs it (self = live `MTTrackpadController` via `find_mt_controller`; arg = its
+  `mMagicTrackpadServiceObserver`), guarded by `respondsToSelector:armIterators`. No render, no
+  `loadMainView` → no blink. Log at open: `eager-captured magic (self=MTTrackpadController,
+  arg=IOServiceObserver)`.
+- **Full matrix re-validated post-fix (all rows 0 skips):** fresh launch (no blink), BT↔USB both ways
+  (immediate, no stale), 3a/3b/4a NoTrackpad, capture-race direct-open. The decisive repro — unplug USB
+  with BT waking *inside* the 1300ms HOLD window (same-view, fresh pane) — now renders BT immediately.
+
+**CORRECTION to the SM-build note above:** the "three-finger-drag toggle is on BT / off USB → the
+difference is Apple's, not ours" reading is **WRONG**. 3FD shows on a FRESH launch on USB (the USB node
+DOES publish `TrackpadThreeFingerDrag=true`) and drops only on a LIVE USB appearance — it's **our** race
+(`_isServiceAvailable:@"TrackpadThreeFingerDrag"` runs before the just-appeared USB node is queryable),
+tracked in `open-questions.md` "3FD-on-live-USB availability race". Two other pre-existing transition
+cosmetics also surfaced (both Apple-level-UX, both in `open-questions.md`): the USB→BT NoTrackpad flash
+(BT wake vs the HOLD window) and the BT power-on tap-to-stream latency.
+
+**Dev-loop gotcha (cost us ~20 min):** the dev box loads the **SIMBL plugin copy** of the payload
+(`/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle`), which wins the single-load over the
+`.osax`. After an osax change, reinstall **both** (`prefpane-refresh-install` + `prefpane-refresh-simbl-install`)
+or the stale SIMBL copy keeps injecting. Also: cross-machine "mtime in the future" defeats make's rebuild
+check — force a recompile (delete the target's `.o`, or reconfigure) or you reinstall a stale binary.
+
 ## Clean-room baseline (pre-fix, 2026-06-28) — what the BUG looked like
 Characterized physically (clean-room: Cmd-Q System Prefs between every trial to clear accumulated process
 state; device-truth via `re ioreg-class` alongside the user-reported pane). This is the "before" the fix
