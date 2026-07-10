@@ -6,10 +6,11 @@
  * 2026-07-04: a host `-[IOBluetoothDevice openConnection]` wakes that deep-idle radio with ZERO
  * physical action — the same primitive tools/mt2_bt_bounce uses for the reload case.
  *
- * This daemon closes the gap: it arms an IOKit termination notification on our own USB reader
- * class `com_schmonz_MT2USBReader` (fires exactly when the MT2's USB cable is pulled) and, on
- * fire, calls `openConnection` on the paired CoD-0x594 MT2. No tap. Runs as a root LaunchDaemon
- * so it works regardless of GUI session (dist/com.schmonz.mt2usbbthandoff.plist).
+ * This daemon closes the gap: it arms the shared presence observer (src/mt2_presence_observer.h — the
+ * same one the prefpane uses) and, on the USB-removal edge (cable pulled), calls `openConnection` on
+ * the paired CoD-0x594 MT2. No tap. Runs as a root LaunchDaemon so it works regardless of GUI session
+ * (dist/com.schmonz.mt2usbbthandoff.plist). The observer watches the canonical AppleUSBMultitouchDriver
+ * terminate, which fires within ~0.04 ms of the old com_schmonz_MT2USBReader edge (measured 2026-07-09).
  *
  * ASYMMETRIC BY DESIGN (do NOT make it symmetric): only the USB→BT (unplug) direction needs help.
  * BT→USB (plug in) is already smooth and the device handles it — we add nothing there. The
@@ -22,6 +23,7 @@
 #import <IOBluetooth/IOBluetooth.h>
 #import <IOKit/IOKitLib.h>
 #include <string.h>
+#include "mt2_presence_observer.h"
 
 #define MT2_COD 0x594   /* Peripheral(5) + pointing + digitizer minor 0x25 — the MT2 over BT */
 
@@ -68,12 +70,14 @@ static void bounce_bt_mt2(void) {
     }
 }
 
-/* kIOTerminatedNotification callback: our USB reader instance(s) just went away = cable pulled. */
-static void usb_reader_terminated(void *refcon, io_iterator_t it) {
-    (void)refcon;
-    io_service_t s; BOOL any = NO;
-    while ((s = IOIteratorNext(it))) { any = YES; IOObjectRelease(s); }   /* must drain to re-arm */
-    if (any) wake_bt_mt2();
+/* Shared presence-observer callback. We need the raw USB-removal EDGE (cable pulled), not the SM's
+ * rendered action — a HOLD action can't tell a USB drop from a BT drop — so we key on the event.
+ * This is the exact trigger the old ad-hoc com_schmonz_MT2USBReader-terminate notifier fired on;
+ * the canonical AppleUSBMultitouchDriver terminate the observer watches fires within ~0.04 ms of it
+ * (measured on-device 2026-07-09). ASYMMETRIC BY DESIGN preserved: only USB_REMOVE wakes BT. */
+static void on_presence(presence_action_t action, presence_event_t event, void *ctx) {
+    (void)action; (void)ctx;
+    if (event == PRESENCE_EV_USB_REMOVE) wake_bt_mt2();
 }
 
 int main(int argc, const char *argv[]) {
@@ -97,26 +101,15 @@ int main(int argc, const char *argv[]) {
             }
         }
 
-        IONotificationPortRef np = IONotificationPortCreate(kIOMasterPortDefault);
-        if (!np) { NSLog(@"mt2_usb_bt_handoff: IONotificationPortCreate failed"); return 1; }
-        CFRunLoopAddSource(CFRunLoopGetCurrent(),
-                           IONotificationPortGetRunLoopSource(np), kCFRunLoopDefaultMode);
+        /* Arm the shared presence observer (same one the prefpane uses). It drives the presence SM
+         * and reports each transition; we act only on the USB_REMOVE edge (see on_presence). The
+         * observer drains its initial iterators without firing, so no spurious wake at startup just
+         * because USB happens to be plugged in now. */
+        mt2_presence_observer_t *obs =
+            presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
+        if (!obs) { NSLog(@"mt2_usb_bt_handoff: presence_observer_create failed"); return 1; }
 
-        io_iterator_t it = 0;
-        kern_return_t kr = IOServiceAddMatchingNotification(
-            np, kIOTerminatedNotification,
-            IOServiceMatching("com_schmonz_MT2USBReader"),
-            usb_reader_terminated, NULL, &it);
-        if (kr != KERN_SUCCESS) {
-            NSLog(@"mt2_usb_bt_handoff: IOServiceAddMatchingNotification failed 0x%x", kr);
-            return 1;
-        }
-        /* Drain the initial iterator to ARM the notification. For a termination notification this
-         * is empty at startup (nothing has terminated yet), so draining here — NOT via the callback
-         * — guarantees we never fire a spurious wake just because USB happens to be plugged in now. */
-        io_service_t s; while ((s = IOIteratorNext(it))) IOObjectRelease(s);
-
-        NSLog(@"mt2_usb_bt_handoff: armed — watching com_schmonz_MT2USBReader termination");
+        NSLog(@"mt2_usb_bt_handoff: armed via shared presence observer (wakes BT on USB removal)");
         CFRunLoopRun();
     }
     return 0;

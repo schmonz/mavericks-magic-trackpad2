@@ -54,6 +54,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <ApplicationServices/ApplicationServices.h>
 #include "mt2_presence.h"
+#include "mt2_presence_observer.h"
 #include "mt2_single_load.h"
 
 #define LOG(...) syslog(LOG_NOTICE, "[MT2PaneRefresh] " __VA_ARGS__)
@@ -71,19 +72,11 @@
  * ============================================================================================ */
 
 static id          gPane = NULL;          /* the live Trackpad pane instance (captured on didSelect) */
-static presence_state_t gPresence  = PRESENCE_NONE;       /* the SM state; the adapter's only decision state */
+static mt2_presence_observer_t *gObs = NULL;  /* the shared presence observer; owns the SM + IOKit edges */
 
 static int responds(id obj, SEL s) {
     return obj && ((signed char (*)(id, SEL, SEL))objc_msgSend)(
         obj, sel_registerName("respondsToSelector:"), s);
-}
-
-static int service_present(const char *cls) {
-    CFMutableDictionaryRef m = IOServiceMatching(cls);
-    if (!m) return 0;
-    io_service_t s = IOServiceGetMatchingService(kIOMasterPortDefault, m);  /* consumes m */
-    if (s) { IOObjectRelease(s); return 1; }
-    return 0;
 }
 
 /* Launch the shared Sparkle updater helper on demand (one shared copy, same path for the osax + SIMBL
@@ -258,15 +251,15 @@ static int mt2_read_node_battery(void) {
 
 /* The device's battery % + whether it's charging. The % is ONE value regardless of transport (same
  * device), HELD so a transition shows it instantly; charging is a TRANSPORT property (on USB you're on
- * the cable -> charging, or charged at 100%; on BT you're on battery), inferred from gPresence rather than
+ * the cable -> charging, or charged at 100%; on BT you're on battery), inferred from the presence state rather than
  * waiting for the slow USB HID read. Debug override wins. A fresh BT node reads 0/absent until the
  * kext's first poll — treat that as the un-polled sentinel and hold the last value (a truly 0% MT2 is
  * dead + disconnected). Returns -1 only if the battery has never been known. */
 static int mt2_battery_now(int *charging) {
-    *charging = (gPresence == PRESENCE_USB);
+    *charging = (presence_observer_state(gObs) == PRESENCE_USB);
     int ov = mt2_batt_override();
     if (ov >= 0 && ov <= 100) return ov;
-    if (gPresence == PRESENCE_BT) {
+    if (presence_observer_state(gObs) == PRESENCE_BT) {
         int pct = mt2_read_node_battery();
         if (pct >= 1 && pct <= 100) gDevicePct = pct;
     }
@@ -310,7 +303,7 @@ static void mt2_refresh_usb_battery(void) {
         if (mt2_usb_read_battery(&p, &c)) {          /* c (charging byte) is ignored — inferred from transport */
             if (p >= 1 && p != gDevicePct) LOG("usb-battery: read %d%%", p);
             if (p >= 1 && p <= 100) gDevicePct = p;
-            if (gPresence == PRESENCE_USB) { int ch; int pct = mt2_battery_now(&ch); if (pct >= 0) mt2_paint_battery(front_window_content(), pct, ch); }
+            if (presence_observer_state(gObs) == PRESENCE_USB) { int ch; int pct = mt2_battery_now(&ch); if (pct >= 0) mt2_paint_battery(front_window_content(), pct, ch); }
         }
     });
 }
@@ -326,8 +319,8 @@ static void mt2_refresh_usb_battery(void) {
  * Fast (BT read = a quick IOKit lookup; USB paints the cache), so perform() calls it synchronously —
  * the correct value lands in the SAME runloop turn as the render, so there is no flash. */
 static void mt2_render_battery(id root) {
-    if (gPresence == PRESENCE_HOLD) return;   /* removal window: the _checkBatteryTimer swizzle corrects any 0 in-flight */
-    if (gPresence == PRESENCE_NONE) {
+    if (presence_observer_state(gObs) == PRESENCE_HOLD) return;   /* removal window: the _checkBatteryTimer swizzle corrects any 0 in-flight */
+    if (presence_observer_state(gObs) == PRESENCE_NONE) {
         if (gBattPainted) {
             id ctl = NULL, pf = NULL, sl = NULL;
             find_battery_row(root, 0, &ctl, &pf, &sl);
@@ -341,7 +334,7 @@ static void mt2_render_battery(id root) {
     }
     int charging; int pct = mt2_battery_now(&charging);
     if (pct >= 0) mt2_paint_battery(root, pct, charging);
-    if (gPresence == PRESENCE_USB) mt2_refresh_usb_battery();
+    if (presence_observer_state(gObs) == PRESENCE_USB) mt2_refresh_usb_battery();
 }
 
 /* ============================================================================================
@@ -393,7 +386,7 @@ static void gOrigMagicAction_call(int connected) {
 
 /* Suppress the pane's OWN observer-driven update ENTIRELY — we take ownership of when the display
  * updates. Without this the pane redraws on every BT edge (e.g. blanks to NoTrackpad the instant BT
- * drops during a BT->USB handoff, before USB is recognized). Our observers (dev_changed) drive the SM,
+ * drops during a BT->USB handoff, before USB is recognized). Our shared presence observer drives the SM,
  * which owns every render, so the pane holds its prior state through a switch, then updates once. */
 static void (*gOrigDeviceConnected)(id, SEL, id, signed char) = NULL;  /* saved, intentionally never called */
 static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected) {
@@ -456,95 +449,10 @@ static void perform(presence_action_t a) {
     }
 }
 
-static int gGen = 0;
-#define REMOVE_CHECK_MS 1300
-
-/* Run one event through the SM and perform its action on the main thread. gGen serializes the
- * pending HOLD timer: entering HOLD arms a window timer tagged with `my`; any LATER resolving
- * event bumps gGen so the in-flight timer's `my != gGen` guard fires and it no-ops (superseded).
- * A no-op event (PRESENCE_ACT_NONE — a duplicate/stale edge) must NOT bump gGen: doing so would cancel
- * a live HOLD timer without rescheduling, stranding the SM in PRESENCE_HOLD (reconcile won't resolve
- * HOLD->NONE by design). So only HOLD arms, and only a real resolution supersedes. */
-static void sm_event(presence_event_t e) {
-    presence_result_t r = presence_step(gPresence, e);
-    gPresence = r.next;
-    perform(r.action);
-    if (r.action == PRESENCE_ACT_HOLD) {
-        int my = ++gGen;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)REMOVE_CHECK_MS * NSEC_PER_MSEC),
-                       dispatch_get_main_queue(), ^{
-            if (my != gGen) return;
-            presence_result_t rr = presence_step(gPresence, PRESENCE_EV_REMOVAL_ELAPSED);
-            gPresence = rr.next; perform(rr.action);
-        });
-    } else if (r.action != PRESENCE_ACT_NONE) {
-        ++gGen;   /* a real resolution supersedes a pending hold timer; a no-op leaves it alone */
-    }
-}
-
-/* Reconcile against device truth (poll): self-heal for missed/manually-started edges. */
-static void sm_reconcile(void) {
-    int bt  = service_present("BNBTrackpadDevice");
-    int usb = service_present("AppleUSBMultitouchDriver");
-    presence_result_t r = presence_reconcile(gPresence, bt, usb);
-    if (r.action != PRESENCE_ACT_NONE) LOG("reconcile bt=%d usb=%d -> action", bt, usb);
-    gPresence = r.next;
-    perform(r.action);
-}
-
-static IONotificationPortRef gNotify = NULL;
-static io_iterator_t gIterUSBup = 0;   /* AppleUSBMultitouchDriver first-match */
-static io_iterator_t gIterUSBdn = 0;   /* AppleUSBMultitouchDriver terminated  */
-static io_iterator_t gIterBTup  = 0;   /* BNBTrackpadDevice first-match         */
-static io_iterator_t gIterBTdn  = 0;   /* BNBTrackpadDevice terminated          */
-static int           gArmed     = 0;
-
-static void drain(io_iterator_t it) {
-    io_object_t o;
-    while ((o = IOIteratorNext(it))) IOObjectRelease(o);
-}
-
-/* One callback for every appear/disappear of either transport. The pane's own updates are suppressed
- * (see my_deviceConnected), so WE are the sole driver: each edge becomes one SM event (sm_event), and
- * the SM decides what to render. refcon labels the event for logs. */
-static void dev_changed(void *ref, io_iterator_t it) {
-    drain(it);
-    const char *tag = ref ? (const char *)ref : "?";
-    LOG("device change: %s", tag);
-    if      (!strcmp(tag, "BT+"))  sm_event(PRESENCE_EV_BT_APPEAR);
-    else if (!strcmp(tag, "BT-"))  sm_event(PRESENCE_EV_BT_REMOVE);
-    else if (!strcmp(tag, "USB+")) sm_event(PRESENCE_EV_USB_APPEAR);
-    else if (!strcmp(tag, "USB-")) sm_event(PRESENCE_EV_USB_REMOVE);
-}
-
-/* Arm live IOKit observers on BOTH transports (BNBTrackpadDevice + AppleUSBMultitouchDriver),
- * FirstMatch + Terminated. IOServiceAddMatchingNotification consumes the matching dict, so build a
- * fresh one per call. Drain the initial iterators WITHOUT acting (already-present services, not live
- * events). */
-static void arm_observer(void) {
-    if (gArmed) return;
-    gNotify = IONotificationPortCreate(kIOMasterPortDefault);
-    if (!gNotify) { LOG("IONotificationPortCreate failed"); return; }
-    CFRunLoopAddSource(CFRunLoopGetCurrent(),
-                       IONotificationPortGetRunLoopSource(gNotify),
-                       kCFRunLoopCommonModes);
-
-    IOServiceAddMatchingNotification(gNotify, kIOFirstMatchNotification,
-        IOServiceMatching("AppleUSBMultitouchDriver"), dev_changed, (void *)"USB+", &gIterUSBup);
-    drain(gIterUSBup);
-    IOServiceAddMatchingNotification(gNotify, kIOTerminatedNotification,
-        IOServiceMatching("AppleUSBMultitouchDriver"), dev_changed, (void *)"USB-", &gIterUSBdn);
-    drain(gIterUSBdn);
-    IOServiceAddMatchingNotification(gNotify, kIOFirstMatchNotification,
-        IOServiceMatching("BNBTrackpadDevice"), dev_changed, (void *)"BT+", &gIterBTup);
-    drain(gIterBTup);
-    IOServiceAddMatchingNotification(gNotify, kIOTerminatedNotification,
-        IOServiceMatching("BNBTrackpadDevice"), dev_changed, (void *)"BT-", &gIterBTdn);
-    drain(gIterBTdn);
-
-    gArmed = 1;
-    LOG("armed live observers (USB + BT, first-match + terminated)");
-}
+/* The pane's presence-transition callback: render each SM action against the live pane. The presence
+ * SM, the IOKit edges, and the removal-window HOLD timer now live in the shared presence observer
+ * (src/mt2_presence_observer.h); this callback is all that stays pane-specific. */
+static void on_presence(presence_action_t a, presence_event_t e, void *ctx) { (void)e; (void)ctx; perform(a); }
 
 /* ============================================================================================
  * 5. CHANGE-BATTERIES BUTTON — keep the sealed-battery AA swap prompt hidden
@@ -1269,9 +1177,9 @@ static void dump_view_tree(id view, int depth) {
  * backtrace). The write self-gates to a present BLUETOOTH-transport MT2 (mt2_name_write_onboard skips
  * USB, which has no room anyway); since the MT2 drives ONE transport at a time (cabling USB drops BT),
  * "a BT HID is present" means no USB bring-up storm is in flight. We additionally skip a known in-flight
- * transition (gPresence==PRESENCE_HOLD). So a single deliberate write never lands during transport churn. NB the
- * gate is NOT gPresence==PRESENCE_BT: renames happen on the Bluetooth pane, where the Trackpad-pane SM that drives
- * gPresence may never have armed (gPresence==PRESENCE_NONE) — BT presence is the correct, pane-independent signal. */
+ * transition (presence_observer_state==PRESENCE_HOLD). So a single deliberate write never lands during churn. NB the
+ * gate is NOT presence==PRESENCE_BT: renames happen on the Bluetooth pane, where the Trackpad-pane SM that drives
+ * the presence observer may never have armed (state==PRESENCE_NONE) — BT presence is the correct, pane-independent signal. */
 
 /* The paired MT2 IOBluetoothDevice (CoD 0x594 = peripheral+pointing, digitizer minor 0x25), or NULL.
  * IOBluetooth is resident whenever the BT pane has been shown (where Rename happens). */
@@ -1357,7 +1265,7 @@ static void mt2_name_mirror_tick(void) {
         return;
     }
     /* A real user rename to a non-empty name. */
-    if (gPresence == PRESENCE_HOLD) {                        /* known transport transition in flight — never write during churn */
+    if (presence_observer_state(gObs) == PRESENCE_HOLD) {                        /* known transport transition in flight — never write during churn */
         if (!gNameDeferLogged) { LOG("name-mirror: pending rename \"%s\" (transition in flight) — waiting", s); gNameDeferLogged = 1; }
         return;                                   /* leave baseline unchanged so we retry next tick */
     }
@@ -1475,14 +1383,14 @@ static void capture_pane(id self) {
         }
     }
     install_battery_timer_swizzle("capture");   /* belt; willSelect installs it earlier (no flash) */
-    arm_observer();
-    sm_reconcile();   /* sync to current truth immediately */
+    if (!gObs) gObs = presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
+    presence_observer_reconcile(gObs);   /* sync to current truth immediately */
     static dispatch_source_t tick;
     if (!tick) {
         tick = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(tick, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
                                   2 * NSEC_PER_SEC, (uint64_t)(0.25 * NSEC_PER_SEC));
-        dispatch_source_set_event_handler(tick, ^{ sm_reconcile(); hide_battery_button_now(); });
+        dispatch_source_set_event_handler(tick, ^{ presence_observer_reconcile(gObs); hide_battery_button_now(); });
         dispatch_resume(tick);
     }
     hide_battery_button_now();   /* run once NOW (button-hide + About-tab injection) so they don't wait
