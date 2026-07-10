@@ -435,3 +435,32 @@ accessors confirmed live (PROBE on USB):
 `find_mt_controller()` = read `mCurrentController.mController` (verify isKindOfClass:MTTrackpadController),
 fall back to `[MTTrackpadController sharedController]`. Other nib-controller ivars seen: `mContentView`(NSView),
 `mSetupBTButton`(NSButton), `mSetupBTBackButton`(nil).
+
+### Let PackageKit version-gate our pkg bundle components — *not functioning* (2026-07-10)
+`pkgbuild` defaults every bundle component to `BundleIsVersionChecked=true`, so at install time
+PackageKit compares the pkg's bundle `CFBundleVersion` against what's on disk and **SKIPS the component
+if the installed one is >= the pkg's**. Our kext was hardcoded `CFBundleVersion 1.0.0` for its whole
+life, and `1.0.0` sorts **above** every `0.4.x`, so the installer skipped the kext on *every* install —
+the driver itself never updated for anyone who already had it (we only missed it because dev
+hand-reloads the kext). Proven in `/var/log/install.log` during the 0.4.4 dogfood:
+`PackageKit: Skipping component "com.schmonz.MT2Gesture" (0.4.4-…) because the version 1.0.0-… is
+already installed`. Even after stamping the real version (`0b9dc5f`), a numeric regression (1.0.0 → 0.4.x)
+still skips.
+
+**Decision: force-install every component, never let PackageKit version-gate them.** The pkg build runs
+`pkgbuild --analyze` → flips `BundleIsVersionChecked=false` on all bundles (`cmake/pkg_no_version_check.sh`)
+→ `pkgbuild --component-plist`. An unsigned, loose-path (`/usr/local/lib/mt2d`) driver package should
+always place its own build, not defer to a stale on-disk copy. Self-bootstrapping: the first release
+carrying the fix (v0.4.5) force-installs the kext even over the legacy 1.0.0, unsticking every existing
+install. Validated on-device 2026-07-10: 0.4.4→0.4.5 self-update actually moved `kextstat` to 0.4.5.
+**Reopening criterion:** only reconsider if we ever sign the kext and move it to `/Library/Extensions`
+(which has its own versioning/staging semantics) — then re-evaluate whether the OS should manage upgrades.
+
+### Show update UI from the scheduled background check — *not desirable* (2026-07-10)
+Sparkle 1.x `checkForUpdatesInBackground` presents its update dialog when an update EXISTS. On the daily
+LaunchAgent (pane closed, nobody watching) that leaves a blocking dialog up forever — the "updater stuck
+in the Dock" reports. **Decision: background is a SILENT probe** (`checkForUpdateInformation`) that calls
+the delegates (so we record the About-tab "update available" hint) but shows NO UI ever, then exits; a
+120 s watchdog backstops a pre-delegate hang. **Principle: background is silent, the pane hint informs,
+all update dialogs are foreground/manual only.** (`4631997`, `159c36e`.) Reopening criterion: none
+foreseen — a scheduled task should never block on unattended UI.
