@@ -57,7 +57,16 @@ add_custom_target(pkg
   # Build the flat component, then wrap it with productbuild --distribution so the
   # installer enforces the 10.9.5 floor (allowed-os-versions in dist/distribution.xml).
   # A bare pkgbuild product cannot express an OS floor; productbuild can.
-  COMMAND pkgbuild --root ${PKGROOT} --scripts ${CMAKE_SOURCE_DIR}/dist/scripts
+  #
+  # --analyze the staged root to get the bundle component list, then flip BundleIsVersionChecked
+  # off on every entry BEFORE building. Without this, PackageKit version-gates each bundle and skips
+  # any whose on-disk CFBundleVersion is >= the pkg's — which silently prevented the legacy-1.0.0
+  # kext from ever updating (proven 2026-07-09, see cmake/pkg_no_version_check.sh). Force-install so
+  # the pkg always places its own build.
+  COMMAND pkgbuild --analyze --root ${PKGROOT} ${CMAKE_BINARY_DIR}/mt2d-components.plist
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/pkg_no_version_check.sh ${CMAKE_BINARY_DIR}/mt2d-components.plist
+  COMMAND pkgbuild --root ${PKGROOT} --component-plist ${CMAKE_BINARY_DIR}/mt2d-components.plist
+          --scripts ${CMAKE_SOURCE_DIR}/dist/scripts
           --identifier com.schmonz.mt2d --version ${MT2_PKG_VERSION} --install-location /
           ${CMAKE_BINARY_DIR}/mt2d-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
