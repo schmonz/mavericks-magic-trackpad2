@@ -362,29 +362,32 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
 /* Build the OSDictionary passed to BNBTrackpadDevice::init. multitouchProperties() reads
  * "DefaultMultitouchProperties", so the table must carry the genuine config (parser-type 1000 + the
  * MultitouchHID plugin) so the AMD BNB spawns is recognized by MultitouchSupport and drives the cursor.
- * Mirrors the BNBTrackpadDriver personality. Returns the dict as void* (the cfg.build_props signature),
- * NULL on alloc failure. */
+ * Mirrors the BNBTrackpadDriver personality. Some seeds are GENUINE per-transport and must NOT be
+ * unified with usb_build_init_props: parser-options (BT's own 0x2F) and the DefaultMultitouchProperties
+ * nesting (USB is flat); geometry is answered dynamically here (getMultitouchReport), not seeded — see
+ * mt2_stack.h + decisions.md "genuine-reuse tax". Returns the dict as void* (the cfg.build_props
+ * signature), NULL on alloc failure. */
 static void *bt_build_bnb_props(void) {
     OSDictionary *top    = OSDictionary::withCapacity(1);
     OSDictionary *mt     = OSDictionary::withCapacity(9);
     OSDictionary *plugin = OSDictionary::withCapacity(1);
-    OSNumber *ptype = OSNumber::withNumber((unsigned long long)1000, 32);
-    OSNumber *popts = OSNumber::withNumber((unsigned long long)47, 32);
-    OSString *plpath = OSString::withCString("AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin");
+    OSNumber *ptype = OSNumber::withNumber((unsigned long long)MT2_PARSER_TYPE, 32);
+    OSNumber *popts = OSNumber::withNumber((unsigned long long)MT2_PARSER_OPTIONS_BT, 32);   /* genuine BT value */
+    OSString *plpath = OSString::withCString(MT2_MTHID_PLUGIN_PATH);
     if (!top || !mt || !plugin || !ptype || !popts || !plpath) {
         if (top) top->release(); if (mt) mt->release(); if (plugin) plugin->release();
         if (ptype) ptype->release(); if (popts) popts->release(); if (plpath) plpath->release();
         return 0;
     }
-    plugin->setObject("0516B563-B15B-11DA-96EB-0014519758EF", plpath);
+    plugin->setObject(MT2_MTHID_PLUGIN_GUID, plpath);
     mt->setObject("IOCFPlugInTypes", plugin);
     mt->setObject("parser-type", ptype);
     mt->setObject("parser-options", popts);
-    mt->setObject("MTHIDDevice", kOSBooleanTrue);
-    mt->setObject("HIDServiceSupport", kOSBooleanTrue);
-    mt->setObject("TrackpadMomentumScroll", kOSBooleanTrue);
-    mt->setObject("TrackpadSecondaryClickCorners", kOSBooleanTrue);
-    mt->setObject("TrackpadFourFingerGestures", kOSBooleanTrue);
+    mt->setObject(MT2_PROP_MTHID_DEVICE, kOSBooleanTrue);
+    mt->setObject(MT2_PROP_HID_SERVICE_SUPPORT, kOSBooleanTrue);
+    mt->setObject(MT2_PROP_MOMENTUM_SCROLL, kOSBooleanTrue);
+    mt->setObject(MT2_PROP_SECONDARY_CLICK_CORNERS, kOSBooleanTrue);
+    mt->setObject(MT2_PROP_FOUR_FINGER_GESTURES, kOSBooleanTrue);
     /* Physical-click reliability: BNB copies this key onto the spawned AMD, which reads it to open the
      * device-button gate — without it our click-sink posts are dropped (only tap-to-click survives). */
     mt->setObject(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);

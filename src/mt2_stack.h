@@ -86,9 +86,27 @@
 #define MT2_REPORT_ID_MT1                0x28   /* MT1 multitouch report (see src/mt1_encode.c)    */
 /* geometry D-report ids answered from src/mt2_geometry.c: 0xd1 0xd3 0xd0 0xa1 0xd9 0x7f           */
 
-/* ---- properties ------------------------------------------------------------------------------ */
-/* [BUILD] set in DefaultMultitouchProperties -> copied to the AMD by createMultitouchHandler ->   */
-/*         AMD::start sets the S+9 device-button gate (physical + two-finger right click).         */
+/* ---- multitouch property seeds --------------------------------------------------------------- *
+ * Seeded into the genuine Apple driver by the readers (usb_build_init_props / bt_build_bnb_props). *
+ * The paths drive DIFFERENT Apple drivers, so some divergence is genuine, not drift — see each     *
+ * builder head + decisions.md "genuine-reuse tax". SHARED values live here so they can't drift;    *
+ * GENUINE per-transport values are named separately and must NOT be unified.                       */
+#define MT2_PARSER_TYPE                  1000   /* [BUILD] selects the CompactV4 contact parser (both)*/
+/* [BUILD] parser-options is GENUINE PER-TRANSPORT — each matches Apple's OWN value for that driver;  *
+ * do NOT unify. Only bit 0x2 (clicky gate: 2-finger secondary + 3FD) is feature-relevant, and it is  *
+ * set in BOTH. reference.md "parser-options bit 0x2".                                                */
+#define MT2_PARSER_OPTIONS_BT            0x2F   /* 47: BT's genuine value                             */
+#define MT2_PARSER_OPTIONS_USB           0x27  /* 39: Apple's genuine USB-personality value          */
+#define MT2_MTHID_PLUGIN_GUID            "0516B563-B15B-11DA-96EB-0014519758EF" /* IOCFPlugInTypes key */
+#define MT2_MTHID_PLUGIN_PATH            "AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin"
+/* [BUILD] shared property keys, seeded identically on both transports (one spelling, no drift).    */
+#define MT2_PROP_MTHID_DEVICE            "MTHIDDevice"
+#define MT2_PROP_HID_SERVICE_SUPPORT     "HIDServiceSupport"
+#define MT2_PROP_MOMENTUM_SCROLL         "TrackpadMomentumScroll"
+#define MT2_PROP_SECONDARY_CLICK_CORNERS "TrackpadSecondaryClickCorners"
+#define MT2_PROP_FOUR_FINGER_GESTURES    "TrackpadFourFingerGestures"
+/* [BUILD] set in DefaultMultitouchProperties -> copied to the AMD by createMultitouchHandler ->    *
+ *         AMD::start sets the S+9 device-button gate (physical + two-finger right click).          */
 #define MT2_PROP_EXTRACT_BUTTON          "ExtractAndPostDeviceButtonState"
 
 #endif /* MT2_STACK_H */

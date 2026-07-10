@@ -34,6 +34,7 @@
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
 #include "mt2_geometry.h"              /* MT2_SURFACE_WIDTH/HEIGHT — one knob shared with the BT report */
+#include "../src/mt2_stack.h"          /* MT2_PARSER_* / MT2_PROP_* / MT2_MTHID_* property seeds */
 #include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "mt2_splice_kext.h"           /* declarative interpose engine + kext ops (mt2_splice_kext_ops) */
 
@@ -200,7 +201,10 @@ static void mt2_dict_data(OSDictionary *d, const char *key, const void *bytes, u
  * populates the table). Manual-start does no personality merge and the device NAKs Apple's feature
  * reports, so without these the instance lacks its user-client, geometry, and hidd-engagement props —
  * see explanation.md "MT2USBReader bring-up". Values from src/mt2_geometry.c + Apple's genuine USB
- * personality. Caller releases; returned as void* (the gh_config_t build_props signature). */
+ * personality. Some seeds are GENUINE per-transport and must NOT be unified with bt_build_bnb_props:
+ * parser-options (USB's own 0x27), geometry via the init dict (BT answers it dynamically), and the
+ * flat top-level nesting (BT wraps in DefaultMultitouchProperties) — see mt2_stack.h + decisions.md
+ * "genuine-reuse tax". Caller releases; returned as void* (the gh_config_t build_props signature). */
 static void *usb_build_init_props(void) {
     OSDictionary *initp = OSDictionary::withCapacity(24);
     if (!initp) return 0;
@@ -223,19 +227,19 @@ static void *usb_build_init_props(void) {
         for (unsigned i = 0; i < 8; i++) sdesc[8 + i] = mt2_surface_desc_tail[i];
         mt2_dict_data(initp, "Sensor Surface Descriptor", sdesc, sizeof(sdesc));
     }
-    mt2_dict_num(initp, "parser-type", 1000);
-    mt2_dict_num(initp, "parser-options", 39);   /* 0x27, bit 0x2 = clicky-hardware gate */
+    mt2_dict_num(initp, "parser-type", MT2_PARSER_TYPE);
+    mt2_dict_num(initp, "parser-options", MT2_PARSER_OPTIONS_USB);   /* genuine USB value; see mt2_stack.h */
     initp->setObject("Driver is Ready", kOSBooleanTrue);
-    initp->setObject("MTHIDDevice", kOSBooleanTrue);
+    initp->setObject(MT2_PROP_MTHID_DEVICE, kOSBooleanTrue);
     /* No "Product" seed: the genuine AMD's start copies the device's real USB iProduct descriptor
      * ("Magic Trackpad") onto the node, overriding any seed (verified live). See explanation.md. */
-    initp->setObject("HIDServiceSupport", kOSBooleanTrue);
+    initp->setObject(MT2_PROP_HID_SERVICE_SUPPORT, kOSBooleanTrue);
     mt2_dict_str(initp, "HIDDefaultBehavior", "Trackpad");   /* NOT the personality's Mouse: MT2 streams no mouse reports */
-    initp->setObject("TrackpadMomentumScroll", kOSBooleanTrue);
-    initp->setObject("TrackpadFourFingerGestures", kOSBooleanTrue);
-    initp->setObject("TrackpadSecondaryClickCorners", kOSBooleanTrue);
-    initp->setObject("TrackpadThreeFingerDrag", kOSBooleanTrue);
-    initp->setObject("ExtractAndPostDeviceButtonState", kOSBooleanTrue);
+    initp->setObject(MT2_PROP_MOMENTUM_SCROLL, kOSBooleanTrue);
+    initp->setObject(MT2_PROP_FOUR_FINGER_GESTURES, kOSBooleanTrue);
+    initp->setObject(MT2_PROP_SECONDARY_CLICK_CORNERS, kOSBooleanTrue);
+    initp->setObject("TrackpadThreeFingerDrag", kOSBooleanTrue);   /* USB-only; Stage-2 reconcile candidate */
+    initp->setObject(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
     const char *prefKeys[] = { "Clicking", "Dragging", "TrackpadRightClick",
         "TrackpadSecondaryClickCorners", "TrackpadMomentumScroll", "TrackpadScroll",
         "TrackpadThreeFingerDrag", "TrackpadFourFingerGestures" };
@@ -248,10 +252,9 @@ static void *usb_build_init_props(void) {
         prefs->release();
     }
     OSDictionary *plugins = OSDictionary::withCapacity(1);
-    OSString *pluginPath = OSString::withCString(
-        "AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin");
+    OSString *pluginPath = OSString::withCString(MT2_MTHID_PLUGIN_PATH);
     if (plugins && pluginPath) {
-        plugins->setObject("0516B563-B15B-11DA-96EB-0014519758EF", pluginPath);
+        plugins->setObject(MT2_MTHID_PLUGIN_GUID, pluginPath);
         initp->setObject("IOCFPlugInTypes", plugins);
     }
     if (pluginPath) pluginPath->release();
