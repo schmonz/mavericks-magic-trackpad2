@@ -694,6 +694,29 @@ event-driven "no frame without a touch" fact still holds for STREAMING once conn
 the prior blocker on a manual power-on — the synthetic-kickstart-frame idea only becomes relevant AFTER the
 link is established, and even then only for streaming, not for the pane (which already shows BT on presence).
 
+**ON-DEVICE GROUNDING (2026-07-10 evening) — the wall is host-initiated WAKE, and it's (so far) unsolved.**
+- **A physical click is the only reliable way to bring the disconnected MT2 up.** User-confirmed, deterministic:
+  "if I don't click, it never leaves the NoTrackpad screen." The intermittent "Found Mavericks Trackpad 2"
+  flash has no discernible pattern (transient BT-level attempts that don't sustain).
+- When it comes up (always after a click, every captured instance) the full chain fires cleanly: both L2CAP
+  channels bind → `BNBTrackpadDevice` manual-start → `0xF1` enable → `0x60` trigger → `multitouch confirmed
+  (first frame after N enables)` (N=1 and N=6 seen) → sustained → BT UI. The pane tracks BNBTrackpadDevice
+  presence throughout (re-confirms the property-gate was wrong).
+- Powered-on-but-not-clicked: `BNB=0`; the syslog shows the prior connection's `BT-`/terminate and NO
+  subsequent `BT+` — it does not re-establish on its own.
+- **Proactive host wake FAILS both ways tried:** (a) `sbin/mt2_bt_bounce` (CoD-matched `openConnection`) →
+  "no matching device among 2 paired (looked for CoD 0x594)" whether the device is off OR powered-on-disconnected
+  — CoD is live-sourced on connect, so a disconnected device has no CoD for blued to match (mt2_bt_bounce only
+  bounces an ALREADY-connected device); (b) the USB→BT handoff's address-based `openConnection` returned
+  `0x00000004` on a recent unplug.
+- **⇒ ② is really "host cannot wake the deep-idle/disconnected MT2 without a physical touch."** Likely Apple-BT
+  peripheral behaviour (device-initiated reconnect; a touch wakes its radio) that the host may be unable to
+  override. Next-session leads (all on-device, start from FACT not the disproved framings above): decode the
+  `openConnection 0x4` IOReturn + why; try an ADDRESS-based bounce (not CoD) against a paired-but-disconnected
+  device; determine whether the host can page/wake it at all while idle. If it genuinely can't, ② may be
+  unfixable from the host and the answer is the USB-OOB "plug in once → auto-paired → unplug to go wireless"
+  onboarding ([[mt2-usb-oob-pairing-api]], [[mt2-bt-onboarding-designs]]) rather than a wake hack.
+
 ## Three-finger-drag toggle — prior RE (2026-07-03), superseded by the 2026-07-10 recharacterization above
 
 **User goal:** parity — expose the three-finger-drag toggle (and the working gesture) on USB as on BT.
