@@ -666,29 +666,33 @@ REAL decode, so the synthetic frame never satisfies the enable gate and the retr
 genuinely streams. Residual = a brief "pane says BT but touch not yet live" window in the rare enable-slow
 case (measure on-device).
 
-**Pane-revert half — RESOLVED by disasm 2026-07-10 (CORRECTS the earlier "the pane keys on BNBTrackpadDevice
-presence" note).** `-[Trackpad loadMainView]` (@0x225d, `tools/re disasm Trackpad`) picks the nib: it defaults
-`mBaseNibName="NoTrackpad"`, and on `IOServiceGetMatchingService(BNBTrackpadDevice)` it sets `mFoundBTTrackpad=1`
-(@0x23a0) BUT then FALLS THROUGH — the trackpad nib (`mBaseNibName="MTTrackpadController"` @0x2421) is assigned
-ONLY if `AppleUSBMultitouchDriver` is present (`jne` @0x23c7) OR a service publishes
-`ApplePreferenceIdentifier=="com.apple.AppleMultitouchTrackpad"` (IOPropertyMatch @0x2414). So on BT the
-trackpad-VIEW gate is the **functional-AMD property**, NOT `BNBTrackpadDevice` presence (that only drives
-art/battery via `mFoundBTTrackpad` → `_pickMovie`). ⇒ at `BT+` the nub is present but the AMD hasn't published
-`com.apple.AppleMultitouchTrackpad` yet → `loadMainView` → NoTrackpad, until the multitouch chain is functional.
-Corollary: our SM (which renders `ON_BT` on BNBTrackpadDevice presence) CANNOT force the trackpad view via
-`loadMainView` until the AMD publishes that property — the honest fix is to make the AMD functional, not to
-force the nib (forcing it would paint a working view over a still-dead device — the same lie as an ungated
-synthetic frame).
+**Pane-revert half — the earlier disasm read was WRONG; CORRECTED on-device 2026-07-10.** A prior pass claimed
+`loadMainView` gates the BT trackpad view on `ApplePreferenceIdentifier=="com.apple.AppleMultitouchTrackpad"`
+(the "functional-AMD property"). **DISPROVED on the box:** in a fully-working BT state (`BNB=1, AMD=1,
+MTDevice=1`, `multitouch confirmed`), `ioreg -l | grep ApplePreferenceIdentifier` returns NOTHING — that
+property never exists on this system — yet the pane shows the **BT trackpad view** (user-confirmed). So the
+property does NOT gate the view; the pane tracks `BNBTrackpadDevice` **presence** (the original assumption).
+The `loadMainView` @0x2421 nib assignment (USB-or-property) is therefore not the operative BT path; the exact
+mechanism (likely `mFoundBTTrackpad` set by BNB presence, and/or our osax's `_magicTrackpadAction` replay) is
+not fully pinned but is MOOT — empirically the pane shows BT iff BNBTrackpadDevice is present. **Lesson: ground
+an RE conclusion against a live registry BEFORE writing it down (this was the 3rd static-RE overclaim of the
+session).**
 
-**Remaining off-device wall (needs the console):** (1) **does the AMD publish `com.apple.AppleMultitouchTrackpad`
-on-spawn (createMultitouchHandler / the 0x60 trigger, pre-touch) or only after processing a first frame?** —
-this decides whether a synthetic kickstart frame makes the pane resolve, and whether ② is "spawn/feed the AMD"
-vs "the property genuinely needs real data". (2) the enable-landed signal — `reEnableInGate` does raw
-`fChannel->sendTo(...)` FIRE-AND-FORGET (returns `kIOReturnSuccess` regardless; no device ACK, unlike BNB's
-`_simpleSetReport`→`0xe00002bc`); no known mode-query GET_REPORT (only `0x90` battery). Quick on-device probe
-when a BT device is functional: `ioreg -l | grep -B25 "com.apple.AppleMultitouchTrackpad"` to find the
-publishing node + WHEN it appears relative to BT+/first-frame. **This de-risks ① too: once `BT+` reliably means
-the AMD has published its property, the pane resolves cleanly instead of flashing present-but-dead.**
+**② is really TAP-TO-CONNECT, not tap-to-stream (on-device 2026-07-10).** On a MANUAL BT power-on (no USB
+event → the handoff daemon's `openConnection` wake never fires), the deep-idle MT2 does NOT establish the BT
+link on its own: after power-on the syslog stayed EMPTY (0 new lines) and `BNBTrackpadDevice` never appeared —
+until a physical TAP, which drove the ENTIRE chain at once (both L2CAP channels bind → BNBTrackpadDevice
+manual-start → `0xF1` enable → `0x60` trigger → `multitouch confirmed (first frame after 6 enables)`). The
+earlier "found briefly → NoTrackpad" is a NON-SUSTAINED connection attempt (BNB flashing), NOT a property gate.
+So the pane's NoTrackpad-until-tap is just BNBTrackpadDevice being absent until the link establishes, and the
+tap is what establishes it. **Fix direction — connection establishment, not frames:** proactively wake the
+paired MT2 when it's powered-on-but-disconnected — the same `openConnection` the USB-unplug handoff uses, but on
+a non-USB trigger (a periodic wake attempt while paired-but-disconnected, or a device power-on signal). NB the
+handoff's `openConnection` itself returned `0x00000004` (FAILURE) on a recent USB-unplug — the wake path is not
+100% reliable and needs its own look ([[bt-attach-flap-rootcause]], [[mt2-usb-unplug-bt-handoff]]). The
+event-driven "no frame without a touch" fact still holds for STREAMING once connected, but the CONNECTION is
+the prior blocker on a manual power-on — the synthetic-kickstart-frame idea only becomes relevant AFTER the
+link is established, and even then only for streaming, not for the pane (which already shows BT on presence).
 
 ## Three-finger-drag toggle — prior RE (2026-07-03), superseded by the 2026-07-10 recharacterization above
 
