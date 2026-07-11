@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.13)  # kext link uses target_link_options (added in 3.13)
 
+# 10.9 target + x86_64 arch MUST be set BEFORE project() to retarget the whole
+# build (userland + kext + updater sub-builds). Without the arch pin, a modern
+# arm64 CI host silently builds arm64 binaries that can't run on Mavericks and
+# can't link the x86_64-thinned Sparkle -- caught by CI, since a native x86_64
+# 10.9 box masks it. include(Mavericks) below only backstops these as defaults
+# (its if(NOT ...) guards no-op here); the authoritative set is here, pre-project,
+# mirroring mavericks-1password.
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "Minimum macOS version")
+set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Target architectures")
+
 # Single source of truth for the product version. May carry a pre-release suffix
 # (e.g. -pre.1 / -rc.1) that CMake's project(VERSION) can't hold, so keep the full
 # string here and feed project() only the numeric part. The .pkg name + version and
