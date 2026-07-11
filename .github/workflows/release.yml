@@ -6,7 +6,8 @@ name: release
 #
 # AUTHENTICITY / CORRECTNESS of the cross-built kext rests on two things, no old
 # Xcode required:
-#   1. the SDK is pinned by SHA-256 in cmake/fetch_10_9_sdk.sh (integrity), and
+#   1. the SDK is pinned by SHA-256 in the shared fetch_10_9_sdk.sh (integrity;
+#      mavericks-shared-cmake, itself pinned to MSC_REF below), and
 #   2. the equivalence gate (cmake/characterize_build.sh compare) proves the
 #      cross-built kext is identical -- in undefined+defined external symbol sets,
 #      KPI deps, and arch -- to the trusted native 10.9.5 build committed in
@@ -25,11 +26,29 @@ on:
 permissions:
   contents: write
 
+env:
+  # Shared build machinery (find_package(MavericksSharedCMake) in CMakeLists.txt +
+  # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
+  # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
+  # deliberately to pick up shared-machinery changes.
+  MSC_REF: 3d8606421bb848adb9cb7de3108f67719caf48e4
+
 jobs:
   build-macos:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
+
+      # Install mavericks-shared-cmake so `cmake -S . -B build` can find_package it.
+      # It self-registers in the per-user CMake package registry, so no CMAKE_PREFIX_PATH
+      # is needed downstream. Pinned to MSC_REF (above). The install prefix also holds
+      # the shared scripts/ used by the SDK-fetch step below.
+      - name: Install mavericks-shared-cmake (pinned)
+        run: |
+          git clone https://github.com/schmonz/mavericks-shared-cmake /tmp/msc
+          git -C /tmp/msc checkout --quiet "$MSC_REF"
+          cmake -S /tmp/msc -B /tmp/msc/build
+          cmake --install /tmp/msc/build --prefix "$HOME/.local"
 
       - name: Determine version (from CMake MT2_VERSION — single source of truth)
         id: ver
@@ -55,19 +74,20 @@ jobs:
         run: softwareupdate --install-rosetta --agree-to-license || true
 
       # Persist the fetched SDK across runs so releases don't depend on the phracker
-      # archive being up every time. Key is tied to the fetch script (URL + pinned
-      # SHA-256 live there), so bumping the SDK auto-invalidates the cache.
+      # archive being up every time. The URL + pinned SHA-256 now live in the shared
+      # fetch script, so key on MSC_REF -- bumping the shared machinery (which is how
+      # the SDK pin would change) auto-invalidates the cache.
       - name: Cache the MacOSX10.9 SDK
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-sdk-cache
-          key: macosx10.9-sdk-${{ hashFiles('cmake/fetch_10_9_sdk.sh') }}
+          key: macosx10.9-sdk-${{ env.MSC_REF }}
 
       - name: Fetch + checksum-verify the MacOSX10.9 SDK
         id: sdk
         env:
-          MT2_SDK_CACHE: ${{ github.workspace }}/.mt2-sdk-cache
-        run: echo "path=$(sh cmake/fetch_10_9_sdk.sh)" >> "$GITHUB_OUTPUT"
+          MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.mt2-sdk-cache
+        run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_10_9_sdk.sh")" >> "$GITHUB_OUTPUT"
 
       # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for MavericksTrackpad2Updater.app. Cache keyed on
       # the fetch script (URL + pinned SHA live there), so bumping Sparkle auto-invalidates the cache.
@@ -106,7 +126,11 @@ jobs:
           echo "kext:"; file build/MT2Gesture.kext/Contents/MacOS/MT2Gesture
 
       - name: 10.9 userland compat guard (no post-10.9 imports)
-        run: sh cmake/compat_guard.sh build
+        # The guard is now the shared mavericks-shared-cmake script, wired as the
+        # test_compat_guard ctest (binary list + IOKit post-10.9 symbols defined in
+        # tests/CMakeLists.txt). Run just that test here for an early, clearly-named
+        # gate before the equivalence gate; the full ctest run below re-covers it.
+        run: ctest --test-dir build -R '^test_compat_guard$' --output-on-failure
 
       - name: Kext cross-build equivalence gate (vs native 10.9 reference, fail-closed)
         run: sh cmake/characterize_build.sh compare dist/characterization build

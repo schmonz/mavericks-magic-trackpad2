@@ -33,6 +33,15 @@ honest as the device connects, disconnects, or switches transport.
 
 - Mac OS X 10.9
 - Command Line Tools (clang) + CMake (≥3.10).
+- [mavericks-shared-cmake](https://github.com/schmonz/mavericks-shared-cmake)
+  installed once — the build finds it via `find_package`:
+
+      git clone https://github.com/schmonz/mavericks-shared-cmake
+      cmake -S mavericks-shared-cmake -B mavericks-shared-cmake/build
+      cmake --install mavericks-shared-cmake/build --prefix "$HOME/.local"
+
+  The install self-registers in CMake's per-user package registry, so no
+  `CMAKE_PREFIX_PATH` is needed afterward.
 
 ## Build & install
 

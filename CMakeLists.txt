@@ -8,28 +8,25 @@ set(MT2_VERSION "0.4.5")
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MT2_VERSION_NUMERIC "${MT2_VERSION}")
 project(mt2 VERSION ${MT2_VERSION_NUMERIC} LANGUAGES C CXX)
 
-# Reject a poorly-fitting compiler up front (gcc-by-mistake / wrong IDE toolchain). Must come
-# right after project() so CMAKE_<LANG>_COMPILER_ID is populated. Both hosts require Apple's clang
-# (only differing in Xcode version) — see the module header.
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/require_compiler.cmake)
-
-# Native 10.9 build for now; Project B adds the modern-SDK cross-build on top.
-if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.9" CACHE STRING "" FORCE)
-endif()
-
-# 10.9 is Intel-only; force the single x86_64 slice unless the caller overrides.
-# Without this, a modern arm64 host silently bumps the deployment target to 11.0
-# and emits an arm64 binary that cannot run on Mavericks. On the native 10.9 dev
-# box x86_64 is already the native arch, so this is a no-op there.
-if(NOT CMAKE_OSX_ARCHITECTURES)
-  set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "" FORCE)
-endif()
+# Shared mavericks-* build conventions: deployment target 10.9 / x86_64 (10.9 is
+# Intel-only; without the arch pin a modern arm64 host silently bumps the target
+# to 11.0 and emits a binary that can't run on Mavericks), the AppleClang gate
+# (reject gcc / Homebrew / pkgsrc clang picked up by an IDE — both build hosts use
+# Apple's clang, differing only in Xcode version), native-vs-cross mode detection,
+# and the 10.9 compat helpers. Install the mavericks-shared-cmake package once
+# (`cmake --install`, which self-registers in the user package registry); then it
+# is found with no CMAKE_PREFIX_PATH. See github.com/schmonz/mavericks-shared-cmake.
+# Must come after project() so CMAKE_<LANG>_COMPILER_ID is populated for the gate.
+find_package(MavericksSharedCMake REQUIRED)
+set(MAVERICKS_REQUIRE_LANGS C CXX)   # the kext (C++/IOKit) + userland (C) both must be AppleClang
+set(MAVERICKS_REQUIRE_BLOCKS ON)     # the injected osax uses Apple blocks (dispatch handlers)
+include(Mavericks)
 
 # Absolute path to a MacOSX10.9 SDK root, used ONLY to cross-build the kext from a
 # modern host (the kext needs 10.9 kernel headers + libkmod, which the modern SDK
-# does not provide). Fetch it with cmake/fetch_10_9_sdk.sh. Leave UNSET on the
-# native 10.9 dev box -- the kext then falls back to CMAKE_OSX_SYSROOT (unchanged).
+# does not provide). Fetch it with the shared fetch_10_9_sdk.sh (or the
+# mavericks_fetch_10_9_sdk() helper). Leave UNSET on the native 10.9 dev box --
+# the kext then falls back to CMAKE_OSX_SYSROOT (unchanged).
 set(MT2_MACOSX_10_9_SDK "" CACHE PATH "MacOSX10.9 SDK root for kext cross-build (modern host only)")
 # Path to a fetched Sparkle 1.27.3 Sparkle.framework (x86_64, 10.9) for the updater helper.
 # Empty by default; set by the caller/CI (cmake -DMT2_SPARKLE_FRAMEWORK=$(sh cmake/fetch_sparkle.sh)).

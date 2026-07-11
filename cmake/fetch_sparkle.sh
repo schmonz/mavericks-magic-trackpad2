@@ -2,7 +2,8 @@
 # Fetch + cache + checksum-verify the PREBUILT Sparkle 1.27.3 framework (the last Sparkle that runs
 # on 10.9; LC_VERSION_MIN_MACOSX 10.9 verified on-device). Thins to the x86_64 slice (the release
 # framework is fat x86_64+arm64; 10.9 is Intel-only). Prints the Sparkle.framework path on stdout.
-# Sparkle bytes are never committed -- build-time fetch, same pattern as fetch_10_9_sdk.sh.
+# Sparkle bytes are never committed -- build-time fetch, same pattern as the shared
+# fetch_10_9_sdk.sh (mavericks-shared-cmake).
 set -eu
 CACHE="${MT2_SPARKLE_CACHE:-${TMPDIR:-/tmp}/mt2-sparkle-cache}"
 URL="https://github.com/sparkle-project/Sparkle/releases/download/1.27.3/Sparkle-1.27.3.tar.xz"

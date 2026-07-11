@@ -14,7 +14,8 @@
 #
 # The KEXT is the gated artifact (undefined + defined external symbol sets, KPI
 # deps, arch) -- it's the one that can't be re-verified without 10.9 hardware.
-# Userland post-10.9 leaks are covered separately by cmake/compat_guard.sh.
+# Userland post-10.9 leaks are covered separately by the shared compat_guard.sh
+# (mavericks-shared-cmake), run as the test_compat_guard ctest.
 #
 # NOTE: POSIX sh has no `local`; every function uses uniquely-prefixed variable
 # names so helpers never clobber a caller's state.
@@ -88,7 +89,7 @@ emit() {   # <build-dir> <out-dir>
   [ -s "$em_out/kext/kpideps" ] || die "no KPI dependencies measured from $em_kplist"
   # Kext-only by design: it is THE artifact that can't be re-verified without 10.9
   # hardware, so it's where cross-toolchain divergence must be gated. Userland
-  # post-10.9 leaks are covered separately by cmake/compat_guard.sh. Keeping this
+  # post-10.9 leaks are covered separately by the shared compat_guard.sh. Keeping this
   # kext-only also lets the "always run after a kext build" POST_BUILD hook fire on
   # a kext-only build without churning the reference on whether tools were built.
 }
