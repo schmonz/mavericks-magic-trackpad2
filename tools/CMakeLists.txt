@@ -6,6 +6,12 @@ endforeach()
 # vhid_probe also needs the shared vhid helper (vhid_mt1.c lives in mt2core).
 target_link_libraries(vhid_probe mt2core)
 
+# mt2_synth_inject — Phase-D on-device oracle: drives begin/submit/end over the
+# MT2GestureUserClient to inject a canned press/move/lift via mt2_frame structs.
+add_executable(mt2_synth_inject mt2_synth_inject.c)
+target_include_directories(mt2_synth_inject PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(mt2_synth_inject "-framework IOKit" "-framework CoreFoundation")
+
 # Shipped-userland 10.9 guard: only mt2_reenumerate ships (vhid_probe / mt2_usb_enable are dev-only).
 mavericks_compat_guard(mt2_reenumerate)
 
