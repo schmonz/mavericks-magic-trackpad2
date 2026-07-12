@@ -24,6 +24,16 @@ add_executable(test_vtable_clone test_vtable_clone.c)
 target_include_directories(test_vtable_clone PRIVATE ${CMAKE_SOURCE_DIR}/kext-gesture)
 add_test(NAME test_vtable_clone COMMAND test_vtable_clone)
 
+# Vendored VoodooInput wire ABI (no mt2core; standalone header assertions).
+# The upstream headers are C++ (tag-less struct/enum); compile as C++ without
+# editing the pristine vendored files.
+set_source_files_properties(test_voodoo_wire.c PROPERTIES LANGUAGE CXX)
+add_executable(test_voodoo_wire test_voodoo_wire.c)
+target_include_directories(test_voodoo_wire PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
+add_test(NAME test_voodoo_wire COMMAND test_voodoo_wire)
+
 # Shell + bats suites (run from the source tree).
 add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.sh)
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)

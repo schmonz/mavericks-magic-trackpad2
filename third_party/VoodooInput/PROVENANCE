@@ -1,0 +1,9 @@
+Upstream: https://github.com/acidanthera/VoodooInput
+Pinned:   d897813718c2ef9ad143b6a86240fe52dcb1693e (2026-07-12)
+Files:    VoodooInputMultitouch/{VoodooInputEvent,VoodooInputTransducer,VoodooInputMessages}.h (verbatim)
+License:  GPL-2.0 — identical to this project (COPYING). Copyright notices preserved in each file.
+Why in-tree (exception to the mav_fetch_pinned convention): these define our public wire ABI.
+  The A1 guarantee is "identical bytes to what a satellite compiles against" — the bytes belong
+  in-tree: diffable, offline, and driving host tests without a network step. Headers are frozen
+  upstream (Transducer.h last changed 2024-04, Event/Messages.h 2022-12).
+Re-sync: refetch at a newer SHA and `git diff` this dir; update this file's SHA/date.
