@@ -43,6 +43,17 @@ target_include_directories(test_voodoo_translate PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
 add_test(NAME test_voodoo_translate COMMAND test_voodoo_translate)
 
+# VoodooInput integration proof: standard-fields event -> engine -> MakeTouch-first MT1.
+# C++ (wire headers) linking C mt2core (headers wrapped extern "C" in the test).
+add_executable(test_voodoo_integration test_voodoo_integration.c
+  ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+set_source_files_properties(test_voodoo_integration.c PROPERTIES LANGUAGE CXX)
+target_include_directories(test_voodoo_integration PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
+target_link_libraries(test_voodoo_integration mt2core)
+add_test(NAME test_voodoo_integration COMMAND test_voodoo_integration)
+
 # Shell + bats suites (run from the source tree).
 add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.sh)
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)
