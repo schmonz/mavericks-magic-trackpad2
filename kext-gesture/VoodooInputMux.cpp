@@ -25,10 +25,13 @@ bool com_schmonz_VoodooInput::start(IOService *provider) {
         IOLog("VoodooInputMux: WARNING zero logical max (X=%u Y=%u); coordinates unscaled\n",
               fLogicalMaxX, fLogicalMaxY);
     MT2_DLOG(1, "VoodooInputMux: up (LmaxX=%u LmaxY=%u)", fLogicalMaxX, fLogicalMaxY);
+    if (gActiveMT2Gesture)
+        gActiveMT2Gesture->beginSyntheticTerminal(this, MT2_EVENT_DRIVEN, &mt2_policy_default);
     return true;
 }
 
 void com_schmonz_VoodooInput::stop(IOService *provider) {
+    if (gActiveMT2Gesture) gActiveMT2Gesture->endSyntheticTerminal(this);
     fProvider = 0;                        // fence: a late message() drops on the provider==fProvider check
     if (gActiveMT2Gesture) gActiveMT2Gesture->quiesceDelivery();  // drain any in-flight submitFrame(this,...)
     IOService::stop(provider);
@@ -38,12 +41,9 @@ IOReturn com_schmonz_VoodooInput::message(UInt32 type, IOService *provider, void
     if (type == kIOMessageVoodooInputMessage && provider == fProvider && argument) {
         const VoodooInputEvent *w = (const VoodooInputEvent *)argument;
         mt2_frame f = mt2_frame_from_voodoo(w, fLogicalMaxX, fLogicalMaxY);
-        /* Feed the shared engine seam. NOTE (sub-project 1 boundary): submitFrame only DELIVERS
-         * once someone has called gActiveMT2Gesture->connectionEstablished(this, mode, policy,
-         * &terminalSink) — the session drops frames whose source != active_source. That terminal
-         * sink (inject_encoded -> a nub the recognizer binds) is the revived synthetic consumer of
-         * SUB-PROJECT 2. Until then this is a safe no-op: the translate path is exercised, frames
-         * are dropped by the active-source guard, nothing crashes. */
+        /* Deliver to the shared engine. As of sub-project 2, start() has called
+         * beginSyntheticTerminal(this,...), so `this` is the active source with kSynthSink
+         * registered — the frame flows through the session to the fabricated AMD (cursor). */
         if (gActiveMT2Gesture) gActiveMT2Gesture->submitFrame(this, &f);
         return kIOReturnSuccess;
     }
