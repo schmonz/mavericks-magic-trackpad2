@@ -43,7 +43,7 @@ void com_schmonz_MT2Gesture::sink_post_button_edge(void *ctx, unsigned mask) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
     if (self->fXport.post_button_edge) self->fXport.post_button_edge(self->fXport.ctx, mask);
 }
-void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
+void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const mt2_frame *frame) {
     com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
     if (self->fXport.feed_frame) self->fXport.feed_frame(self->fXport.ctx, frame);
 }
@@ -90,7 +90,7 @@ void com_schmonz_MT2Gesture::quiesceDelivery(void) {
 }
 
 /* A reader submits one decoded frame; the session decides what reaches the device. */
-void com_schmonz_MT2Gesture::submitFrame(IOService *source, const VoodooInputEvent *tf) {
+void com_schmonz_MT2Gesture::submitFrame(IOService *source, const mt2_frame *tf) {
     if (fSessionLock) IOLockLock(fSessionLock);
     mt2_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
     if (fSessionLock) IOLockUnlock(fSessionLock);

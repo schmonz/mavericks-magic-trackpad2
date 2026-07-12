@@ -5,7 +5,7 @@ void mt2_lifecycle_reset(mt2_lifecycle_t *lc) {
     /* last[] need not be cleared: it is only read for ids set in prev_ids. */
 }
 
-void mt2_lifecycle_step(mt2_lifecycle_t *lc, VoodooInputEvent *frame) {
+void mt2_lifecycle_step(mt2_lifecycle_t *lc, mt2_frame *frame) {
     uint32_t now_ids = 0;
 
     /* Pass 1: state by PRESENCE, not by the device's per-frame state bits. The MT2
@@ -28,7 +28,7 @@ void mt2_lifecycle_step(mt2_lifecycle_t *lc, VoodooInputEvent *frame) {
         uint32_t bit = (uint32_t)1u << id;
         if ((lc->prev_ids & bit) && !(now_ids & bit)) {
             if (frame->contact_count < MAX_TOUCHES) {
-                VoodooInputTransducer end = lc->last[id];
+                mt2_contact end = lc->last[id];
                 end.state = TS_END;
                 frame->transducers[frame->contact_count++] = end;
             }
@@ -39,13 +39,13 @@ void mt2_lifecycle_step(mt2_lifecycle_t *lc, VoodooInputEvent *frame) {
     lc->prev_ids = now_ids;
 }
 
-int mt2_lifecycle_flush(mt2_lifecycle_t *lc, VoodooInputEvent *out) {
+int mt2_lifecycle_flush(mt2_lifecycle_t *lc, mt2_frame *out) {
     out->contact_count = 0;
     out->isPhysicalButtonDown = 0;
     out->timestamp = 0;
     for (int id = 0; id < MAX_TOUCHES; id++) {
         if (lc->prev_ids & ((uint32_t)1u << id)) {
-            VoodooInputTransducer end = lc->last[id];
+            mt2_contact end = lc->last[id];
             end.state = TS_END;
             out->transducers[out->contact_count++] = end;
         }

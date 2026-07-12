@@ -5,7 +5,7 @@
  * user-client, via the init dict), and send the MT2 0x02 USB multitouch-enable. SHARED
  * ENGINE (the ~97%) is what the seam feeds. There is ONE seam: mt2_usb_handle_report runs
  * in place of the genuine driver's handleReport, reframes each raw MT2 0x02 report by handing
- * the decoded VoodooInputEvent to the shared session engine (policy row mt2_policy_default) whose
+ * the decoded mt2_frame to the shared session engine (policy row mt2_policy_default) whose
  * registered sink re-encodes + chains the original. Apple's driver owns the interface +
  * interrupt pipe and does all the contact/gesture/cursor work; we only translate the stream
  * at its seam.
@@ -27,7 +27,7 @@
 #define VTC_ALLOC(sz)  IOMalloc(sz)
 #define VTC_FREE(p,sz) IOFree((p), (sz))
 #include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
-#include "mt2_usb_decode.h"            /* mt2_usb_decode -> VoodooInputEvent (the decode seam) */
+#include "mt2_usb_decode.h"            /* mt2_usb_decode -> mt2_frame (the decode seam) */
 #include "mt2_usb_bytes.h"           /* mt2_apple_checksum + mt2_usb_click_report */
 #include "mt1_encode.h"
 #include "MT2Gesture.h"                /* engine: connectionEstablished/submitFrame + sink type */
@@ -91,7 +91,7 @@ static uint32_t usb_ts_22bit(void) {
  * and permanently re-pinned by tests/test_reader_characterization.c's unchanged goldens), append Apple's
  * checksum, wrap, and chain the ORIGINAL handleReport. post_button_edge drives the self-driven
  * handleButton (see the dirty-trick note at mt2_usb_handle_report). */
-static void usb_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
+static void usb_sink_feed_frame(void *ctx, const mt2_frame *frame) {
     (void)ctx;
     if (!gOrigUsbHandleReport || !gGenuineSelf) return;
     uint8_t out[256];
@@ -121,7 +121,7 @@ static const mt2_transport_sink_t kUsbSink =
 
 /* THE SEAM (the reframe splice): runs in place of the genuine driver's handleReport (usb_gh_interpose
  * points the vtable slot here). Read the raw MT2 0x02 report, then — structurally mirroring the BT
- * reader (mt2_bt_decode -> submitFrame) — hand the decoded VoodooInputEvent to the shared session
+ * reader (mt2_bt_decode -> submitFrame) — hand the decoded mt2_frame to the shared session
  * (policy row mt2_policy_default); the registered kUsbSink encodes + checksums + chains the original.
  * Non-touch reports pass through untouched. extern "C" free fn; first arg is `this`. */
 extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report,
@@ -137,8 +137,8 @@ extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report
     if (mt2[0] != 0x02)                                   /* not a touch report: pass through untouched */
         return gOrigUsbHandleReport(self, report, type, options);
 
-    VoodooInputEvent frame;
-    if (mt2_usb_decode(mt2, (size_t)mn, &frame) != 0)          /* decode -> VoodooInputEvent (seam) */
+    mt2_frame frame;
+    if (mt2_usb_decode(mt2, (size_t)mn, &frame) != 0)          /* decode -> mt2_frame (seam) */
         return gOrigUsbHandleReport(self, report, type, options);
     mt2_diag_frame(MT2_DIAG_USB, &frame, /*want_first=*/true);   /* pre-session, matching BT's diag point */
 

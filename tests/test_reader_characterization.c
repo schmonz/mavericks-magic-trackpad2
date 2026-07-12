@@ -64,7 +64,7 @@ static const uint8_t USB_2F[] = {
 typedef struct { uint8_t buf[64]; int len; int nfeed; } bt_cap_t;
 static void bt_click(void *c, unsigned m){ (void)c; (void)m; }
 static void bt_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
-static void bt_feed (void *c, const VoodooInputEvent *f){
+static void bt_feed (void *c, const mt2_frame *f){
     bt_cap_t *cap = (bt_cap_t *)c;
     int n = mt1_encode(f, cap->buf, sizeof cap->buf, BT_TS);   /* mirrors MT2Gesture.cpp:61 */
     if (n > 0) { cap->len = n; }
@@ -77,7 +77,7 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
     bt_cap_t cap; memset(&cap, 0, sizeof cap);
     mt2_session_sink_t sink = { bt_click, bt_feed, bt_arm, &cap };
     mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_default, /*now*/1000);
-    VoodooInputEvent tf; memset(&tf, 0, sizeof tf);
+    mt2_frame tf; memset(&tf, 0, sizeof tf);
     if (mt2_bt_decode(raw, rawlen, &tf) != 0) return -1;
     mt2_session_frame(&s, 0xB7, &tf, /*now*/1000, &sink);
     memcpy(out, cap.buf, cap.len);
@@ -89,7 +89,7 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
 typedef struct { uint8_t buf[64]; int len; uint32_t ts; } usb_cap_t;
 static void usb_click(void *c, unsigned m){ (void)c; (void)m; }
 static void usb_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
-static void usb_feed (void *c, const VoodooInputEvent *f){
+static void usb_feed (void *c, const mt2_frame *f){
     usb_cap_t *cap = (usb_cap_t *)c;
     int n = mt1_encode(f, cap->buf, sizeof cap->buf - 2, cap->ts);   /* mirrors usb_sink_feed_frame */
     if (n < 0) return;
@@ -104,7 +104,7 @@ static int usb_pipeline_session(mt2_session_t *s, const uint8_t *raw, size_t raw
                                 uint32_t ts, uint8_t *out) {
     usb_cap_t cap; memset(&cap, 0, sizeof cap); cap.ts = ts;
     mt2_session_sink_t sink = { usb_click, usb_feed, usb_arm, &cap };
-    VoodooInputEvent frame;
+    mt2_frame frame;
     if (mt2_usb_decode(raw, rawlen, &frame) != 0) return -1;
     mt2_session_frame(s, 0x5B, &frame, /*now*/1000, &sink);
     if (cap.len <= 0) return -1;

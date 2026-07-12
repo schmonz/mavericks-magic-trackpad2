@@ -1,6 +1,6 @@
 #ifndef MT2_LIFECYCLE_H
 #define MT2_LIFECYCLE_H
-#include "voodoo_input.h"
+#include "mt2_frame.h"
 #include <stdint.h>
 
 /* Contact-lifecycle marking across frames.
@@ -20,7 +20,7 @@
  * ids are 0..15 (the low nibble of the device record). */
 typedef struct {
     uint32_t prev_ids;             /* bitmask of ids present in the last stepped frame */
-    VoodooInputTransducer  last[MAX_TOUCHES];    /* last-known touch per id (index = id), for BreakTouch */
+    mt2_contact  last[MAX_TOUCHES];    /* last-known touch per id (index = id), for BreakTouch */
 } mt2_lifecycle_t;
 
 /* Forget all history: the next contacts read as new, none pending an end.
@@ -34,12 +34,12 @@ void mt2_lifecycle_reset(mt2_lifecycle_t *lc);
  *     but absent now;
  *   - record this frame's present ids + their touches for next time (ended ids are
  *     dropped from history, so their end is delivered exactly once). */
-void mt2_lifecycle_step(mt2_lifecycle_t *lc, VoodooInputEvent *frame);
+void mt2_lifecycle_step(mt2_lifecycle_t *lc, mt2_frame *frame);
 
 /* Build a frame of TS_END contacts (last-known position) for every still-active id,
  * then clear history. Returns 1 if any were produced, else 0. Used as a silence
  * watchdog: if the input stream simply stops with no lift frame, deliver the
  * outstanding BreakTouch so the recognizer sees a clean lift. */
-int mt2_lifecycle_flush(mt2_lifecycle_t *lc, VoodooInputEvent *out);
+int mt2_lifecycle_flush(mt2_lifecycle_t *lc, mt2_frame *out);
 
 #endif

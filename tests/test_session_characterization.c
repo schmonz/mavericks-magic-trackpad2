@@ -27,7 +27,7 @@ typedef struct { ev_t log[32]; int n; } rec_t;
 
 static void put(rec_t *r, ev_t e) { if (r->n < 32) r->log[r->n] = e; r->n++; }
 static void rec_click(void *c, unsigned m)                    { ev_t e={0}; e.kind=EV_CLICK; e.mask=m; put(c,e); }
-static void rec_feed (void *c, const VoodooInputEvent *f)     { ev_t e={0}; e.kind=EV_FEED; e.contact_count=f->contact_count; put(c,e); }
+static void rec_feed (void *c, const mt2_frame *f)     { ev_t e={0}; e.kind=EV_FEED; e.contact_count=f->contact_count; put(c,e); }
 static void rec_arm  (void *c, uint32_t ms)                   { ev_t e={0}; e.kind=EV_ARM; e.ms=ms; put(c,e); }
 static mt2_session_sink_t mk(rec_t *r){
     mt2_session_sink_t s; s.post_button_edge=rec_click; s.feed_frame=rec_feed; s.arm_timer=rec_arm; s.ctx=r; return s;
@@ -41,8 +41,8 @@ static mt2_session_sink_t mk(rec_t *r){
 #define EXPECT_FEED(r,i,cc) do { CHECK_EQ((r).log[i].kind, EV_FEED);  CHECK_EQ((r).log[i].contact_count, (uint32_t)(cc)); } while(0)
 #define EXPECT_ARM(r,i,t)   do { CHECK_EQ((r).log[i].kind, EV_ARM);   CHECK_EQ((r).log[i].ms, (uint32_t)(t)); } while(0)
 
-static VoodooInputEvent contact(int x, int pressure, int button) {
-    VoodooInputEvent f; memset(&f,0,sizeof f);
+static mt2_frame contact(int x, int pressure, int button) {
+    mt2_frame f; memset(&f,0,sizeof f);
     f.contact_count = 1;
     f.transducers[0].currentCoordinates.x = x;
     f.transducers[0].currentCoordinates.pressure = pressure;
@@ -59,10 +59,10 @@ static void s1_button_edge(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
     mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
 
-    VoodooInputEvent f0 = contact(50, 20, 0);  mt2_session_frame(&s, USB, &f0, 5000, &k);
-    VoodooInputEvent f1 = contact(50, 20, 1);  mt2_session_frame(&s, USB, &f1, 5005, &k);
-    VoodooInputEvent f2 = contact(50, 20, 1);  mt2_session_frame(&s, USB, &f2, 5010, &k);
-    VoodooInputEvent f3 = contact(50, 20, 0);  mt2_session_frame(&s, USB, &f3, 5015, &k);
+    mt2_frame f0 = contact(50, 20, 0);  mt2_session_frame(&s, USB, &f0, 5000, &k);
+    mt2_frame f1 = contact(50, 20, 1);  mt2_session_frame(&s, USB, &f1, 5005, &k);
+    mt2_frame f2 = contact(50, 20, 1);  mt2_session_frame(&s, USB, &f2, 5010, &k);
+    mt2_frame f3 = contact(50, 20, 0);  mt2_session_frame(&s, USB, &f3, 5015, &k);
 
     /* frame0 (no edge, 0==0): FEED, ARM  -- no post_button_edge */
     /* frame1 (edge 0->1, 1 finger): CLICK 0x1, FEED, ARM */
@@ -81,7 +81,7 @@ static void s1_button_edge(void) {
 static void s2_twofinger_secondary_mask(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
     mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
-    VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
+    mt2_frame f; memset(&f,0,sizeof f); f.contact_count=2;
     f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20;
     f.isPhysicalButtonDown=1;
     mt2_session_frame(&s, USB, &f, 5000, &k);
@@ -98,7 +98,7 @@ static void s3_settle_gate_blocks(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
     mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
     s.settle_until_ms = 1000;                       /* seed a non-zero gate window */
-    VoodooInputEvent f = contact(50, 20, 1);
+    mt2_frame f = contact(50, 20, 1);
     mt2_session_frame(&s, USB, &f, 999, &k);        /* before settle: dropped whole */
     CHECK_EQ(r.n, 0);
     mt2_session_frame(&s, USB, &f, 1000, &k);       /* at settle: flows (edge + feed + arm) */
@@ -111,7 +111,7 @@ static void s3_settle_gate_blocks(void) {
 static void s4_single_source_guard(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
     mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
-    VoodooInputEvent f = contact(50, 20, 0);
+    mt2_frame f = contact(50, 20, 0);
     mt2_session_frame(&s, BT,  &f, 5000, &k);  CHECK_EQ(r.n, 0);   /* foreign source: nothing */
     mt2_session_frame(&s, USB, &f, 5000, &k);  CHECK_EQ(r.n, 2);   /* active source: FEED + ARM */
     EXPECT_FEED(r,0,1); EXPECT_ARM(r,1,MT2_IDLE_MS);
@@ -125,10 +125,10 @@ static void s4_single_source_guard(void) {
 static void s5_full_lift_absence_pump(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
     mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-    VoodooInputEvent down = contact(70, 20, 0);
+    mt2_frame down = contact(70, 20, 0);
     mt2_session_frame(&s, BT, &down, 5000, &k);      /* START + arm */
     r.n = 0;                                         /* isolate the lift */
-    VoodooInputEvent lift = contact(70, 0, 0);       /* same contact, pressure 0 */
+    mt2_frame lift = contact(70, 0, 0);       /* same contact, pressure 0 */
     mt2_session_frame(&s, BT, &lift, 5010, &k);
     /* exactly two absence frames, no click, no arm */
     CHECK_EQ(r.n, 2);
@@ -143,7 +143,7 @@ static void s5_full_lift_absence_pump(void) {
 static void s6_timer_watchdog_flush(void) {
     mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
     mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-    VoodooInputEvent f; memset(&f,0,sizeof f);
+    mt2_frame f; memset(&f,0,sizeof f);
     f.contact_count=1; f.transducers[0].id=2; f.transducers[0].currentCoordinates.pressure=20;
     f.transducers[0].currentCoordinates.x=88;
     mt2_session_frame(&s, BT, &f, 5000, &k);

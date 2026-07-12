@@ -38,7 +38,7 @@ void mt2_session_connect(mt2_session_t *s, uintptr_t source,
    physical-button bit changed since the last frame, forward that edge first —
    the mask is a faithful mapping of the hardware button + finger count to Apple's
    primary/secondary click code, NOT a synthesized click. */
-static void emit(mt2_session_t *s, const VoodooInputEvent *tf,
+static void emit(mt2_session_t *s, const mt2_frame *tf,
                  const mt2_session_sink_t *sink) {
     unsigned mask = 0;
     if (mt2_button_edge((unsigned)tf->isPhysicalButtonDown, tf->contact_count, &s->last_button, &mask))
@@ -49,7 +49,7 @@ static void emit(mt2_session_t *s, const VoodooInputEvent *tf,
 /* 1 iff the frame is a PURE lift -- has contacts and every one is BreakTouch (TS_END), i.e. a
    full hand-off-the-pad with nothing still down. (A partial lift -- some present + some TS_END --
    is not "all".) */
-static int frame_all_breaktouch(const VoodooInputEvent *f) {
+static int frame_all_breaktouch(const mt2_frame *f) {
     if (f->contact_count == 0) return 0;
     for (int i = 0; i < (int)f->contact_count; i++)
         if (f->transducers[i].state != TS_END) return 0;
@@ -84,10 +84,10 @@ static int frame_all_breaktouch(const VoodooInputEvent *f) {
 
    A partial lift still emits the frame as-is (present contacts + the lifting one's TS_END); there
    are still contacts down, so no absence and no full liftoff. Shared path => both transports. */
-static void emit_with_liftoff(mt2_session_t *s, const VoodooInputEvent *tf,
+static void emit_with_liftoff(mt2_session_t *s, const mt2_frame *tf,
                               const mt2_session_sink_t *sink) {
     if (frame_all_breaktouch(tf)) {
-        VoodooInputEvent empty = {0};
+        mt2_frame empty = {0};
         emit(s, &empty, sink);   /* finalize the path liftoff */
         emit(s, &empty, sink);   /* pump: flush the armed tap-click this tap, not the next */
     } else {
@@ -96,7 +96,7 @@ static void emit_with_liftoff(mt2_session_t *s, const VoodooInputEvent *tf,
 }
 
 void mt2_session_frame(mt2_session_t *s, uintptr_t source,
-                       const VoodooInputEvent *tf, uint32_t now_ms,
+                       const mt2_frame *tf, uint32_t now_ms,
                        const mt2_session_sink_t *sink) {
     if (source != s->active_source) return;                       /* single-active guard */
     if (!mt2_settle_passed(now_ms, s->settle_until_ms)) return;   /* settle gate */
@@ -106,7 +106,7 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
        for tap-to-click. A vanished contact is emitted once as BreakTouch (TS_END) at its
        last-known position -- the native clean-lift signal that also prevents fling, so no
        held-replay deceleration is needed. */
-    VoodooInputEvent f = *tf;
+    mt2_frame f = *tf;
     mt2_drop_lifted(&f);                          /* keep only real (size>0) contacts */
     mt2_lifecycle_step(&s->lifecycle, &f);        /* +START for new, +BreakTouch for vanished */
     if (f.contact_count > 0) {
@@ -132,7 +132,7 @@ void mt2_session_timer(mt2_session_t *s, const mt2_session_sink_t *sink) {
        NB the flush emits the ABSENCE_PAIR shape regardless of policy.liftoff_shape —
        valid while every arm_watchdog row also uses ABSENCE_PAIR (true for both shipped
        rows; revisit if a row ever arms the watchdog with PASSTHROUGH). */
-    VoodooInputEvent end = {0};
+    mt2_frame end = {0};
     if (mt2_lifecycle_flush(&s->lifecycle, &end))
         emit_with_liftoff(s, &end, sink);
 }

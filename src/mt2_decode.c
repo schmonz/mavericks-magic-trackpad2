@@ -3,7 +3,7 @@
 #define MT2_RECSZ 9
 
 int mt2_decode(const uint8_t *report, size_t len, uint8_t report_id,
-               size_t header_len, VoodooInputEvent *frame) {
+               size_t header_len, mt2_frame *frame) {
     if (!report || !frame) return -1;
     if (len < header_len || report[0] != report_id) return -1;
     if ((len - header_len) % MT2_RECSZ != 0) return -1;
@@ -28,7 +28,7 @@ int mt2_decode(const uint8_t *report, size_t len, uint8_t report_id,
 
         int statebits = t[3] & 0xC0;   /* 0x80 == finger down */
 
-        VoodooInputTransducer *out = &frame->transducers[frame->contact_count++];
+        mt2_contact *out = &frame->transducers[frame->contact_count++];
         out->id          = t[8] & 0x0f;
         out->state       = (statebits == 0x80) ? TS_TOUCHING : TS_END;
         out->currentCoordinates.x           = x;

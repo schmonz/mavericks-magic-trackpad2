@@ -4,11 +4,11 @@
 
 typedef struct {
     int n_click; unsigned last_mask;
-    int n_feed;  VoodooInputEvent last_feed; VoodooInputEvent feeds[8];
+    int n_feed;  mt2_frame last_feed; mt2_frame feeds[8];
     int n_arm;   uint32_t last_arm;
 } rec_t;
 static void rec_click(void *c, unsigned m){ rec_t*r=c; r->n_click++; r->last_mask=m; }
-static void rec_feed (void *c, const VoodooInputEvent *f){ rec_t*r=c; if(r->n_feed<8) r->feeds[r->n_feed]=*f; r->n_feed++; r->last_feed=*f; }
+static void rec_feed (void *c, const mt2_frame *f){ rec_t*r=c; if(r->n_feed<8) r->feeds[r->n_feed]=*f; r->n_feed++; r->last_feed=*f; }
 static void rec_arm  (void *c, uint32_t ms){ rec_t*r=c; r->n_arm++; r->last_arm=ms; }
 static mt2_session_sink_t mk(rec_t *r){
     mt2_session_sink_t s; s.post_button_edge=rec_click; s.feed_frame=rec_feed; s.arm_timer=rec_arm; s.ctx=r; return s;
@@ -16,7 +16,7 @@ static mt2_session_sink_t mk(rec_t *r){
 #define BT  0xB7
 #define USB 0x5B
 
-static VoodooInputEvent one(int x){ VoodooInputEvent f; memset(&f,0,sizeof f);
+static mt2_frame one(int x){ mt2_frame f; memset(&f,0,sizeof f);
     f.contact_count=1; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=x; return f; }
 
 static void run_tests(void) {
@@ -27,28 +27,28 @@ static void run_tests(void) {
        test_pipeline) as a zero-cost seam should a future device ever need it. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 1000);
-      VoodooInputEvent f=one(50);
+      mt2_frame f=one(50);
       mt2_session_frame(&s, BT, &f, 1000, &k); CHECK_EQ(r.n_feed, 1);   /* flows at connect, no gate */
       mt2_session_frame(&s, BT, &f, 1500, &k); CHECK_EQ(r.n_feed, 2); } /* keeps flowing */
 
     /* single-active guard: non-active source ignored */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
-      VoodooInputEvent f=one(50);
+      mt2_frame f=one(50);
       mt2_session_frame(&s, BT,  &f, 9999, &k); CHECK_EQ(r.n_feed, 0);
       mt2_session_frame(&s, USB, &f, 9999, &k); CHECK_EQ(r.n_feed, 1); }
 
     /* A lone lift frame with no contact ever down produces nothing (no phantom feed). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
-      VoodooInputEvent lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
+      mt2_frame lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
       mt2_session_frame(&s, USB, &lift, 5000, &k);
       CHECK_EQ(r.n_feed, 0); CHECK_EQ(r.n_arm, 0); }
 
     /* click: two-finger press -> secondary then feed (post-settle) */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
-      VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
+      mt2_frame f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20; f.isPhysicalButtonDown=1;
       mt2_session_frame(&s, USB, &f, 5000, &k);
       CHECK_EQ(r.n_click, 1); CHECK_EQ(r.last_mask, 0x2u); CHECK_EQ(r.n_feed, 1); }
@@ -56,7 +56,7 @@ static void run_tests(void) {
     /* EVENT_DRIVEN real contact: lift-drop applied, feed, arm IDLE */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-      VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
+      mt2_frame f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=70; f.transducers[1].currentCoordinates.pressure=0;   /* one lifted */
       mt2_session_frame(&s, BT, &f, 5000, &k);
       CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.last_feed.contact_count, 1);
@@ -76,9 +76,9 @@ static void run_tests(void) {
        transition; the 2nd is "still no contact"). Arms NO watchdog (cleanly lifted). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-      VoodooInputEvent real=one(70); mt2_session_frame(&s, BT, &real, 5000, &k);
+      mt2_frame real=one(70); mt2_session_frame(&s, BT, &real, 5000, &k);
       rec_t r2={0}; k=mk(&r2);
-      VoodooInputEvent lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
+      mt2_frame lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
       mt2_session_frame(&s, BT, &lift, 5010, &k);
       CHECK_EQ(r2.n_feed, 2);                                   /* full lift: absence + pump absence */
       CHECK_EQ(r2.feeds[0].contact_count, 0);                       /* 1st absence finalizes the path liftoff */
@@ -93,7 +93,7 @@ static void run_tests(void) {
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
       mt2_session_connect(&s, BT,  MT2_EVENT_DRIVEN, &mt2_policy_default, 0);   /* handoff: BT is now active */
-      VoodooInputEvent f=one(50);
+      mt2_frame f=one(50);
       mt2_session_frame(&s, USB, &f, 5000, &k); CHECK_EQ(r.n_feed, 0);   /* stale USB frame dropped */
       mt2_session_frame(&s, BT,  &f, 5000, &k); CHECK_EQ(r.n_feed, 1); } /* BT flows */
 
@@ -102,7 +102,7 @@ static void run_tests(void) {
        flap-storm guard is unneeded — cold-boot measurement found no post-connect burst. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-      VoodooInputEvent f=one(50);
+      mt2_frame f=one(50);
       mt2_session_frame(&s, BT, &f, 5000, &k); CHECK_EQ(r.n_feed, 1);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 10000);             /* reconnect */
       rec_t r2={0}; k=mk(&r2);
@@ -113,7 +113,7 @@ static void run_tests(void) {
        subsequent frames are TS_TOUCHING -- the transition tap-to-click needs. */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-      VoodooInputEvent f; memset(&f,0,sizeof f);
+      mt2_frame f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=3; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].state=TS_TOUCHING;
       mt2_session_frame(&s, BT, &f, 5000, &k);
       CHECK_EQ(r.last_feed.transducers[0].state, TS_START);     /* first frame -> MakeTouch */
@@ -123,7 +123,7 @@ static void run_tests(void) {
     /* lifecycle (STREAMING/USB too): first frame of a contact -> TS_START */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
-      VoodooInputEvent f; memset(&f,0,sizeof f);
+      mt2_frame f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=7; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].state=TS_TOUCHING;
       mt2_session_frame(&s, USB, &f, 5000, &k);
       CHECK_EQ(r.last_feed.transducers[0].state, TS_START);
@@ -135,7 +135,7 @@ static void run_tests(void) {
        (the flushed contacts are all BreakTouch -> emit absence only, not BreakTouch+absence). */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-      VoodooInputEvent f; memset(&f,0,sizeof f);
+      mt2_frame f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=2; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=88; f.transducers[0].state=TS_TOUCHING;
       mt2_session_frame(&s, BT, &f, 5000, &k);             /* contact down -> START + arm watchdog */
       CHECK_EQ(r.last_feed.transducers[0].state, TS_START);
@@ -148,7 +148,7 @@ static void run_tests(void) {
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mt2_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mt2_session_sink_t k=mk(&r);
       mt2_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
-      VoodooInputEvent f; memset(&f,0,sizeof f); f.contact_count=2;
+      mt2_frame f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20; f.isPhysicalButtonDown=1;
       mt2_session_frame(&s, BT, &f, 5000, &k);
       CHECK_EQ(r.n_click, 1); CHECK_EQ(r.last_mask, 0x2u); CHECK_EQ(r.n_feed, 1); }

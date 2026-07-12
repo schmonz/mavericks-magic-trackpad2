@@ -20,7 +20,7 @@ static const uint8_t FRAME_2F[] = {
 };
 
 static void run_tests(void) {
-    VoodooInputEvent f = {0};
+    mt2_frame f = {0};
     int rc = mt2_bt_decode(FRAME_1F, sizeof(FRAME_1F), &f);
     CHECK_EQ(rc, 0);
     CHECK_EQ(f.contact_count, 1);
@@ -38,13 +38,13 @@ static void run_tests(void) {
     CHECK(f.transducers[0].currentCoordinates.y > -2478 && f.transducers[0].currentCoordinates.y < 2587);
 
     /* Physical click: button bit set, one contact. */
-    VoodooInputEvent fc = {0};
+    mt2_frame fc = {0};
     CHECK_EQ(mt2_bt_decode(FRAME_CLICK, sizeof(FRAME_CLICK), &fc), 0);
     CHECK_EQ(fc.contact_count, 1);
     CHECK_EQ(fc.isPhysicalButtonDown, 1);
 
     /* Two-finger frame: two distinct contacts, no button. */
-    VoodooInputEvent f2 = {0};
+    mt2_frame f2 = {0};
     CHECK_EQ(mt2_bt_decode(FRAME_2F, sizeof(FRAME_2F), &f2), 0);
     CHECK_EQ(f2.contact_count, 2);
     CHECK_EQ(f2.isPhysicalButtonDown, 0);

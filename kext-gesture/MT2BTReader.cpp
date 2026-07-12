@@ -3,7 +3,7 @@
  * Two halves. PER-TRANSPORT (the ~3%): bind the L2CAP channels, decode each raw MT2 0x31
  * frame (mt2_bt_decode), and declare BT config — BNB props, sensor geometry, the 0xF1
  * enable. SHARED ENGINE (the ~97%) is what it feeds. There is ONE seam: bt_interpose_shim
- * decodes to a VoodooInputEvent and hands it to gActiveMT2Gesture->submitFrame; the shared
+ * decodes to a mt2_frame and hands it to gActiveMT2Gesture->submitFrame; the shared
  * session conditions it, mt1_encode's report 0x28, and drives Apple's own genuine
  * BNBTrackpadDevice (manual-started here). No decision logic lives in this file.
  *
@@ -167,7 +167,7 @@ static uint32_t bt_encode_uptime_ms(void) {
 static void *bt_bnb_amd(void) {
     return gGenuineBnb ? *(void **)((uint8_t *)gGenuineBnb + BNB_HANDLER_OFF) : 0;
 }
-static void bt_sink_feed_frame(void *ctx, const VoodooInputEvent *frame) {
+static void bt_sink_feed_frame(void *ctx, const mt2_frame *frame) {
     (void)ctx;
     void *amd = bt_bnb_amd();
     if (!amd) return;
@@ -247,7 +247,7 @@ static void mt2_maybe_publish_battery(const void *data, size_t len) {
 
 /* THE SEAM (dirty trick #1: L2CAP delegate-callback splice). This runs in place of BNB's own data
  * callback on the interrupt channel (interposeInGate swaps it in). It decodes the raw MT2 0x31 report
- * to a VoodooInputEvent and hands that ONE object across to the shared engine
+ * to a mt2_frame and hands that ONE object across to the shared engine
  * (gActiveMT2Gesture->submitFrame); everything downstream (condition → mt1_encode → drive Apple's AMD)
  * is shared. Runs in the channel's BT workloop (newDataIn context), same as Apple's own. */
 static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
@@ -263,7 +263,7 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
     if (rlen > 0) mt2_diag_raw(MT2_DIAG_BT, rep[0]);
     mt2_maybe_publish_battery(rep, rlen);
 
-    VoodooInputEvent tf;
+    mt2_frame tf;
     int drc = mt2_bt_decode(rep, rlen, &tf);
     { static bool once = false; if (!once) { once = true;
         IOLog("MT2BTReader: [diag] first shim hit len=%u b0=0x%02x decode=%d\n",

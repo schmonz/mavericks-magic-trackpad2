@@ -1,6 +1,6 @@
 #ifndef MT1_ENCODE_H
 #define MT1_ENCODE_H
-#include "voodoo_input.h"
+#include "mt2_frame.h"
 
 /* Encode the neutral frame as a Magic Trackpad 1 multitouch input report
  * (report id 0x28, 4-byte header + N*9-byte finger records), scaling
@@ -13,6 +13,6 @@
  * yields "timestamp invalid" and no gestures). Pass elapsed milliseconds.
  *
  * Returns the report length, or -1 if it won't fit. */
-int mt1_encode(const VoodooInputEvent *frame, uint8_t *buf, size_t cap, uint32_t timestamp);
+int mt1_encode(const mt2_frame *frame, uint8_t *buf, size_t cap, uint32_t timestamp);
 
 #endif
