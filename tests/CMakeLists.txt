@@ -34,6 +34,15 @@ target_include_directories(test_voodoo_wire PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
 add_test(NAME test_voodoo_wire COMMAND test_voodoo_wire)
 
+# VoodooInput translation seam. Compiled as C++ (wire headers are C++-only); no mt2core deps.
+add_executable(test_voodoo_translate test_voodoo_translate.c
+  ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+set_source_files_properties(test_voodoo_translate.c PROPERTIES LANGUAGE CXX)
+target_include_directories(test_voodoo_translate PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
+add_test(NAME test_voodoo_translate COMMAND test_voodoo_translate)
+
 # Shell + bats suites (run from the source tree).
 add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.sh)
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)
