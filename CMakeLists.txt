@@ -32,6 +32,12 @@ set(MAVERICKS_REQUIRE_LANGS C CXX)   # the kext (C++/IOKit) + userland (C) both 
 set(MAVERICKS_REQUIRE_BLOCKS ON)     # the injected osax uses Apple blocks (dispatch handlers)
 include(Mavericks)
 
+# Post-10.9 IOKit renames that must never leak on a modern cross-build:
+# _IORegistryEntryCopyPath (10.11), _IOMainPort / _kIOMainPortDefault (12.0, the renamed
+# IOMasterPort). mavericks_compat_guard() forwards this to the guard for every shipped
+# userland target (see tools/CMakeLists.txt). Must be set before add_subdirectory(tools).
+set(MAVERICKS_POST_10_9_SYMBOLS "_IORegistryEntryCopyPath|_IOMainPort|_kIOMainPortDefault")
+
 # Absolute path to a MacOSX10.9 SDK root, used ONLY to cross-build the kext from a
 # modern host (the kext needs 10.9 kernel headers + libkmod, which the modern SDK
 # does not provide). Fetch it with the shared fetch_10_9_sdk.sh (or the

@@ -6,6 +6,9 @@ endforeach()
 # vhid_probe also needs the shared vhid helper (vhid_mt1.c lives in mt2core).
 target_link_libraries(vhid_probe mt2core)
 
+# Shipped-userland 10.9 guard: only mt2_reenumerate ships (vhid_probe / mt2_usb_enable are dev-only).
+mavericks_compat_guard(mt2_reenumerate)
+
 # mt2_pane_arm lives under the prefpane dir; ApplicationServices + CoreFoundation.
 add_executable(mt2_pane_arm mt2_prefpane_refresh/mt2_pane_arm.c)
 target_link_libraries(mt2_pane_arm "-framework ApplicationServices" "-framework CoreFoundation")
@@ -27,6 +30,7 @@ target_compile_options(mt2_usb_bt_handoff PRIVATE -fobjc-arc)
 target_include_directories(mt2_usb_bt_handoff PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(mt2_usb_bt_handoff
   "-framework Foundation" "-framework IOBluetooth" "-framework IOKit" "-framework CoreFoundation")
+mavericks_compat_guard(mt2_usb_bt_handoff)
 
 # mt2_pane_watch — Branch A launch-watcher (own process, normal ObjC/ARC + AppKit):
 # sends MT2x/load to System Preferences on launch so our osax loads (no SIMBL).
@@ -34,6 +38,7 @@ add_executable(mt2_pane_watch mt2_prefpane_refresh/mt2_pane_watch.m)
 target_compile_options(mt2_pane_watch PRIVATE -fobjc-arc)
 target_link_libraries(mt2_pane_watch
   "-framework Foundation" "-framework AppKit" "-framework ApplicationServices")
+mavericks_compat_guard(mt2_pane_watch)
 
 # The prefpane-refresh osax: a pure-C GC-neutral payload injected into System
 # Preferences. MODULE = -bundle; objc is used via the runtime only (no GC image info).
@@ -87,6 +92,12 @@ foreach(_gc MT2PaneRefresh MT2PaneRefresh_dylib MT2PaneRefresh_simbl)
     COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/check_gc_neutral.sh $<TARGET_FILE:${_gc}>
     COMMENT "Verifying ${_gc} is GC-neutral (no __objc_imageinfo)"
     VERBATIM)
+endforeach()
+
+# 10.9 compat guard for the two SHIPPED payloads (osax + SIMBL bundle). MT2PaneRefresh_dylib is
+# a dev-only injection variant and is NOT shipped, so it is not guarded.
+foreach(_cg MT2PaneRefresh MT2PaneRefresh_simbl)
+  mavericks_compat_guard(${_cg})
 endforeach()
 
 # Aggregate convenience target (mirrors the Makefile `prefpane-refresh`: osax + dylib + arm).
@@ -181,6 +192,8 @@ if(MT2_SPARKLE_FRAMEWORK)
     COMMAND ${CMAKE_COMMAND} -E copy ${UPD_DIR}/MavericksTrackpad2Updater.icns ${UPD_APP}/Contents/Resources/MavericksTrackpad2Updater.icns
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${MT2_SPARKLE_FRAMEWORK} ${UPD_APP}/Contents/Frameworks/Sparkle.framework
     COMMENT "Assembling MavericksTrackpad2Updater.app")
+
+  mavericks_compat_guard(MavericksTrackpad2Updater)
 
   add_custom_target(updater-install
     COMMAND sudo ${CMAKE_COMMAND} -E rm -rf /usr/local/lib/mt2d/MavericksTrackpad2Updater.app

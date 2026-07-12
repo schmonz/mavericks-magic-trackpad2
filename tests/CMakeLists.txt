@@ -29,33 +29,9 @@ add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.s
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)
 add_test(NAME test_appcast_notes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_appcast_notes.sh)
 
-# Build-artifact invariants: fail the build if a shipped artifact violates a 10.9 rule.
-# These run against ${CMAKE_BINARY_DIR}, so they assume `cmake --build` has already
-# assembled the osax/.bundle/.kext (POST_BUILD of `all` targets) into the build dir.
-#   test_compat_guard: userland Mach-Os are x86_64, min-OS 10.9, no post-10.9 imports.
-#   test_plists: shipped Info.plists lint clean + updater has SUFeedURL/SUPublicEDKey.
-#
-# The compat guard is the shared mavericks-shared-cmake script (MAVERICKS_SHARED_DIR
-# is set by include(Mavericks)). Unlike the shared default set, MT2's userland is
-# IOKit-heavy, so extend the post-10.9 denylist with the IOKit renames that must
-# never leak on a modern cross-build: _IORegistryEntryCopyPath (10.11) and
-# _IOMainPort/_kIOMainPortDefault (12.0, the renamed IOMasterPort). Pass the exact
-# shipped userland Mach-Os (mirror cmake/mt2_pkg.cmake). The updater binary only
-# exists in a Sparkle build, so append it only then (the guard fails on a missing
-# listed binary). NOTE: mt2_usb_bt_handoff is shipped but was never in the legacy
-# guard's list; left as-is here to keep this a behaviour-preserving swap.
-set(_compat_bins
-  ${CMAKE_BINARY_DIR}/sbin/mt2_reenumerate
-  ${CMAKE_BINARY_DIR}/sbin/mt2_pane_watch
-  ${CMAKE_BINARY_DIR}/MT2PaneRefresh.osax/Contents/MacOS/MT2PaneRefresh
-  ${CMAKE_BINARY_DIR}/MT2PaneRefresh.bundle/Contents/MacOS/MT2PaneRefresh)
-if(MT2_SPARKLE_FRAMEWORK)
-  list(APPEND _compat_bins
-    ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater)
-endif()
-add_test(NAME test_compat_guard COMMAND ${CMAKE_COMMAND} -E env
-  "MAVERICKS_POST_10_9_SYMBOLS=_IORegistryEntryCopyPath|_IOMainPort|_kIOMainPortDefault"
-  sh ${MAVERICKS_SHARED_DIR}/scripts/compat_guard.sh ${_compat_bins})
+# Build-artifact invariant: shipped Info.plists lint clean + updater has SUFeedURL/SUPublicEDKey.
+# (The 10.9-safety compat guard is now a per-target POST_BUILD via mavericks_compat_guard() in
+# tools/CMakeLists.txt -- it fails `cmake --build` directly, so it is no longer a ctest here.)
 add_test(NAME test_plists COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/check_plists.sh ${CMAKE_BINARY_DIR})
 
 # Branch A watcher inject-decision (first ObjC ctest). Links the watcher source for
