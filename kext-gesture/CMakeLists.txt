@@ -6,7 +6,7 @@
 set(KEXT_LOCAL_CPP
   MT2Gesture.cpp MT2GestureUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mt2_log.cpp mt2_diag.cpp gh_default_adapter.cpp mt2_splice_kext.cpp
-  VoodooInputMux.cpp)
+  VoodooInputMux.cpp MT2HIDShell.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
