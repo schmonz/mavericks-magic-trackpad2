@@ -2,6 +2,7 @@
 #define MT2GESTURE_H
 #include <IOKit/IOService.h>
 #include "mt2_session.h"
+#include "amd_shim.h"
 
 /* The transport nub + session/conditioning core. It creates NO multitouch device of its own —
  * Apple's genuine driver does (BNBTrackpadDevice over BT, AppleUSBMultitouchDriver over USB). The
@@ -67,5 +68,20 @@ public:
     /* DEBUG/TEST seam: the user client routes injected encoded 0x28 bytes here, through the
      * active transport's inject_encoded (bypasses the session). NotReady if none registered. */
     IOReturn feedFrame(const unsigned char *bytes, unsigned int len);
+
+    /* Synthetic terminal: build (ref-counted) the fabricated AMD + HIDShell under this nub,
+     * register a kSynthSink that encodes frames via mt1_encode and delivers them to the AMD's
+     * handleTouchFrame. beginSyntheticTerminal calls connectionEstablished (which resets the
+     * session); endSyntheticTerminal calls connectionClosed then tears the AMD down outside the
+     * lock when the last consumer releases. Both the mux (Task 7) and the UserClient (Task 5)
+     * will drive this. */
+    IOReturn beginSyntheticTerminal(IOService *source, mt2_transport_mode_t mode,
+                                    const mt2_session_policy_t *policy);
+    void     endSyntheticTerminal(IOService *source);
+    AppleMultitouchDevice *synthAMD() const { return fSynthAMD; }   /* for the sink glue */
+
+private:
+    AppleMultitouchDevice *fSynthAMD;
+    int fSynthRefs;
 };
 #endif
