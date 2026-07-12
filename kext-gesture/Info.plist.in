@@ -156,6 +156,27 @@
             <key>IOProbeScore</key>
             <integer>500000</integer>
         </dict>
+        <!-- VoodooInput multiplexer: matches any provider publishing VoodooInputSupported=true,
+             reads its Logical Max X/Y, and routes kIOMessageVoodooInputMessage through the
+             mt2_frame_from_voodoo translator into the existing gesture engine (submitFrame).
+             Satellite kexts (e.g. VoodooI2C) locate us via the VOODOO_INPUT_IDENTIFIER property
+             we set in start(). -->
+        <key>VoodooInputMux</key>
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>com.schmonz.MT2Gesture</string>
+            <key>IOClass</key>
+            <string>com_schmonz_VoodooInput</string>
+            <key>IOProviderClass</key>
+            <string>IOService</string>
+            <key>IOMatchCategory</key>
+            <string>com_schmonz_VoodooInput</string>
+            <key>IOPropertyMatch</key>
+            <dict>
+                <key>VoodooInputSupported</key>
+                <true/>
+            </dict>
+        </dict>
     </dict>
     <key>OSBundleLibraries</key>
     <dict>

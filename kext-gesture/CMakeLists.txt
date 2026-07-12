@@ -5,7 +5,8 @@
 # Kext-local C++ sources (incl. mt2_log + mt2_diag + gh_default_adapter, which are kext-only).
 set(KEXT_LOCAL_CPP
   MT2Gesture.cpp MT2GestureUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
-  mt2_log.cpp mt2_diag.cpp gh_default_adapter.cpp mt2_splice_kext.cpp)
+  mt2_log.cpp mt2_diag.cpp gh_default_adapter.cpp mt2_splice_kext.cpp
+  VoodooInputMux.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
@@ -41,7 +42,8 @@ endif()
 # did NOT auto-track $<TARGET_OBJECTS>, so a recompiled object silently skipped the relink and we loaded a
 # stale kext (the "rm the binary to force relink" footgun). A real target has no such gap. The kext "link"
 # is just the c++ driver with freestanding-kernel flags, expressed via target_link_options.
-add_executable(mt2gesture_kext ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS})
+set(KEXT_LOCAL_CXX_ABS ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+add_executable(mt2gesture_kext ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS} ${KEXT_LOCAL_CXX_ABS})
 set_target_properties(mt2gesture_kext PROPERTIES
   OUTPUT_NAME MT2Gesture
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
@@ -51,6 +53,7 @@ target_compile_options(mt2gesture_kext PRIVATE
   -std=c++11 -Wno-deprecated-register)
 target_include_directories(mt2gesture_kext PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch
   ${MT2_KEXT_KHDRS})
 # Freestanding-kernel link: no CRT/stdlib, emit a KEXTBUNDLE Mach-O, link libkmod(c++). Same flags the
 # old custom_command used; now CMake owns the link (and thus the object dependencies).
@@ -63,9 +66,12 @@ target_link_options(mt2gesture_kext PRIVATE
 set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-x;c++")
 
 # KERNEL=1: MT2USBReader needs the kernel-only USB control API; conn_trace needs
-# libkern's snprintf (the kernel has no <stdio.h>). Both gate behavior on #if KERNEL.
+# libkern's snprintf (the kernel has no <stdio.h>). VoodooInputMux + the voodoo
+# translator need the KERNEL branch of voodoo_wire.h (real kernel OSTypes, not the
+# host shim). All gate behavior on #if KERNEL.
 set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/conn_trace.c
+  VoodooInputMux.cpp ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
 # Stamp the product version (MT2_VERSION, single source of truth in the top CMakeLists) into the kext's
