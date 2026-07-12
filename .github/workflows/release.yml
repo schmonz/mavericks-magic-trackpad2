@@ -31,7 +31,7 @@ env:
   # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
   # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
   # deliberately to pick up shared-machinery changes.
-  MSC_REF: d95679e2c958313b0337391c163f04dfd573be44
+  MSC_REF: e5f7503d83fbfbfe19b41650de1bdb161e0b1d8d
 
 jobs:
   build-macos:
@@ -124,13 +124,6 @@ jobs:
           cmake --build build
           echo "userland slice:"; lipo -info build/sbin/mt2_reenumerate
           echo "kext:"; file build/MT2Gesture.kext/Contents/MacOS/MT2Gesture
-
-      - name: 10.9 userland compat guard (no post-10.9 imports)
-        # The guard is now the shared mavericks-shared-cmake script, wired as the
-        # test_compat_guard ctest (binary list + IOKit post-10.9 symbols defined in
-        # tests/CMakeLists.txt). Run just that test here for an early, clearly-named
-        # gate before the equivalence gate; the full ctest run below re-covers it.
-        run: ctest --test-dir build -R '^test_compat_guard$' --output-on-failure
 
       - name: Kext cross-build equivalence gate (vs native 10.9 reference, fail-closed)
         run: sh cmake/characterize_build.sh compare dist/characterization build

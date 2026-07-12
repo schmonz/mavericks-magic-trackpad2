@@ -15,7 +15,7 @@
 # The KEXT is the gated artifact (undefined + defined external symbol sets, KPI
 # deps, arch) -- it's the one that can't be re-verified without 10.9 hardware.
 # Userland post-10.9 leaks are covered separately by the shared compat_guard.sh
-# (mavericks-shared-cmake), run as the test_compat_guard ctest.
+# (mavericks-shared-cmake), run as a per-target POST_BUILD via mavericks_compat_guard().
 #
 # NOTE: POSIX sh has no `local`; every function uses uniquely-prefixed variable
 # names so helpers never clobber a caller's state.
