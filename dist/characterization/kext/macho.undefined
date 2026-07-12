@@ -434,9 +434,6 @@ _kOSBooleanFalse
 _kOSBooleanTrue
 _memcpy
 _memset
-_mt2_synth_answer_report
-_mt2_synth_note_set
-_mt2_synth_regs_init
 _snprintf
 _strcmp
 _sysctl__debug_children

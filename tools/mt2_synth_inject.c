@@ -31,14 +31,20 @@ int main(void) {
         return 1;
     }
 
-    /* --- selector 1: beginSyntheticTerminal --- */
+    /* --- selector 1: beginSyntheticTerminal (builds the fabricated AMD) --- */
     kr = IOConnectCallScalarMethod(conn, 1, NULL, 0, NULL, NULL);
     printf("beginSyntheticTerminal: kr=0x%x\n", kr);
 
-    /* --- selector 2: submitFrame — press, three move steps, lift --- */
+    /* hidd adoption of a freshly-published AMD is ASYNC: give it a few seconds before we
+     * feed frames (and a window to observe the fabricated AMD in ioreg / system.log). */
+    printf("waiting 3s for hidd to adopt the fabricated AMD (check ioreg now)...\n");
+    fflush(stdout);
+    sleep(3);
+
+    /* --- selector 2: submitFrame — press, then a long VISIBLE sweep, then lift --- */
     mt2_frame f;
 
-    /* press: one contact at pad midpoint, pressure 40, id 3 */
+    /* press: one contact near pad center, pressure 40 (survives drop_lifted), id 3 */
     memset(&f, 0, sizeof f);
     f.contact_count = 1;
     f.transducers[0].id = 3;
@@ -49,18 +55,23 @@ int main(void) {
     f.transducers[0].touch_major = 600;
     f.transducers[0].touch_minor = 500;
     kr = IOConnectCallStructMethod(conn, 2, &f, sizeof f, NULL, NULL);
-    printf("submitFrame (press):    kr=0x%x\n", kr);
+    printf("submitFrame (press):    kr=0x%x  — WATCH THE CURSOR for ~5s\n", kr);
+    fflush(stdout);
     usleep(16000);
 
-    /* move frames: sweep x from 0 toward +1200 in 3 steps */
+    /* ~5s of visible motion: sweep x back and forth across the pad a few times while
+     * nudging y, so the cursor obviously slides if the fabricated AMD is driving. */
     f.transducers[0].state = TS_TOUCHING;
-    int step;
-    for (step = 1; step <= 3; step++) {
-        f.transducers[0].currentCoordinates.x = step * 400;
+    int i;
+    for (i = 0; i < 150; i++) {
+        int phase = i % 60;                 /* 0..59 triangle wave */
+        int tri = (phase < 30) ? phase : (60 - phase);   /* 0..30..0 */
+        f.transducers[0].currentCoordinates.x = (tri - 15) * 200;   /* ~ -3000..+3000 */
+        f.transducers[0].currentCoordinates.y = ((i % 20) - 10) * 150; /* small y wobble */
         kr = IOConnectCallStructMethod(conn, 2, &f, sizeof f, NULL, NULL);
-        printf("submitFrame (move %d):  kr=0x%x  x=%d\n", step, kr,
-               f.transducers[0].currentCoordinates.x);
-        usleep(16000);
+        if (i % 30 == 0)
+            printf("  sweep i=%d kr=0x%x x=%d\n", i, kr, f.transducers[0].currentCoordinates.x);
+        usleep(33000);                      /* ~30 fps */
     }
 
     /* lift: contact_count = 0 */
