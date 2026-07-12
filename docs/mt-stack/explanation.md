@@ -251,7 +251,19 @@ Healthy sequence (observable via CONNTRACE): `CONTROL_UP → INTERRUPT_BOUND →
   Simpler in some ways (geometry was free via our `getReportStub`) but the poke was a panic path.
   See `decisions.md` for why we moved past it (and the live-vs-fragile trade).
 
-## Retired synthetic approach (pre-2026-06-24)
+## Retired synthetic approach (pre-2026-06-24) — REVIVED on-demand 2026-07-12 for VoodooInput
+
+> **UPDATE 2026-07-12: no longer fully retired.** The fabricated-`AppleMultitouchDevice` +
+> `MT2HIDShell` machinery below was **recovered from git history and revived** as the *terminal
+> consumer* for **VoodooInput satellites** (sub-project 2 of the VoodooInput interface work). A
+> satellite has no Apple MT hardware to reuse, so a fabricated AMD is the only way its frames reach
+> the recognizer. It is stood up **on-demand** (`MT2Gesture::beginSyntheticTerminal` → `mt2_synth_amd.*`),
+> driven by the VoodooInput mux (production) or the test user client (`tools/mt2_synth_inject`), and
+> fed via `kSynthSink` (`mt1_encode` → `handleTouchFrame`) — never at load, so it does NOT collide
+> with the genuine MT2 BT/USB paths. The RE below (IsFake-strict cast, `MT2HIDShell` identity
+> accessors, `IOCFPlugInTypes`/`MultitouchPreferences`/getReport-geometry) is what the revival
+> restored verbatim. The **MT2 itself still uses the genuine paths**; routing the MT2 through this
+> revived terminal is a recorded follow-on (`decisions.md` → "MT2 → synthetic terminal").
 
 Before the genuine paths became the default, the kext drove the MT2 a second way: **decode the
 device ourselves and feed our own fabricated `AppleMultitouchDevice`.** That code was deleted

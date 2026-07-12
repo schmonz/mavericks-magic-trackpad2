@@ -496,3 +496,17 @@ pane's ivars just-in-time (`eager_capture_magic`: `find_mt_controller` + `mMagic
 the faithful in-place replay is always armed before the first transition — no blink, no rebuild. Guarded by
 `respondsToSelector:armIterators` (a wrong arg was the Task-5 doesNotRecognizeSelector regression).
 Validated across the full matrix (0 skips every row).
+
+### MT2 → synthetic terminal — deliberate re-open point (queued 2026-07-12)
+Sub-project 2 revived the synthetic terminal consumer (fabricated `AppleMultitouchDevice` + `MT2HIDShell`,
+`kext-gesture/mt2_synth_amd.*`) as the delivery target for VoodooInput satellites, exposed as a swappable
+`kSynthSink` registered via `MT2Gesture::beginSyntheticTerminal`. Because the readers-engine unification
+already made the terminal a `mt2_transport_sink_t`, routing the **MT2 itself** through this synthetic
+terminal is now a one-line, per-reader flip: register `&kSynthSink` in a transport's
+`connectionEstablished` instead of the genuine sink. **Decision (deferred, not now):** once the synthetic
+terminal is on-device-proven (the sub-project-2 Phase-D oracle: hidd adopts the fabricated AMD + a fed
+frame drives the cursor), evaluate the flip as a cheap A/B — synthetic vs genuine on cursor/gesture/battery
+fidelity + cross-version portability. Retire a transport's genuine interpose ONLY if synthetic wins without
+losing conformance; else keep genuine. This is the concrete next step of the `genuine-vs-owned-device-reeval`
+insight (genuine wins on 10.9 for reuse/conformance; owned/synthetic is more portable below 10.9). Do NOT
+flip a working, shipped transport before the terminal is proven (make-it-cheap-to-be-wrong).
