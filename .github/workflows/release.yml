@@ -31,7 +31,7 @@ env:
   # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
   # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
   # deliberately to pick up shared-machinery changes.
-  MSC_REF: 3d8606421bb848adb9cb7de3108f67719caf48e4
+  MSC_REF: d95679e2c958313b0337391c163f04dfd573be44
 
 jobs:
   build-macos:
