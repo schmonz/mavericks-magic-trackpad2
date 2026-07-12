@@ -33,7 +33,14 @@ guides the later extraction tasks.
   manual-start/interpose/teardown half.
 - **SEAM**: sits between **decode** and **conditioning/encode**. The decoded contact-set is
   today a `touch_frame_t` (`src/touch_model.h`) — that struct is the de-facto
-  `VoodooInputEvent` the later task will formalize.
+  shared contact-set the later task will formalize.
+
+  > NOTE (2026-07-12): that boundary type was formalized and is now named **`mt2_frame`**
+  > (`src/mt2_frame.h`). In this map's older prose it was called `VoodooInputEvent`; that
+  > name has since been taken by the **vendored** acidanthera VoodooInput *wire* ABI
+  > (`src/voodoo_wire.h` → `third_party/VoodooInput/`), which a new inbound multiplexer
+  > (`kext-gesture/VoodooInputMux.cpp`) translates INTO `mt2_frame` via `mt2_frame_from_voodoo`
+  > before feeding this same engine. So below, read `VoodooInputEvent` as `mt2_frame`.
 
 ---
 
@@ -109,7 +116,7 @@ paths do NOT share the wiring:
   `mt1_encode` (MT2Gesture.cpp:61) → `handleTouchFrame(mt1,n)` on BNB's AMD
   (`fBnbTarget`, set via `setBnbTarget` at line 263). No checksum on this path.
 - So BT's decode/engine split is CLEAN today; the boundary object is `touch_frame_t`.
-  The refactor just needs to name that boundary `VoodooInputEvent`.
+  The refactor named that boundary `mt2_frame` (see the note above).
 
 ### USB — seam is BURIED inside a monolithic pure function
 - **`mt2_usb_handle_report`** (MT2USBReader.cpp:71–111).
@@ -121,7 +128,7 @@ paths do NOT share the wiring:
   &frame)` produces the contact-set `frame`; **line 61** `mt2_drop_lifted`; **line 62**
   `mt2_lifecycle_step(&g_lc, …)`; **line 65** `mt1_encode(&frame, …)`; **lines 68–69**
   Apple checksum. Feed is at MT2USBReader.cpp:103 `gOrigUsbHandleReport(self, md, …)`.
-- **To expose a `VoodooInputEvent`, `mt2_usb_to_compactv4` must be split**: the reader
+- **To expose an `mt2_frame`, `mt2_usb_to_compactv4` must be split**: the reader
   should call `mt2_usb_decode` itself (→ contact-set), hand that to the shared engine,
   and the engine does drop_lifted + lifecycle + `mt1_encode`; only the USB-specific
   Apple-checksum append + descriptor-wrap + `handleReport` feed stay in the reader.
@@ -167,4 +174,4 @@ already has a clean decode/engine seam** (`touch_frame_t` handed to a separate c
 The extraction is therefore asymmetric: BT mostly needs its downstream engine (the
 `MT2Gesture` session path) *named* as the shared engine and its lifecycle state unified
 with USB's; USB needs `mt2_usb_to_compactv4` *un-fused* so the reader hands a
-`touch_frame_t` to that same engine. `touch_frame_t` is already the `VoodooInputEvent`.
+`touch_frame_t` to that same engine. `touch_frame_t` is already the `mt2_frame`.

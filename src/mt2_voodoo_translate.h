@@ -7,7 +7,12 @@
  * rescale each contact's [0..logical_max] coords into MT2 device units, OR per-contact
  * button into the frame, carry id/pressure/width, and zero the lifecycle/ellipse tail
  * (mt2_lifecycle derives state; mt1_encode defaults radii). logical_max_{x,y}==0 => identity.
- * Declared extern "C" so the (C++) kext + tests share a stable symbol. */
+ * Declared extern "C" so the (C++) kext + tests share a stable symbol.
+ *
+ * CONTRACT: a satellite must report pressure > 0 for an active contact — the shared engine's
+ * mt2_drop_lifted gates presence on pressure, and isTransducerActive is NOT consulted here.
+ * A conformant-but-pressureless satellite would drop to no-contacts; synthesizing a pressure
+ * floor from isTransducerActive is a sub-project-2 (terminal-consumer) decision, not done here. */
 #ifdef __cplusplus
 extern "C" {
 #endif
