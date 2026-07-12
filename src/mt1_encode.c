@@ -1,7 +1,8 @@
 #include "mt1_encode.h"
 #include "mt2_coord_range.h"
 
-/* Coordinate ranges from Linux hid-magicmouse.c. */
+/* MT1 coordinate ranges (from Linux hid-magicmouse.c); MT2 input ranges are the shared
+ * mt2_coord_range.h counterpart. */
 #define MT1_MIN_X (-2909)
 #define MT1_MAX_X  3167
 #define MT1_MIN_Y (-2456)

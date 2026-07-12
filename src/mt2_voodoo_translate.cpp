@@ -3,7 +3,9 @@
 #include <string.h>
 
 static int32_t rescale(uint32_t v, uint32_t lmax, int32_t omin, int32_t omax) {
-    if (lmax == 0) return (int32_t)v;          /* identity: no advertised dimension */
+    if (lmax == 0) return (int32_t)v;          /* identity fallback (no advertised dimension);
+                                                  assumes two's-complement for v > INT32_MAX,
+                                                  which no real satellite coordinate reaches */
     if (v > lmax) v = lmax;                    /* clamp into the advertised range */
     return omin + (int32_t)(((int64_t)v * (omax - omin)) / (int64_t)lmax);
 }
@@ -12,8 +14,7 @@ mt2_frame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
                                 uint32_t logical_max_x, uint32_t logical_max_y) {
     mt2_frame f;
     memset(&f, 0, sizeof(f));
-    int n = (int)wire->contact_count;
-    if (n < 0) n = 0;
+    int n = (int)wire->contact_count;   /* UInt8, so 0..255 — no lower-bound guard needed */
     if (n > VOODOO_INPUT_MAX_TRANSDUCERS) n = VOODOO_INPUT_MAX_TRANSDUCERS; /* wire bound (10) */
     if (n > MT2_MAX_CONTACTS) n = MT2_MAX_CONTACTS;                         /* internal bound (16) */
     f.contact_count = (uint32_t)n;
@@ -27,7 +28,8 @@ mt2_frame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
         c->currentCoordinates.y = rescale(t->currentCoordinates.y, logical_max_y, MT2_MIN_Y, MT2_MAX_Y);
         c->currentCoordinates.pressure = t->currentCoordinates.pressure;
         c->currentCoordinates.width    = t->currentCoordinates.width;
-        /* state / touch_major / touch_minor / orientation deliberately left 0 */
+        /* state / touch_major / touch_minor / orientation deliberately left 0:
+         * mt2_lifecycle derives state; mt1_encode defaults the radii/orientation */
         if (t->isPhysicalButtonDown) button = 1;
     }
     f.isPhysicalButtonDown = button;
