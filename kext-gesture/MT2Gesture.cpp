@@ -1,9 +1,9 @@
 /*
  * MT2Gesture — the transport nub + session/conditioning core for the MT2 stack.
  *
- * It does NOT create a multitouch device of its own. Apple's genuine driver does that: over BT a
- * manually-started BNBTrackpadDevice spawns its own AppleMultitouchDevice (AMD); over USB a
- * manually-started AppleUSBMultitouchDriver owns the interface. This nub:
+ * For the MT2 itself it does NOT create a multitouch device of its own — Apple's genuine driver
+ * does that: over BT a manually-started BNBTrackpadDevice spawns its own AppleMultitouchDevice
+ * (AMD); over USB a manually-started AppleUSBMultitouchDriver owns the interface. This nub:
  *   - hosts the shared mt2_session (settle gate, MakeTouch/Touching/BreakTouch lifecycle, liftoff)
  *     that the in-kernel readers feed via connectionEstablished()/submitFrame(); and
  *   - dispatches the session's effects to the active reader's registered transport sink
@@ -12,8 +12,12 @@
  * It also advertises a debug/test user client (inject pre-encoded 0x28 frames) and the
  * debug.mt2_log sysctl.
  *
- * (The retired synthetic approach — a fabricated AppleMultitouchDevice + an MT2HIDShell we drove
- * ourselves — is documented in docs/mt-stack/explanation.md → "Retired synthetic approach".)
+ * EXCEPTION — the on-demand synthetic terminal (beginSyntheticTerminal, revived 2026-07-12 for
+ * VoodooInput satellites which have NO Apple hardware to reuse): for that path this nub DOES build
+ * a fabricated AppleMultitouchDevice + MT2HIDShell (mt2_synth_amd.*) on the first consumer and
+ * registers kSynthSink to drive it. Stood up only on demand (mux or user client), never at load, so
+ * it never collides with the genuine MT2 paths. See docs/mt-stack/explanation.md → "Retired
+ * synthetic approach" (now revived on-demand) and the VoodooInput sub-project.
  */
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
@@ -137,7 +141,10 @@ static void synth_post_button_edge(void *ctx, unsigned mask) { (void)ctx; (void)
 
 /* Build the fabricated AMD (ref-counted: first consumer builds, last tears down).
  * connectionEstablished / connectionClosed each lock internally → called OUTSIDE the ref-lock.
- * The AMD teardown touches IOKit objects and must also happen outside the lock. */
+ * The AMD teardown touches IOKit objects and must also happen outside the lock.
+ * NOTE: the refcount buys shared AMD LIFETIME, not concurrent independent sessions — the engine is
+ * single-active (last connectionEstablished wins active_source). The mux and the test user client
+ * are not expected to drive it simultaneously; if they did, only the latest source's frames flow. */
 IOReturn com_schmonz_MT2Gesture::beginSyntheticTerminal(IOService *source,
         mt2_transport_mode_t mode, const mt2_session_policy_t *policy) {
     /* Reserve our ref under the lock, but BUILD THE AMD OUTSIDE it: mt2_synth_amd_build does heavy
@@ -223,10 +230,12 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
      * finishes matching our subtree. */
     registerService();
 
-    /* The genuine BNB (BT) / genuine AppleUSBMultitouchDriver (USB) spawn and drive the real
-     * AppleMultitouchDevice that is the input source and the prefpane target. This nub creates no
-     * device of its own; the session's effects reach it through the active reader's registered
-     * transport sink. */
+    /* For the MT2: the genuine BNB (BT) / genuine AppleUSBMultitouchDriver (USB) spawn and drive the
+     * real AppleMultitouchDevice that is the input source and the prefpane target; this nub creates
+     * no device for that path — the session's effects reach it through the active reader's registered
+     * transport sink. (The on-demand synthetic-terminal path, for VoodooInput satellites, is the
+     * exception: beginSyntheticTerminal builds a fabricated AMD under this nub. Not stood up here at
+     * start — only when a satellite/user-client asks.) */
 
     /* Publish LAST: readers may call connectionEstablished the moment this is visible, so every
      * engine invariant (session fields, lock, timer, sink slots) must already hold. */
