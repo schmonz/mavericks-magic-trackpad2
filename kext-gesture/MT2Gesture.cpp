@@ -12,12 +12,8 @@
  * It also advertises a debug/test user client (inject pre-encoded 0x28 frames) and the
  * debug.mt2_log sysctl.
  *
- * EXCEPTION — the on-demand synthetic terminal (beginSyntheticTerminal, revived 2026-07-12 for
- * VoodooInput satellites which have NO Apple hardware to reuse): for that path this nub DOES build
- * a fabricated AppleMultitouchDevice + MT2HIDShell (mt2_synth_amd.*) on the first consumer and
- * registers kSynthSink to drive it. Stood up only on demand (mux or user client), never at load, so
- * it never collides with the genuine MT2 paths. See docs/mt-stack/explanation.md → "Retired
- * synthetic approach" (now revived on-demand) and the VoodooInput sub-project.
+ * The synthetic terminal (beginSyntheticTerminal / kSynthSink) was removed in Task 3: it now
+ * lives per-mux in VoodooInputMux, where each satellite owns its own fabricated AMD + HIDShell.
  */
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
@@ -29,8 +25,6 @@
 #include <IOKit/IOWorkLoop.h>
 #include "MT2Gesture.h"
 #include "mt2_log.h"           /* gMT2LogLevel, MT2_DLOG, sysctl register/unregister */
-#include "mt2_synth_amd.h"     /* mt2_synth_amd_build / mt2_synth_amd_teardown */
-#include "mt1_encode.h"        /* mt1_encode — used by synth_feed_frame */
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
 
@@ -123,64 +117,6 @@ void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /
     if (self->fSessionLock) IOLockUnlock(self->fSessionLock);
 }
 
-/* ── Synthetic-terminal sink (kSynthSink) ────────────────────────────────────────
- * Delivers session-conditioned mt2_frames to the fabricated AMD via mt1_encode →
- * handleTouchFrame. uptime_ms() is the same monotonic source the engine uses — its
- * 22-bit value advances across frames so the recognizer's tap clock is valid (a
- * constant/zero value would freeze gestures). */
-static IOReturn synth_inject_encoded(void *ctx, const unsigned char *bytes, unsigned int len) {
-    AppleMultitouchDevice *amd = ((com_schmonz_MT2Gesture *)ctx)->synthAMD();
-    return amd ? amd->handleTouchFrame((unsigned char *)bytes, len) : kIOReturnNotReady;
-}
-static void synth_feed_frame(void *ctx, const mt2_frame *frame) {
-    unsigned char mt1[512];
-    int n = mt1_encode(frame, mt1, sizeof(mt1), (uint32_t)uptime_ms());  /* real monotonic ms */
-    if (n > 0) synth_inject_encoded(ctx, mt1, (unsigned int)n);
-}
-static void synth_post_button_edge(void *ctx, unsigned mask) { (void)ctx; (void)mask; /* button rides in-frame */ }
-
-/* Build the fabricated AMD (ref-counted: first consumer builds, last tears down).
- * connectionEstablished / connectionClosed each lock internally → called OUTSIDE the ref-lock.
- * The AMD teardown touches IOKit objects and must also happen outside the lock.
- * NOTE: the refcount buys shared AMD LIFETIME, not concurrent independent sessions — the engine is
- * single-active (last connectionEstablished wins active_source). The mux and the test user client
- * are not expected to drive it simultaneously; if they did, only the latest source's frames flow. */
-IOReturn com_schmonz_MT2Gesture::beginSyntheticTerminal(IOService *source,
-        mt2_transport_mode_t mode, const mt2_session_policy_t *policy) {
-    /* Reserve our ref under the lock, but BUILD THE AMD OUTSIDE it: mt2_synth_amd_build does heavy
-     * IOKit attach/start/registerService, and fSessionLock guards only the frame/timer hot path —
-     * holding it across the build is a lock-ordering hazard. (begin/end come from serialized IOKit
-     * start/stop + the single-threaded user client, so the ref is a plain counter, not contended.) */
-    if (fSessionLock) IOLockLock(fSessionLock);
-    bool needBuild = (fSynthRefs == 0);
-    fSynthRefs++;
-    if (fSessionLock) IOLockUnlock(fSessionLock);
-
-    if (needBuild) {
-        mt2_synth_amd_ctx *ctx = mt2_synth_amd_build(this);   /* NOT under fSessionLock */
-        if (!ctx) {
-            if (fSessionLock) IOLockLock(fSessionLock);
-            fSynthRefs--;
-            if (fSessionLock) IOLockUnlock(fSessionLock);
-            return kIOReturnError;
-        }
-        if (fSessionLock) IOLockLock(fSessionLock);
-        fSynthCtx = ctx;
-        if (fSessionLock) IOLockUnlock(fSessionLock);
-    }
-    mt2_transport_sink_t sink = { synth_feed_frame, synth_post_button_edge, synth_inject_encoded, this };
-    connectionEstablished(source, mode, policy, &sink);   /* copies the sink (ctx=this) */
-    return kIOReturnSuccess;
-}
-void com_schmonz_MT2Gesture::endSyntheticTerminal(IOService *source) {
-    connectionClosed(source);   /* deregister BEFORE releasing the AMD */
-    if (fSessionLock) IOLockLock(fSessionLock);
-    mt2_synth_amd_ctx *doomed_ctx = 0;
-    if (fSynthRefs > 0 && --fSynthRefs == 0) { doomed_ctx = fSynthCtx; fSynthCtx = 0; }
-    if (fSessionLock) IOLockUnlock(fSessionLock);
-    if (doomed_ctx) mt2_synth_amd_teardown(this, doomed_ctx);   /* teardown OUTSIDE the lock */
-}
-
 /* The active gesture nub, published for the in-kernel readers (MT2BTReader and
  * MT2USBReader) to feed via submitFrame() — same kext, so no user client / IPC.
  * Single instance. */
@@ -214,7 +150,6 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
     fSink.ctx = this;
     fXport.feed_frame = 0; fXport.post_button_edge = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
-    fSynthCtx = 0; fSynthRefs = 0;
     fSessionLock = IOLockAlloc();   /* serializes timer vs submitFrame fSession access */
     fPipeWL = IOWorkLoop::workLoop();
     fIdleTimer = 0;
@@ -233,9 +168,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     /* For the MT2: the genuine BNB (BT) / genuine AppleUSBMultitouchDriver (USB) spawn and drive the
      * real AppleMultitouchDevice that is the input source and the prefpane target; this nub creates
      * no device for that path — the session's effects reach it through the active reader's registered
-     * transport sink. (The on-demand synthetic-terminal path, for VoodooInput satellites, is the
-     * exception: beginSyntheticTerminal builds a fabricated AMD under this nub. Not stood up here at
-     * start — only when a satellite/user-client asks.) */
+     * transport sink. VoodooInput satellites own their own fabricated AMD per-mux (VoodooInputMux). */
 
     /* Publish LAST: readers may call connectionEstablished the moment this is visible, so every
      * engine invariant (session fields, lock, timer, sink slots) must already hold. */

@@ -59,19 +59,6 @@ IOReturn com_schmonz_MT2GestureUserClient::externalMethod(
         }
         return fOwner->feedFrame((const unsigned char *)args->structureInput,
                                  (unsigned int)args->structureInputSize);
-    case 1:   /* beginSynthetic: stand up the fabricated AMD + establish a session for us */
-        return fOwner->beginSyntheticTerminal((IOService *)this, MT2_EVENT_DRIVEN,
-                                              &mt2_policy_default);
-    case 2: { /* submitCannedFrame: run a raw mt2_frame through the full session->encode path */
-        if (!args || args->structureInputSize != sizeof(mt2_frame) || !args->structureInput) {
-            return kIOReturnBadArgument;
-        }
-        fOwner->submitFrame((IOService *)this, (const mt2_frame *)args->structureInput);
-        return kIOReturnSuccess;
-    }
-    case 3:   /* endSynthetic: close our session + tear the AMD down (ref-counted) */
-        fOwner->endSyntheticTerminal((IOService *)this);
-        return kIOReturnSuccess;
     default:
         return kIOReturnBadArgument;
     }
