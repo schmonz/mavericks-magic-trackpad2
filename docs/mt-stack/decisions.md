@@ -510,3 +510,22 @@ fidelity + cross-version portability. Retire a transport's genuine interpose ONL
 losing conformance; else keep genuine. This is the concrete next step of the `genuine-vs-owned-device-reeval`
 insight (genuine wins on 10.9 for reuse/conformance; owned/synthetic is more portable below 10.9). Do NOT
 flip a working, shipped transport before the terminal is proven (make-it-cheap-to-be-wrong).
+
+### Post HID input reports (let Apple own the AMD) — NOT viable on 10.9 (spike 2026-07-13)
+Re-tested the "most-Apple-reuse" synthetic model prompted by a MacRumors thread question: publish an
+`IOHIDDevice` presenting the MT1 descriptor and POST `0x28` multitouch input reports, letting Apple's
+stack spawn + own the `AppleMultitouchDevice` and run recognition — no fabricated AMD. Reused the
+existing `src/vhid_mt1.c` (kextless `IOHIDUserDevice`) + a `/tmp/vhid_gesture` runner that `mt1_encode`s
+a circling contact and `vhid_send`s it. **Result: `AppleMultitouchHIDEventDriver` attaches to the vhid
+and creates an `IOHIDPointing` shell, but NO `AppleMultitouchDevice` is spawned under it and the cursor
+does NOT move** — the posted `0x28` data is not consumed into pointer/gesture output (18s of frames, 6
+cursor samples, zero movement). So the pure input-report path gets *adoption* but not *dispatch* on 10.9.
+This matches why the shipped synthetic path fabricates a real `AppleMultitouchDevice` and feeds it
+`handleTouchFrame` (0x28) directly — that is the seam the recognizer actually reads (`explanation.md`
+"(0x28) Apple understands, let Apple's AppleMultitouchDevice + the MultitouchHID recognizer"). **Decision:
+the fabricated-AMD + handleTouchFrame terminal (SP2/SP3) is the right synthetic model on 10.9; the
+input-report/"Apple owns the AMD" variant is not a drop-in win and is NOT pursued.** Residual (not
+isolated, low priority): the exact gap — device-enable handshake vs. recognizer-needs-the-AMD — wasn't
+teased apart (the descriptor faithfully omits 0x28, as the real MT1 does; the real device streams after
+its enable + in a context the bare vhid lacks). Consequence for the MT2→synthetic A/B: A/B genuine
+against the fabricated-AMD terminal, NOT an input-report variant.
