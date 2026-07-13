@@ -196,6 +196,7 @@ __realmain
 _gActiveMT2Gesture
 _gGenuineBnb
 _gMT2BattOverride
+_gMT2BtSynth
 _gMT2LogLevel
 _kmod_info
 _mt2_apple_checksum
@@ -214,4 +215,5 @@ _mt2_synth_regs_init
 _mt2_usb_click_report
 _mt2_usb_handle_report
 _sysctl__debug_mt2_batt
+_sysctl__debug_mt2_bt_synth
 _sysctl__debug_mt2_log

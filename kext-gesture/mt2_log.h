@@ -16,6 +16,10 @@ extern int gMT2LogLevel;
  * See mt2_log.cpp; consumed by MT2BTReader's mt2_publish_battery. */
 extern int gMT2BattOverride;
 
+/* debug.mt2_bt_synth: 0 = deliver MT2-BT frames to BNB's genuine AMD (default); 1 = deliver to a
+ * fabricated AMD (A/B experiment). Read at connectionEstablished by MT2BTReader. */
+extern int gMT2BtSynth;
+
 #define MT2_DLOG(lvl, fmt, ...) \
     do { if (gMT2LogLevel >= (lvl)) IOLog("MT2: " fmt "\n", ##__VA_ARGS__); } while (0)
 
