@@ -1,10 +1,11 @@
 # VoodooInputSample — a reference VoodooInput satellite for macOS 10.9
 
 This is a minimal, **hardware-less** [VoodooInput](https://github.com/acidanthera/VoodooInput)
-*satellite* driver for Mavericks (10.9). It exists to demonstrate — end to end, on real hardware —
-that **a driver authored for VoodooInput can be compiled for 10.9 and Just Work** against this
-project's VoodooInput compatibility layer. Loading it and toggling one sysctl moves the cursor,
-driven through the entire stack with no special glue.
+*satellite* driver for Mavericks (10.9). It exists to demonstrate that **a driver authored for
+VoodooInput can be compiled for 10.9 and Just Work** against this project's VoodooInput
+compatibility layer. Loading it and toggling one sysctl is designed to drive the cursor through the
+entire stack with no special glue — the path is verified by inspection; on-device confirmation is the
+final validation step (see "Building and running").
 
 It is a *reference example*, not a real device driver: instead of reading hardware it fabricates a
 contact that circles the pad on a timer. The **load-bearing part — how a VoodooInput client publishes

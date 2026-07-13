@@ -81,12 +81,14 @@ deleted by the 2026-07-07 unification: the click edge now lives in the session �
 in `mt2_session_frame` dispatches `post_click` through the registered transport sink.) Standing
 direction + running debt list: memory `mt2-refactor-to-explainability`.
 
-> **STATUS 2026-07-12: BUILT + PROVEN end-to-end.** This is no longer aspirational. The inbound
-> interface (mux + verbatim-vendored wire ABI at `third_party/VoodooInput/`), the synthetic terminal
-> (fabricated AMD the mux drives), and a real sample satellite (`examples/VoodooInputSample/`) are all
-> merged. On-device: loading the sample kext → the mux binds it → `messageClient(kIOMessageVoodooInputMessage,…)`
-> → the cursor moves. A driver authored for VoodooInput compiles for 10.9 and Just Works. The paragraphs
-> below are the original decision record.
+> **STATUS 2026-07-12: BUILT.** This is no longer aspirational. The inbound interface (mux +
+> verbatim-vendored wire ABI at `third_party/VoodooInput/`), the synthetic terminal (fabricated AMD
+> the mux drives — on-device validated in sub-project 2: hidd adopts it, cursor moves), and a real
+> sample satellite (`examples/VoodooInputSample/`) are all merged. Intended path: load the sample kext
+> → the mux binds it → `messageClient(kIOMessageVoodooInputMessage,…)` → the cursor moves; the wiring
+> is coherent by inspection, with the sample-satellite on-device run as the final confirmation. A driver
+> authored for VoodooInput compiles for 10.9 and is designed to Just Work. The paragraphs below are the
+> original decision record.
 
 **The public interface will be modeled after [VoodooInput](https://github.com/acidanthera/VoodooInput),
 possibly verbatim** (decided — see `decisions.md` → "Run VoodooInput on 10.9 / become a VoodooInput
