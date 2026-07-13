@@ -42,7 +42,10 @@ If you contributed and aren't listed (or want different wording/attribution), pl
   (pinned SHA `d897813`), so a driver authored for VoodooInput can be compiled for Mavericks and target
   this 10.9 back-port. Our `com_schmonz_VoodooInput` multiplexer receives `kIOMessageVoodooInputMessage`
   and translates each `VoodooInputEvent` into our internal `mt2_frame` (`src/mt2_frame.h`) for the shared
-  conditioning engine. https://github.com/acidanthera/VoodooInput
+  conditioning engine. This is demonstrated end-to-end by `examples/VoodooInputSample/` — a real
+  VoodooInput satellite that publishes `VoodooInputSupported`, is bound by our multiplexer, and drives
+  the cursor via `messageClient(kIOMessageVoodooInputMessage, …)` with no special glue.
+  https://github.com/acidanthera/VoodooInput
 - **mac-precision-touchpad** (imbushuo) & **MagicTrackpad2ForWindows** (vitoplantamura) — open-source
   Windows MT2 drivers; sources for the MT2 surface geometry, finger-report layout, and haptic
   actuation format. https://github.com/imbushuo/mac-precision-touchpad ·
