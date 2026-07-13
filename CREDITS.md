@@ -45,7 +45,8 @@ If you contributed and aren't listed (or want different wording/attribution), pl
   conditioning engine. `examples/VoodooInputSample/` is a real VoodooInput satellite that publishes
   `VoodooInputSupported`, is bound by our multiplexer, and delivers events via
   `messageClient(kIOMessageVoodooInputMessage, …)` with no special glue — exercising the interface
-  end-to-end. https://github.com/acidanthera/VoodooInput
+  end-to-end (on-device validated 2026-07-13: it circles the cursor through the full stack).
+  https://github.com/acidanthera/VoodooInput
 - **mac-precision-touchpad** (imbushuo) & **MagicTrackpad2ForWindows** (vitoplantamura) — open-source
   Windows MT2 drivers; sources for the MT2 surface geometry, finger-report layout, and haptic
   actuation format. https://github.com/imbushuo/mac-precision-touchpad ·

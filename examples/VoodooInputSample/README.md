@@ -3,9 +3,10 @@
 This is a minimal, **hardware-less** [VoodooInput](https://github.com/acidanthera/VoodooInput)
 *satellite* driver for Mavericks (10.9). It exists to demonstrate that **a driver authored for
 VoodooInput can be compiled for 10.9 and Just Work** against this project's VoodooInput
-compatibility layer. Loading it and toggling one sysctl is designed to drive the cursor through the
-entire stack with no special glue — the path is verified by inspection; on-device confirmation is the
-final validation step (see "Building and running").
+compatibility layer. Loading it and toggling one sysctl drives the cursor through the entire stack
+with no special glue — **validated on-device (2026-07-13)**: with the mux kext loaded, the mux binds
+this satellite, hidd adopts the fabricated device, and `debug.vinput_demo=1` circles the cursor
+(confirmed by sampling the system cursor position); `=0` stops it; clean unload.
 
 It is a *reference example*, not a real device driver: instead of reading hardware it fabricates a
 contact that circles the pad on a timer. The **load-bearing part — how a VoodooInput client publishes
