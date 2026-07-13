@@ -428,6 +428,7 @@ __ZTV9IOService
 ___stack_chk_fail
 ___stack_chk_guard
 _absolutetime_to_nanoseconds
+_bzero
 _clock_get_system_microtime
 _clock_get_uptime
 _kOSBooleanFalse

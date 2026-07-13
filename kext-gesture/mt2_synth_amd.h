@@ -3,9 +3,11 @@
 #include <IOKit/IOService.h>
 #include "amd_shim.h"   // AppleMultitouchDevice, AMDDeviceReportStruct
 
-/* Build a fabricated AppleMultitouchDevice (+ MT2HIDShell) attached under `nub`, adopted by
- * hidd, ready to receive MT1 0x28 frames via handleTouchFrame. Returns the started AMD (retained;
- * caller stops+releases via mt2_synth_amd_teardown) or NULL on failure. */
-AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub);
-void mt2_synth_amd_teardown(IOService *nub, AppleMultitouchDevice *amd);
+/* One independent fabricated AppleMultitouchDevice (+ its MT2HIDShell + echo-register state),
+ * built under `nub` and adopted by hidd. Multiple instances coexist (each mux owns one). Opaque. */
+typedef struct mt2_synth_amd_ctx mt2_synth_amd_ctx;
+
+mt2_synth_amd_ctx     *mt2_synth_amd_build(IOService *nub);              /* NULL on failure */
+AppleMultitouchDevice *mt2_synth_amd_amd(mt2_synth_amd_ctx *ctx);       /* the started AMD, or NULL */
+void                   mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx);
 #endif

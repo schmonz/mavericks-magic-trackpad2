@@ -3,6 +3,7 @@
 #include <IOKit/IOService.h>
 #include "mt2_session.h"
 #include "amd_shim.h"
+#include "mt2_synth_amd.h"
 
 /* The transport nub + session/conditioning core. It creates NO multitouch device of its own —
  * Apple's genuine driver does (BNBTrackpadDevice over BT, AppleUSBMultitouchDriver over USB). The
@@ -78,10 +79,10 @@ public:
     IOReturn beginSyntheticTerminal(IOService *source, mt2_transport_mode_t mode,
                                     const mt2_session_policy_t *policy);
     void     endSyntheticTerminal(IOService *source);
-    AppleMultitouchDevice *synthAMD() const { return fSynthAMD; }   /* for the sink glue */
+    AppleMultitouchDevice *synthAMD() const { return mt2_synth_amd_amd(fSynthCtx); }   /* for the sink glue */
 
 private:
-    AppleMultitouchDevice *fSynthAMD;
+    mt2_synth_amd_ctx *fSynthCtx;
     int fSynthRefs;
 };
 #endif

@@ -7,6 +7,10 @@
  * mt2_synth_report instead of the old inline g_reg[] echo + mt2_fill_geometry_report.
  * All RE'd constants, property keys/values, plugin UUID/path, and dict shapes are
  * preserved verbatim from the old source.
+ *
+ * 2026-07-13: converted from module-static g_regs/g_shell to a per-build heap context
+ * (mt2_synth_amd_ctx) so N independent fabricated AMDs can coexist. Each mux instance
+ * will own one ctx. Report stubs read regs from the ctx registered as their target.
  */
 #include "mt2_synth_amd.h"
 #include "MT2HIDShell.h"
@@ -24,10 +28,13 @@ extern "C" {
 /* mt2_stack.h: MT2_PROP_EXTRACT_BUTTON — must precede start() */
 #include "../src/mt2_stack.h"
 
-/* ---- module-static state (one fabricated device at a time) ----------------------------------- */
+/* ---- per-build context (replaces module-static g_regs / g_shell) ----------------------------- */
 
-static mt2_synth_regs_t g_regs;
-static com_schmonz_MT2HIDShell *g_shell;   /* stored for teardown */
+struct mt2_synth_amd_ctx {
+    mt2_synth_regs_t          regs;
+    com_schmonz_MT2HIDShell  *shell;
+    AppleMultitouchDevice    *amd;
+};
 
 /* ---- handler stubs (RE'd layout: buf at b+1; length at *(u32*)(b+0x204)) ------------------- */
 
@@ -44,15 +51,16 @@ static int enableStub(bool enable, void *t) {
 
 /* getReportStub: routes through mt2_synth_answer_report (host-tested). For reports
  * that must be skipped (0xDB Multitouch ID), return kIOReturnUnsupported so hidd
- * moves on cleanly. */
+ * moves on cleanly. Reads regs from ctx registered as the target. */
 static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
-    (void)t; (void)id;
+    (void)id;
+    mt2_synth_amd_ctx *c = (mt2_synth_amd_ctx *)t;
     unsigned char *b = (unsigned char *)r;
     unsigned char rid = b[0];
     unsigned char *o = b + 1;                       /* response data buffer */
     unsigned int *lenp = (unsigned int *)(b + 0x204);
     unsigned int n = 0;
-    mt2_synth_rc_t rc = mt2_synth_answer_report(&g_regs, rid, o, &n);
+    mt2_synth_rc_t rc = mt2_synth_answer_report(&c->regs, rid, o, &n);
     if (rc == MT2_SYNTH_SKIP) {
         IOLog("mt2_synth_amd: GET-REPORT id=0x%02x -> SKIP (kIOReturnUnsupported)\n",
               (unsigned)rid);
@@ -65,11 +73,13 @@ static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
 
 /* setReportStub: remember the 1-byte value hidd SETs per reportID so a later GET
  * echoes it back (hidd SETs 0xC8/0xDC/0xDD then GETs them and may disable gestures
- * if the GET fails). Routes through mt2_synth_note_set (host-tested). */
+ * if the GET fails). Routes through mt2_synth_note_set (host-tested). Reads regs
+ * from ctx registered as the target. */
 static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
-    (void)t;
+    (void)id;
+    mt2_synth_amd_ctx *c = (mt2_synth_amd_ctx *)t;
     unsigned char *b = (unsigned char *)r;
-    mt2_synth_note_set(&g_regs, b[0], b[1]);
+    mt2_synth_note_set(&c->regs, b[0], b[1]);
     IOLog("mt2_synth_amd: SET-REPORT typeArg=%u reportID=0x%02x len=%u b1=0x%02x\n",
           (unsigned)id, (unsigned)b[0], *(unsigned int *)(b + 0x204), (unsigned)b[1]);
     return 0;
@@ -99,9 +109,17 @@ static OSDictionary *makeHidProps(void) {
 
 /* ---- public API ------------------------------------------------------------------------------ */
 
-AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
+mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub) {
+    /* 0. Allocate the per-build context. */
+    mt2_synth_amd_ctx *ctx = IONew(mt2_synth_amd_ctx, 1);
+    if (!ctx) {
+        IOLog("mt2_synth_amd: context alloc failed\n");
+        return 0;
+    }
+    bzero(ctx, sizeof *ctx);
+
     /* 1. Zero the echo-register table. */
-    mt2_synth_regs_init(&g_regs);
+    mt2_synth_regs_init(&ctx->regs);
 
     /* 2. Attach + start the MT2HIDShell under nub so Apple's
      *    AppleMultitouchHIDEventDriver can match it and produce an IOHIDEventService
@@ -109,13 +127,13 @@ AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
      *    wrapper to event drivers found in the provider subtree — the shell must be
      *    here BEFORE the AMD starts. Best-effort: failure is logged but the build
      *    continues (the AMD may still start in lenient mode). */
-    g_shell = 0;
+    ctx->shell = 0;
     {
         com_schmonz_MT2HIDShell *hid = new com_schmonz_MT2HIDShell;
         OSDictionary *hp = makeHidProps();
         if (hid && hp && hid->init(hp)) {
             if (hid->attach(nub) && hid->start(nub)) {
-                g_shell = hid;
+                ctx->shell = hid;
                 IOLog("mt2_synth_amd: MT1 HID shell started under nub\n");
             } else {
                 IOLog("mt2_synth_amd: MT1 HID shell attach/start FAILED\n");
@@ -134,18 +152,22 @@ AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
     OSObject *o = OSMetaClass::allocClassWithName("AppleMultitouchDevice");
     if (!o) {
         IOLog("mt2_synth_amd: allocClassWithName(AppleMultitouchDevice) NULL\n");
+        if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
+        IODelete(ctx, mt2_synth_amd_ctx, 1);
         return 0;
     }
     IOService *dev = OSDynamicCast(IOService, o);
     if (!dev) {
         IOLog("mt2_synth_amd: alloc is not an IOService\n");
         o->release();
+        if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
+        IODelete(ctx, mt2_synth_amd_ctx, 1);
         return 0;
     }
     /* Layout-compatible reinterpret: AppleMultitouchDevice single-inherits IOService
      * at offset 0, so the pointer is identical. The shim adds only non-virtual method
      * declarations resolved to exported symbols; it does not alter the real vtable. */
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)dev;
+    ctx->amd = (AppleMultitouchDevice *)dev;
 
     /* 4. Build init props dict with IsFake=false (the STRICT path: see old source comment).
      *    Belt-and-suspenders: setProperty after init in case init() did not adopt the dict. */
@@ -153,6 +175,9 @@ AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
     if (!props) {
         IOLog("mt2_synth_amd: props dict alloc failed\n");
         dev->release();
+        ctx->amd = 0;
+        if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
+        IODelete(ctx, mt2_synth_amd_ctx, 1);
         return 0;
     }
     props->setObject("IsFake", kOSBooleanFalse);   /* bypass start() provider cast */
@@ -161,6 +186,9 @@ AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
     IOLog("mt2_synth_amd: AppleMultitouchDevice init -> %d (dev=%p)\n", ok, dev);
     if (!ok) {
         dev->release();
+        ctx->amd = 0;
+        if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
+        IODelete(ctx, mt2_synth_amd_ctx, 1);
         return 0;
     }
     /* Belt-and-suspenders: ensure IsFake is in the property table even if init() did
@@ -174,15 +202,19 @@ AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
      * present before start() runs its gate check, hence set alongside IsFake. */
     dev->setProperty(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
 
-    /* 5. Install handler stubs before start(). */
-    amd->setEnableMultitouchHandler(&enableStub, 0);
-    amd->setGetReportHandler(&getReportStub, 0);
-    amd->setSetReportHandler(&setReportStub, 0);
+    /* 5. Install handler stubs before start(), with ctx as target so each stub operates on
+     *    the per-build register table (enables N independent AMDs to coexist). */
+    ctx->amd->setEnableMultitouchHandler(&enableStub, ctx);
+    ctx->amd->setGetReportHandler(&getReportStub, ctx);
+    ctx->amd->setSetReportHandler(&setReportStub, ctx);
 
     /* 6. Attach to nub. */
     if (!dev->attach(nub)) {
         IOLog("mt2_synth_amd: device attach failed\n");
         dev->release();
+        ctx->amd = 0;
+        if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
+        IODelete(ctx, mt2_synth_amd_ctx, 1);
         return 0;
     }
 
@@ -200,6 +232,9 @@ AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
         IOLog("mt2_synth_amd: device start FAILED\n");
         dev->detach(nub);
         dev->release();
+        ctx->amd = 0;
+        if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
+        IODelete(ctx, mt2_synth_amd_ctx, 1);
         return 0;
     }
 
@@ -290,25 +325,32 @@ AppleMultitouchDevice *mt2_synth_amd_build(IOService *nub) {
 
     dev->registerService();
     IOLog("mt2_synth_amd: AppleMultitouchDevice started + registered\n");
-    return amd;
+    return ctx;
 }
 
-void mt2_synth_amd_teardown(IOService *nub, AppleMultitouchDevice *amd) {
+AppleMultitouchDevice *mt2_synth_amd_amd(mt2_synth_amd_ctx *ctx) {
+    return ctx ? ctx->amd : 0;
+}
+
+void mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx) {
+    if (!ctx) return;
     /* Tear down the HID shell first: terminating it propagates down to Apple's
      * AppleMultitouchHIDEventDriver, whose termination fires the device's
      * hidEventDriverTerminated notification and cleanly clears the wrapper before
      * we release the AppleMultitouchDevice. */
-    if (g_shell) {
-        g_shell->terminate();
-        g_shell->release();
-        g_shell = 0;
+    if (ctx->shell) {
+        ctx->shell->terminate();
+        ctx->shell->release();
+        ctx->shell = 0;
         IOLog("mt2_synth_amd: MT1 HID shell terminated + released\n");
     }
-    if (amd) {
-        IOService *dev = (IOService *)amd;
+    if (ctx->amd) {
+        IOService *dev = (IOService *)ctx->amd;
         dev->stop(nub);
         dev->detach(nub);
         dev->release();
+        ctx->amd = 0;
         IOLog("mt2_synth_amd: AppleMultitouchDevice stopped + released\n");
     }
+    IODelete(ctx, mt2_synth_amd_ctx, 1);
 }

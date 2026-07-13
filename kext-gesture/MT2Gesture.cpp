@@ -157,15 +157,15 @@ IOReturn com_schmonz_MT2Gesture::beginSyntheticTerminal(IOService *source,
     if (fSessionLock) IOLockUnlock(fSessionLock);
 
     if (needBuild) {
-        AppleMultitouchDevice *amd = mt2_synth_amd_build(this);   /* NOT under fSessionLock */
-        if (!amd) {
+        mt2_synth_amd_ctx *ctx = mt2_synth_amd_build(this);   /* NOT under fSessionLock */
+        if (!ctx) {
             if (fSessionLock) IOLockLock(fSessionLock);
             fSynthRefs--;
             if (fSessionLock) IOLockUnlock(fSessionLock);
             return kIOReturnError;
         }
         if (fSessionLock) IOLockLock(fSessionLock);
-        fSynthAMD = amd;
+        fSynthCtx = ctx;
         if (fSessionLock) IOLockUnlock(fSessionLock);
     }
     mt2_transport_sink_t sink = { synth_feed_frame, synth_post_button_edge, synth_inject_encoded, this };
@@ -175,10 +175,10 @@ IOReturn com_schmonz_MT2Gesture::beginSyntheticTerminal(IOService *source,
 void com_schmonz_MT2Gesture::endSyntheticTerminal(IOService *source) {
     connectionClosed(source);   /* deregister BEFORE releasing the AMD */
     if (fSessionLock) IOLockLock(fSessionLock);
-    AppleMultitouchDevice *doomed = 0;
-    if (fSynthRefs > 0 && --fSynthRefs == 0) { doomed = fSynthAMD; fSynthAMD = 0; }
+    mt2_synth_amd_ctx *doomed_ctx = 0;
+    if (fSynthRefs > 0 && --fSynthRefs == 0) { doomed_ctx = fSynthCtx; fSynthCtx = 0; }
     if (fSessionLock) IOLockUnlock(fSessionLock);
-    if (doomed) mt2_synth_amd_teardown(this, doomed);   /* teardown OUTSIDE the lock */
+    if (doomed_ctx) mt2_synth_amd_teardown(this, doomed_ctx);   /* teardown OUTSIDE the lock */
 }
 
 /* The active gesture nub, published for the in-kernel readers (MT2BTReader and
@@ -214,7 +214,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
     fSink.ctx = this;
     fXport.feed_frame = 0; fXport.post_button_edge = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
-    fSynthAMD = 0; fSynthRefs = 0;
+    fSynthCtx = 0; fSynthRefs = 0;
     fSessionLock = IOLockAlloc();   /* serializes timer vs submitFrame fSession access */
     fPipeWL = IOWorkLoop::workLoop();
     fIdleTimer = 0;
