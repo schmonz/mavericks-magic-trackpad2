@@ -79,3 +79,16 @@ void com_schmonz_VoodooInputSample::tick(OSObject *owner, IOTimerEventSource *se
     }
     sender->setTimeoutMS(33);   /* ~30 fps; always re-arm so a later toggle is picked up */
 }
+
+/* Kext load glue: without an explicit kmod_info the executable has no kmod symbol and kextload
+ * rejects it ("Executable file doesn't contain kernel extension code"). Mirrors MT2Gesture.cpp. */
+extern "C" {
+#include <mach/mach_types.h>
+#include <mach/kmod.h>
+extern kern_return_t _start(kmod_info_t *ki, void *data);
+extern kern_return_t _stop(kmod_info_t *ki, void *data);
+KMOD_EXPLICIT_DECL(com.schmonz.VoodooInputSample, "1.0.0", _start, _stop)
+__private_extern__ kmod_start_func_t *_realmain = 0;
+__private_extern__ kmod_stop_func_t  *_antimain = 0;
+__private_extern__ int _kext_apple_cc = __APPLE_CC__;
+}
