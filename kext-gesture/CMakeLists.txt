@@ -18,25 +18,6 @@ foreach(c ${KEXT_SHARED_NAMES})
   list(APPEND KEXT_SHARED_SRCS ${CMAKE_SOURCE_DIR}/src/${c}.c)
 endforeach()
 
-# On a modern host the kext must see the 10.9 kernel headers + libkmod, NOT the
-# live system / modern SDK (whose Kernel.framework describes a different kernel
-# ABI -- wrong vtable slots + struct sizes for the RE'd 10.9.5 hijack). When
-# MT2_MACOSX_10_9_SDK is set, isysroot to it and take Kernel/IOKit headers + libs
-# from there. UNSET (native 10.9 dev box) -> current CMAKE_OSX_SYSROOT behavior.
-if(MT2_MACOSX_10_9_SDK)
-  set(MT2_KEXT_SYSROOT_FLAGS -isysroot ${MT2_MACOSX_10_9_SDK})
-  set(MT2_KEXT_KHDRS
-    ${MT2_MACOSX_10_9_SDK}/System/Library/Frameworks/Kernel.framework/Headers
-    ${MT2_MACOSX_10_9_SDK}/System/Library/Frameworks/IOKit.framework/Headers)
-  set(MT2_KEXT_LIBDIR -L${MT2_MACOSX_10_9_SDK}/usr/lib)
-else()
-  set(MT2_KEXT_SYSROOT_FLAGS)
-  set(MT2_KEXT_KHDRS
-    ${CMAKE_OSX_SYSROOT}/System/Library/Frameworks/Kernel.framework/Headers
-    ${CMAKE_OSX_SYSROOT}/System/Library/Frameworks/IOKit.framework/Headers)
-  set(MT2_KEXT_LIBDIR)
-endif()
-
 # The kext as a NORMAL target: CMake compiles AND links it, tracking every source -> object -> link
 # dependency automatically. That is the whole point here -- the old hand-rolled add_custom_command link
 # did NOT auto-track $<TARGET_OBJECTS>, so a recompiled object silently skipped the relink and we loaded a
@@ -47,19 +28,11 @@ add_executable(mt2gesture_kext ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS} ${KEXT_LOCA
 set_target_properties(mt2gesture_kext PROPERTIES
   OUTPUT_NAME MT2Gesture
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-target_compile_options(mt2gesture_kext PRIVATE
-  ${MT2_KEXT_SYSROOT_FLAGS}
-  -mmacosx-version-min=10.9 -fapple-kext -fno-rtti -fno-exceptions
-  -std=c++11 -Wno-deprecated-register)
+
+# Project-specific include directories (source-local; kernel/IOKit dirs are added by mavericks_kext()).
 target_include_directories(mt2gesture_kext PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src
-  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch
-  ${MT2_KEXT_KHDRS})
-# Freestanding-kernel link: no CRT/stdlib, emit a KEXTBUNDLE Mach-O, link libkmod(c++). Same flags the
-# old custom_command used; now CMake owns the link (and thus the object dependencies).
-target_link_options(mt2gesture_kext PRIVATE
-  -arch x86_64 -mmacosx-version-min=10.9 ${MT2_KEXT_SYSROOT_FLAGS}
-  -nostdlib -Wl,-kext -Wl,-no_uuid ${MT2_KEXT_LIBDIR} -lkmodc++ -lkmod)
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
 
 # Compile the shared .c as C++ (kext mangling must match the .cpp callers; some shared
 # headers lack extern "C", so plain-C compilation would mismatch and fail to link).
@@ -74,26 +47,15 @@ set_source_files_properties(
   VoodooInputMux.cpp ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
-# Stamp the product version (MT2_VERSION, single source of truth in the top CMakeLists) into the kext's
-# Info.plist at configure time, exactly as the pkg/appcast already derive from it. CFBundleVersion must be
-# a kextload-valid numeric version, so it takes MT2_VERSION_NUMERIC; the display string keeps the full
-# MT2_VERSION (may carry a -pre/-rc suffix). @ONLY so only @VAR@ tokens are touched.
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
-
-# Assemble the .kext bundle as a TRACKED output (not a fire-once POST_BUILD): it DEPENDS on the target's
-# binary file, so it regenerates whenever the binary relinks OR the bundle goes missing. CMake relinks the
-# binary whenever any source/object changed (the dependency it now tracks for us), so the bundle stays in
-# lockstep -- no stale bundle, no "deleted it and nothing rebuilt it" gap.
-set(KEXT_BUNDLE ${CMAKE_BINARY_DIR}/MT2Gesture.kext)
-add_custom_command(OUTPUT ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
-  DEPENDS mt2gesture_kext $<TARGET_FILE:mt2gesture_kext> ${CMAKE_CURRENT_BINARY_DIR}/Info.plist
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${KEXT_BUNDLE}/Contents/MacOS
-  COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mt2gesture_kext> ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/Info.plist ${KEXT_BUNDLE}/Contents/Info.plist
-  COMMENT "Assembling MT2Gesture.kext")
-
-# `kext` stays the public target name (reload / kext-load / pkg / characterize all depend on it).
-add_custom_target(kext ALL DEPENDS ${KEXT_BUNDLE}/Contents/MacOS/MT2Gesture)
+# Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel
+# link options, Kernel/IOKit include dirs, Info.plist configure, and .kext bundle assembly.
+# The public "kext" target name and ${CMAKE_BINARY_DIR}/MT2Gesture.kext output path are
+# established by mavericks_kext() and must not change (reload/pkg/characterize depend on them).
+mavericks_kext(
+  TARGET        mt2gesture_kext
+  BUNDLE        MT2Gesture
+  INFO_PLIST_IN ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in
+  PUBLIC_TARGET kext)
 
 # Always characterize the freshly-built kext (sub-second; no need to remember).
 # NATIVE 10.9 dev box (MT2_MACOSX_10_9_SDK unset): refresh the committed cross-build
@@ -113,7 +75,7 @@ endif()
 # so the `|| true` tolerance + sequencing stay correct (CMake's COMMAND can't express
 # `a && b || true` without the sh -c space-escaping bug found in Phase 0).
 add_custom_target(kext-load
-  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh load ${KEXT_BUNDLE}
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh load ${CMAKE_BINARY_DIR}/MT2Gesture.kext
   COMMENT "Staging (root:wheel /tmp) + loading MT2Gesture.kext")
 add_dependencies(kext-load kext)
 
