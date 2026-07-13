@@ -62,6 +62,7 @@ add_subdirectory(src)
 add_subdirectory(tools)
 include(${CMAKE_SOURCE_DIR}/cmake/mavericks_kext.cmake)
 add_subdirectory(kext-gesture)
+add_subdirectory(examples/VoodooInputSample)
 add_subdirectory(tests)
 
 include(cmake/mt2_pkg.cmake)
