@@ -38,6 +38,7 @@
 #include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mt2_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 #include "gh_default_adapter.h"      /* shared generic alloc/class_ok/start/detach/terminate/release */
+#include "mt2_synth_amd.h"           /* mt2_synth_amd_build/amd/teardown — multi-instance fabricated AMD */
 
 extern "C" {
 #include "mt2_geometry.h"      /* single source of the sensor-geometry D-report payloads */
@@ -82,6 +83,11 @@ OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
  * reads it (via +0xf0) to find BNB's interrupt channel. Single device → one global, like
  * gActiveMT2Gesture. NULL when no genuine device is up. */
 IOService *gGenuineBnb = 0;
+
+/* The fabricated AppleMultitouchDevice context for synthetic-mode BT (debug.mt2_bt_synth=1).
+ * Non-NULL only when synthetic mode is active and the build succeeded. Like gGenuineBnb, a single
+ * global (one device at a time) — cleared on stop after the session deregisters. */
+static mt2_synth_amd_ctx *gBtSynthCtx = 0;
 
 /* The PSM-19 (interrupt) reader instance — the session's active frame source. bt_interpose_shim
  * feeds decoded frames through gActiveMT2Gesture->submitFrame(gInterruptReader, ...). */
@@ -195,6 +201,34 @@ static IOReturn bt_sink_inject(void *ctx, const unsigned char *bytes, unsigned i
 }
 static const mt2_transport_sink_t kBtSink =
     { bt_sink_feed_frame, bt_sink_post_button_edge, bt_sink_inject, 0 };
+
+/* Synthetic-mode BT sink (A/B): same conditioned frames as kBtSink, but delivered to our own
+ * fabricated AppleMultitouchDevice (gBtSynthCtx) instead of BNB's genuine AMD. The encode
+ * timestamp, button call, and field order mirror kBtSink exactly. */
+static void *bt_synth_amd(void) { return (void *)mt2_synth_amd_amd(gBtSynthCtx); }
+static void bt_synth_feed_frame(void *ctx, const mt2_frame *frame) {
+    (void)ctx;
+    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)bt_synth_amd();
+    if (!amd) return;
+    uint8_t mt1[256];
+    int n = mt1_encode(frame, mt1, sizeof(mt1), bt_encode_uptime_ms());
+    if (n <= 0) return;
+    amd->handleTouchFrame(mt1, (unsigned int)n);
+}
+static void bt_synth_post_button_edge(void *ctx, unsigned mask) {
+    (void)ctx;
+    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)bt_synth_amd();
+    if (!amd) return;
+    amd->handlePointerEventFromDevice(0, 0, mask, 0);
+}
+static IOReturn bt_synth_inject(void *ctx, const unsigned char *bytes, unsigned int len) {
+    (void)ctx;
+    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)bt_synth_amd();
+    if (!amd) return kIOReturnNotReady;
+    return amd->handleTouchFrame((unsigned char *)bytes, len);
+}
+static const mt2_transport_sink_t kBtSynthSink =
+    { bt_synth_feed_frame, bt_synth_post_button_edge, bt_synth_inject, 0 };
 
 /* Connect-flap measurement: each connection attempt gets an id (bumped on control-channel open); we
  * emit one canonical CONNTRACE line per transition through the SHARED conn_trace_format() (kernel emit
@@ -339,10 +373,23 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     if (psm == 0x13) {
         gInterruptReader = self;   /* the session source; the Path A hybrid shim feeds frames as this */
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
-        if (gActiveMT2Gesture)
-            gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
-                                                     &mt2_policy_default, &kBtSink);
-        else
+        if (gActiveMT2Gesture) {
+            if (gMT2BtSynth) {
+                gBtSynthCtx = mt2_synth_amd_build(gActiveMT2Gesture);   /* fabricated AMD under the nub */
+                if (gBtSynthCtx) {
+                    IOLog("MT2BTReader: SYNTHETIC terminal (debug.mt2_bt_synth=1) — fabricated AMD\n");
+                    gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
+                                                             &mt2_policy_default, &kBtSynthSink);
+                } else {
+                    IOLog("MT2BTReader: synthetic AMD build FAILED; falling back to genuine\n");
+                    gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
+                                                             &mt2_policy_default, &kBtSink);
+                }
+            } else {
+                gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
+                                                         &mt2_policy_default, &kBtSink);
+            }
+        } else
             IOLog("MT2BTReader: ENGINE NOT PUBLISHED at interrupt bind — input will be dead until reconnect (registration race)\n");
     }
 
@@ -793,6 +840,12 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
      * in-gate restores ABOVE. See explanation.md "stop(): plain terminate + release, NO waitQuiet". */
     if (fManualBnb) {
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
+        /* Synthetic-mode A/B: NULL the global NOW so an in-flight watchdog flush during the
+         * quiesceDelivery() drain below sees no AMD (bt_synth_amd() -> NULL -> no-op), then FREE
+         * the AMD only AFTER the drain — mirrors the gGenuineBnb=0-now / gh_stop-after-quiesce
+         * ordering, so no delivery can touch a freed AMD. */
+        mt2_synth_amd_ctx *btSynthToTear = gBtSynthCtx;
+        gBtSynthCtx = 0;
         gLastBattBnb = 0;  /* forget the torn-down node so a reused address can't false-match */
         /* Drain any in-flight sink delivery that read gGenuineBnb before the clear above, and
          * make the clear visible to later deliveries (the store alone is no barrier), BEFORE
@@ -800,6 +853,8 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
          * watchdog-flush-vs-teardown window on the control reader's stop, which never goes
          * through connectionClosed (only the interrupt reader is the registered source). */
         if (gActiveMT2Gesture) gActiveMT2Gesture->quiesceDelivery();
+        /* Now that the drain guarantees no in-flight delivery holds the fabricated AMD, free it. */
+        if (btSynthToTear) mt2_synth_amd_teardown(gActiveMT2Gesture, btSynthToTear);
         /* genuine_host ordered teardown: removeBnbGeometry (vtc_restore the geometry clone) BEFORE
          * terminate — so BNB tears down through Apple's own code, not our override — then release. */
         gh_stop(&fHost, &kBtAdapter);
