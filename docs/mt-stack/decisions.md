@@ -511,6 +511,22 @@ losing conformance; else keep genuine. This is the concrete next step of the `ge
 insight (genuine wins on 10.9 for reuse/conformance; owned/synthetic is more portable below 10.9). Do NOT
 flip a working, shipped transport before the terminal is proven (make-it-cheap-to-be-wrong).
 
+**BUILT — the A/B knob is in (2026-07-13, `main` `f44d6d4`+`c9573c3`).** Not the flip itself: a
+*flag-gated* synthetic terminal on the **BT** path so the A/B is measurable on real hardware.
+`sysctl debug.mt2_bt_synth` (int, default `0`=genuine → **shipped behaviour byte-unchanged**; `1`=synthetic),
+registered alongside `debug.mt2_log`/`debug.mt2_batt` (`kext-gesture/mt2_log.*`, extern `gMT2BtSynth`).
+When set, `MT2BTReader` builds its OWN fabricated AMD (`mt2_synth_amd_build` under the `MT2Gesture` nub)
+and registers `kBtSynthSink` (parallel to `kBtSink`; same `mt1_encode`/`handleTouchFrame`) at
+`connectionEstablished` instead of BNB's genuine AMD; build-fail falls back to genuine so the MT2 is never
+left dead. Teardown mirrors the genuine ordering EXACTLY: NULL `gBtSynthCtx` before `quiesceDelivery()`
+(so an in-flight watchdog flush sees no AMD) and `mt2_synth_amd_teardown` only AFTER the drain (a review
+caught a would-be free-before-drain UAF specific to synth mode). BNB stays the BT transport (terminal-only;
+does NOT touch the reconnect-enable-fail, which needs owning the wire). Host suite 31/31, default goldens
+unchanged. **PENDING (gated, user away from desk):** the on-device A/B checklist in BOTH modes — cursor ·
+tap · scroll · right-click · 3/4-finger · **prefpane recognition** · **battery** · edges — recorded as the
+divergence table that decides retire-genuine-or-keep-the-split. Spec/plan under `docs/superpowers/`
+(transient). Do the A/B, THEN update this section with the result.
+
 ### Post HID input reports (let Apple own the AMD) — NOT viable on 10.9 (spike 2026-07-13)
 Re-tested the "most-Apple-reuse" synthetic model prompted by a MacRumors thread question: publish an
 `IOHIDDevice` presenting the MT1 descriptor and POST `0x28` multitouch input reports, letting Apple's
