@@ -13,9 +13,11 @@
  * will own one ctx. Report stubs read regs from the ctx registered as their target.
  */
 #include "mt2_synth_amd.h"
+#include "../src/mt2_synth_teardown.h"
 #include "MT2HIDShell.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
+#include <IOKit/IOWorkLoop.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
@@ -34,6 +36,8 @@ struct mt2_synth_amd_ctx {
     mt2_synth_regs_t          regs;
     com_schmonz_MT2HIDShell  *shell;
     AppleMultitouchDevice    *amd;
+    bool                      ready;  /* feed fence: amd() returns NULL until built, and again once teardown starts */
+    IOWorkLoop               *wl;     /* retained AMD workloop; released LAST (VoodooInput invariant) */
 };
 
 /* ---- handler stubs (RE'd layout: buf at b+1; length at *(u32*)(b+0x204)) ------------------- */
@@ -325,32 +329,77 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub) {
 
     dev->registerService();
     IOLog("mt2_synth_amd: AppleMultitouchDevice started + registered\n");
+
+    /* Retain the workloop NOW, after start() has established it.  Released LAST in teardown
+     * (after the AMD itself is released) so nothing can call getWorkLoop() on freed memory —
+     * the invariant our earlier panic violated. */
+    ctx->wl = dev->getWorkLoop();
+    if (ctx->wl) ctx->wl->retain();
+
+    /* Raise the feed fence LAST: callers of mt2_synth_amd_amd() see NULL until the device
+     * is fully built+started, and again once teardown clears it. */
+    ctx->ready = true;
+
     return ctx;
 }
 
 AppleMultitouchDevice *mt2_synth_amd_amd(mt2_synth_amd_ctx *ctx) {
-    return ctx ? ctx->amd : 0;
+    return (ctx && ctx->ready) ? ctx->amd : 0;   /* no frame reaches a not-ready / tearing-down AMD */
 }
 
-void mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx) {
-    if (!ctx) return;
-    /* Tear down the HID shell first: terminating it propagates down to Apple's
-     * AppleMultitouchHIDEventDriver, whose termination fires the device's
-     * hidEventDriverTerminated notification and cleanly clears the wrapper before
-     * we release the AppleMultitouchDevice. */
+/* ---- teardown ops (kext-side implementations of the host-tested order contract) -------------- */
+
+static void op_clear_ready(void *c) {
+    ((mt2_synth_amd_ctx *)c)->ready = false;    /* fence: amd() now returns NULL; no new frame enqueued */
+}
+
+static void op_term_shell(void *c) {
+    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
     if (ctx->shell) {
         ctx->shell->terminate();
         ctx->shell->release();
         ctx->shell = 0;
         IOLog("mt2_synth_amd: MT1 HID shell terminated + released\n");
     }
+}
+
+static void op_term_amd(void *c) {
+    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
     if (ctx->amd) {
-        IOService *dev = (IOService *)ctx->amd;
-        dev->stop(nub);
-        dev->detach(nub);
-        dev->release();
-        ctx->amd = 0;
-        IOLog("mt2_synth_amd: AppleMultitouchDevice stopped + released\n");
+        /* terminate(kIOServiceSynchronous) drives willTerminate->stop->detach itself so
+         * Apple's frames-clients deregister before we release.  Do NOT also call
+         * stop()/detach() — that was the direct-stop path that caused the getWorkLoop()
+         * panic on freed memory. */
+        ((IOService *)ctx->amd)->terminate(kIOServiceSynchronous);
+        IOLog("mt2_synth_amd: AppleMultitouchDevice terminate(kIOServiceSynchronous) complete\n");
     }
+}
+
+static void op_release_amd(void *c) {
+    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
+    if (ctx->amd) {
+        ((IOService *)ctx->amd)->release();
+        ctx->amd = 0;
+        IOLog("mt2_synth_amd: AppleMultitouchDevice released\n");
+    }
+}
+
+static void op_release_wl(void *c) {
+    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
+    if (ctx->wl) {
+        ctx->wl->release();
+        ctx->wl = 0;
+        IOLog("mt2_synth_amd: workloop released (last)\n");
+    }
+}
+
+void mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx) {
+    (void)nub;
+    if (!ctx) return;
+    mt2_synth_teardown_ops_t ops = {
+        op_clear_ready, op_term_shell, op_term_amd, op_release_amd, op_release_wl, ctx
+    };
+    mt2_synth_teardown_run(&ops);
     IODelete(ctx, mt2_synth_amd_ctx, 1);
+    IOLog("mt2_synth_amd: teardown complete (ready-fenced, terminate()d, workloop released last)\n");
 }
