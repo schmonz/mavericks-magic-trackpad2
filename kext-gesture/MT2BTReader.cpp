@@ -320,6 +320,48 @@ static void bt_interpose_shim(IOService *target, IOBluetoothL2CAPChannel *channe
         gActiveMT2Gesture->submitFrame(gInterruptReader, &tf);
 }
 
+/* Direct L2CAP interrupt-channel listener (recovered from 9334273^; adapted to current decode types).
+ * We register this as OUR delegate on the interrupt channel (listenAt) — no BNB needed, no interpose.
+ * Mirrors bt_interpose_shim's decode/submit path: same strip, same mt2_bt_decode, same submitFrame ABI.
+ * The genuine path COULD NOT do this (BNB's listenAt would 0xe00002bc → panic; §S2.5/§S2.6); without
+ * BNB the channel is ours from the start and listenAt is clean. */
+void com_schmonz_MT2BTReader::incomingData(IOService *target,
+                                           IOBluetoothL2CAPChannel *channel,
+                                           unsigned short length, void *data) {
+    (void)channel;
+    const uint8_t *b = (const uint8_t *)data;
+    if (!b || length < 2) return;
+    const uint8_t *report = b;
+    size_t rlen = length;
+    if (b[0] == 0xA1) { report = b + 1; rlen = length - 1; }   /* strip HID transport byte */
+
+    /* Shared diag: distinct report id (once) + resume-after-gap. Mirrors bt_interpose_shim. */
+    if (rlen > 0) mt2_diag_raw(MT2_DIAG_BT, report[0]);
+
+    mt2_frame tf;
+    int drc = mt2_bt_decode(report, rlen, &tf);
+    { static bool once = false; if (!once) { once = true;
+        IOLog("MT2BTReader: [diag] first incomingData hit len=%u b0=0x%02x decode=%d\n",
+              length, length ? b[0] : 0, drc); } }
+    if (drc != 0) return;   /* not a recognized multitouch frame — drop */
+
+    /* STEADY: first real frame → set fStreaming on self (target = the reader) so the
+     * re-enable timer stops retrying 0xF1. Also mirrors bt_interpose_shim's gSteadyConn gate. */
+    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)target;
+    if (self && !self->fStreaming) {
+        self->fStreaming = true;
+        if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
+            bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, 0, 0, 0); }
+    }
+
+    /* Shared diag: per-frame edge coords (debug.mt2_log>=2). want_first=false: CSM_STEADY above. */
+    mt2_diag_frame(MT2_DIAG_BT, &tf, /*want_first=*/false);
+
+    /* Cross the seam: hand the decoded frame to the SHARED session via the fabricated AMD sink. */
+    if (gActiveMT2Gesture && gInterruptReader)
+        gActiveMT2Gesture->submitFrame(target, &tf);   /* target = this reader */
+}
+
 /* Delegate-callback ABI: IOBluetoothL2CAPChannel::newDataIn invokes (channel+0x110) as
  * cb(target, channel, length, data), target read from channel+0x118. */
 typedef void (*bt_l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
@@ -370,25 +412,20 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
      * INTERRUPT channel (PSM 19 = 0x13) delivers touch frames, so only it registers as the session's
      * active frame source — the two L2CAP channels bind as two reader instances, and the session's
      * single-active guard would reject the interrupt frames if the control reader claimed the source. */
-    if (psm == 0x13) {
-        gInterruptReader = self;   /* the session source; the Path A hybrid shim feeds frames as this */
+    if (psm == 0x13) {   /* interrupt channel = the session's frame source */
+        gInterruptReader = self;
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
+        /* Build the SP1-hardened fabricated AMD unconditionally: we own the interrupt channel's
+         * delegate directly (listenAt below); no BNB is started, no interpose needed. */
+        gBtSynthCtx = mt2_synth_amd_build(gActiveMT2Gesture);
+        if (!gBtSynthCtx) IOLog("MT2BTReader: fabricated AMD build FAILED - no cursor\n");
+        /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> submitFrame.
+         * listenAt is safe here because no BNB races us for this channel (no manual-start). */
+        self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
         if (gActiveMT2Gesture) {
-            if (gMT2BtSynth) {
-                gBtSynthCtx = mt2_synth_amd_build(gActiveMT2Gesture);   /* fabricated AMD under the nub */
-                if (gBtSynthCtx) {
-                    IOLog("MT2BTReader: SYNTHETIC terminal (debug.mt2_bt_synth=1) — fabricated AMD\n");
-                    gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
-                                                             &mt2_policy_default, &kBtSynthSink);
-                } else {
-                    IOLog("MT2BTReader: synthetic AMD build FAILED; falling back to genuine\n");
-                    gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
-                                                             &mt2_policy_default, &kBtSink);
-                }
-            } else {
-                gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
-                                                         &mt2_policy_default, &kBtSink);
-            }
+            IOLog("MT2BTReader: DIRECT terminal — fabricated AMD, direct L2CAP listener\n");
+            gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
+                                                     &mt2_policy_default, &kBtSynthSink);
         } else
             IOLog("MT2BTReader: ENGINE NOT PUBLISHED at interrupt bind — input will be dead until reconnect (registration race)\n");
     }
@@ -472,11 +509,10 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
 
     /* The main flow, as a sequence of named steps: */
     if (!marshalSetupInGate()) return false;    /* bind channel + arm session, in-gate */
-    if (fIsControl) {                           /* Path A runs only on the control channel */
-        if (manualStartGenuineBnb())            /* host a genuine BNBTrackpadDevice */
+    if (fIsControl) {                           /* control reader: owns the 0xF1 enable + battery poll */
+        if (manualStartGenuineBnb())            /* (Task 2 deletes this: genuine BNB is dead) */
             seedBnbIdentity();                  /* Product + battery-display gate on its node */
-        if (fManualBnb)
-            armInterposeTimer();                /* async: splice our shim once BNB's chan appears */
+        armInterposeTimer();                    /* deferred 0xF1 enable + (legacy) interpose poller */
     }
 
     IOLog("MT2BTReader: bound L2CAP channel, enabled multitouch (0xF1), listening\n");
@@ -491,6 +527,7 @@ void com_schmonz_MT2BTReader::resetTransportState() {
     fInterposeTimer = 0;
     fInterposeTries = 0;
     fReEnableCount = 0;
+    fStreaming = false;
 }
 
 /* Step: run setupInGate on the channel's command gate. IOBluetoothFamily REQUIREs every
@@ -716,6 +753,34 @@ void com_schmonz_MT2BTReader::removeBnbGeometry(void *transport) {
 void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventSource *ts) {
     com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)owner;
 
+    /* Direct-listener path (no BNB, no interpose): send the 0xF1 multitouch enable on the control
+     * channel, retrying until incomingData delivers the first real frame (gSteadyConn==gConnId /
+     * fStreaming). Once streaming, switch to battery polling. Mirrors Phase 2 cadence.
+     * The deferred enable is still required: sendTo before the channel is OPEN blocks ~14s and
+     * tears the link (the B1-drive root cause, 2026-06-21; §B1-drive). */
+    if (!gGenuineBnb && !gInterposedChannel) {
+        IOCommandGate *cg = self->fChannel
+            ? ((IOBluetoothObject *)self->fChannel)->getCommandGate() : 0;
+        if (gSteadyConn != gConnId) {
+            /* Still waiting for first frame: re-send 0xF1. */
+            if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
+            self->fReEnableCount++;
+            if (self->fReEnableCount == 8)
+                IOLog("MT2BTReader: initial re-enable push done; retrying gently until first frame\n");
+            ts->setTimeoutMS(self->fReEnableCount < 8 ? 250 : 1000);
+            return;
+        }
+        /* First frame received — streaming confirmed. */
+        if (self->fReEnableCount >= 0) {
+            IOLog("MT2BTReader: multitouch confirmed (first frame after %d enables)\n", self->fReEnableCount);
+            bt_conntrace(CSM_MT_MODE, CSM_EV_MT_MODE_CONFIRMED, self->fChannel, 0, 0, 0);
+            self->fReEnableCount = -1;
+        }
+        if (cg) cg->runAction(&com_schmonz_MT2BTReader::pollBatteryInGate, self);
+        ts->setTimeoutMS(MT2_BATTERY_POLL_MS);
+        return;
+    }
+
     /* Phase 2 (interpose already installed): re-send the 0xF1 enable on the control channel a
      * few times to force the device back into multitouch mode after BNB's handleStart knocked
      * it to mouse mode (findings S2.11). self->fChannel is the control channel (this is the
@@ -834,10 +899,18 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
         if (gate) gate->runAction(&com_schmonz_MT2BTReader::controlRestoreInGate, gCtrlInterposedChannel);
         gCtrlInterposedChannel = 0;
     }
-    /* Path A: tear down the manually-started genuine BNBTrackpadDevice before we go away, or it
-     * outlives the channel it was started on. Plain terminate() + release(), NO waitQuiet — the BNB
-     * never balances its start-time busy so a wait can never succeed; unload safety rests on the
-     * in-gate restores ABOVE. See explanation.md "stop(): plain terminate + release, NO waitQuiet". */
+    /* Direct-listener path (no BNB): tear down the fabricated AMD we built in setupInGate.
+     * NULL gBtSynthCtx first (same ordering as the fManualBnb branch below) so an in-flight
+     * watchdog flush sees no AMD before we quiesce, then free after the drain. */
+    if (!fManualBnb && gBtSynthCtx) {
+        mt2_synth_amd_ctx *btSynthToTear = gBtSynthCtx;
+        gBtSynthCtx = 0;
+        if (gActiveMT2Gesture) gActiveMT2Gesture->quiesceDelivery();
+        mt2_synth_amd_teardown(gActiveMT2Gesture, btSynthToTear);
+        IOLog("MT2BTReader: direct-listener fabricated AMD torn down\n");
+    }
+
+    /* Path A (legacy; Task 2 deletes this): tear down the manually-started genuine BNBTrackpadDevice. */
     if (fManualBnb) {
         gGenuineBnb = 0;   /* stop the sink forwarding into it before we tear it down */
         /* Synthetic-mode A/B: NULL the global NOW so an in-flight watchdog flush during the

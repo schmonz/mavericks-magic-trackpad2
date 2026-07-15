@@ -24,6 +24,7 @@ class com_schmonz_MT2BTReader : public IOService {
     IOTimerEventSource *fInterposeTimer;  /* polls for BNB's interrupt channel, then installs the shim */
     int fInterposeTries;            /* retry budget for the installer poll */
     int fReEnableCount;             /* Path A: # of post-install 0xF1 re-enables sent (force multitouch mode) */
+    bool fStreaming;                /* true after incomingData delivers the first real multitouch frame */
     gh_host_t fHost;                /* genuine_host lifecycle handle for fManualBnb */
 public:
     virtual bool start(IOService *provider) override;
@@ -38,6 +39,11 @@ public:
      * dereferencing this (soon-to-be-freed) object — without it, unloading while
      * connected leaves a dangling listener and panics IOBluetoothFamily. arg0 = reader. */
     static IOReturn teardownInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
+
+    /* Interrupt-channel data delegate: decode 0x31 -> submitFrame. We own this delegate directly (no
+     * BNB) — the genuine path could not (BNB's listenAt would 0xe00002bc -> panic); without BNB it's clean. */
+    static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
+                             unsigned short length, void *data);
 
     /* IOTimerEventSource handler: poll gGenuineBnb+0xf0 for BNB's interrupt channel;
      * once present, install the delegate-interpose in that channel's command gate. */
