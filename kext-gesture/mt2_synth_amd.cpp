@@ -14,6 +14,8 @@
  */
 #include "mt2_synth_amd.h"
 #include "../src/mt2_synth_teardown.h"
+#include "mt1_encode.h"
+#include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "MT2HIDShell.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
@@ -402,4 +404,31 @@ void mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx) {
     mt2_synth_teardown_run(&ops);
     IODelete(ctx, mt2_synth_amd_ctx, 1);
     IOLog("mt2_synth_amd: teardown complete (ready-fenced, terminate()d, workloop released last)\n");
+}
+
+/* ---- fabricated-AMD terminal feed (one implementation; three consumers) --------------------- */
+
+void mt2_synth_amd_feed(mt2_synth_amd_ctx *ctx, const mt2_frame *frame, uint32_t timestamp) {
+    AppleMultitouchDevice *amd = mt2_synth_amd_amd(ctx);
+    if (!amd) return;
+    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point. */
+    if (frame->contact_count > 0)
+        MT2_DLOG(2, "feed x=%d y=%d -> amd %p", frame->transducers[0].currentCoordinates.x,
+                 frame->transducers[0].currentCoordinates.y, (void *)amd);
+    unsigned char mt1[512];  /* 512 >= 256: safe for any realistic contact count */
+    int n = mt1_encode(frame, mt1, sizeof mt1, timestamp);
+    if (n > 0) amd->handleTouchFrame(mt1, (unsigned int)n);
+}
+
+void mt2_synth_amd_button(mt2_synth_amd_ctx *ctx, unsigned mask) {
+    AppleMultitouchDevice *amd = mt2_synth_amd_amd(ctx);
+    if (!amd) return;
+    MT2_DLOG(2, "post_button_edge mask=0x%x -> amd %p", mask, (void *)amd);
+    amd->handlePointerEventFromDevice(0, 0, mask, 0);
+}
+
+IOReturn mt2_synth_amd_inject(mt2_synth_amd_ctx *ctx, const unsigned char *bytes, unsigned int len) {
+    AppleMultitouchDevice *amd = mt2_synth_amd_amd(ctx);
+    if (!amd) return kIOReturnNotReady;
+    return amd->handleTouchFrame((unsigned char *)bytes, len);
 }

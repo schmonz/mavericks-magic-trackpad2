@@ -21,7 +21,6 @@
 #include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
 #include "mt2_usb_decode.h"            /* mt2_usb_decode -> mt2_frame (the decode seam) */
-#include "mt1_encode.h"
 #include "MT2Gesture.h"                /* engine: connectionEstablished/submitFrame + sink type */
 #include "mt2_synth_amd.h"           /* mt2_synth_amd_build/amd/teardown — fabricated AMD */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
@@ -51,33 +50,20 @@ static uint32_t usb_ts_22bit(void) {
 }
 
 /* USB fabricated-AMD sink (mirrors SP2's kBtSink).
- * Delivery target = the fabricated AMD (gUsbAmdCtx). NULL-guards drop deliveries during bring-up.
+ * Delivery target = the fabricated AMD (gUsbAmdCtx). NULL-guards inside
+ * mt2_synth_amd_feed/button/inject drop deliveries during bring-up / teardown.
  * Calls arrive under the session lock. */
-static void *usb_sink_amd(void) { return (void *)mt2_synth_amd_amd(gUsbAmdCtx); }
 static void usb_sink_feed_frame(void *ctx, const mt2_frame *frame) {
     (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)usb_sink_amd();
-    if (!amd) return;
-    if (frame->contact_count > 0)
-        MT2_DLOG(2, "feed x=%d y=%d -> usbAMD", frame->transducers[0].currentCoordinates.x,
-                 frame->transducers[0].currentCoordinates.y);
-    uint8_t mt1[256];
-    int n = mt1_encode(frame, mt1, sizeof(mt1), usb_ts_22bit());
-    if (n <= 0) return;
-    amd->handleTouchFrame(mt1, (unsigned int)n);
+    mt2_synth_amd_feed(gUsbAmdCtx, frame, usb_ts_22bit());
 }
 static void usb_sink_post_button_edge(void *ctx, unsigned mask) {
     (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)usb_sink_amd();
-    if (!amd) return;
-    MT2_DLOG(2, "post_button_edge mask=0x%x -> usbAMD", mask);
-    amd->handlePointerEventFromDevice(0, 0, mask, 0);
+    mt2_synth_amd_button(gUsbAmdCtx, mask);
 }
 static IOReturn usb_sink_inject(void *ctx, const unsigned char *bytes, unsigned int len) {
     (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)usb_sink_amd();
-    if (!amd) return kIOReturnNotReady;
-    return amd->handleTouchFrame((unsigned char *)bytes, len);
+    return mt2_synth_amd_inject(gUsbAmdCtx, bytes, len);
 }
 static const mt2_transport_sink_t kUsbSink =
     { usb_sink_feed_frame, usb_sink_post_button_edge, usb_sink_inject, 0 };

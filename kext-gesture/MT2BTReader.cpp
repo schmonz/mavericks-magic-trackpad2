@@ -22,8 +22,7 @@
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
 #include "MT2Gesture.h"
-#include "amd_shim.h"          /* AppleMultitouchDevice handleTouchFrame / handlePointerEventFromDevice */
-#include "mt1_encode.h"
+#include "amd_shim.h"          /* AppleMultitouchDevice (used by mt2_maybe_publish_battery) */
 
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
  * with C++ linkage on both sides — no extern "C". */
@@ -86,34 +85,19 @@ static uint32_t bt_encode_uptime_ms(void) {
 }
 
 /* BT transport sink (registered with the engine at connectionEstablished; calls arrive under
- * the session lock). Delivery target = the fabricated AMD (gBtAmdCtx). NULL-guards drop
- * deliveries during bring-up. */
-static void *bt_sink_amd(void) { return (void *)mt2_synth_amd_amd(gBtAmdCtx); }
+ * the session lock). Delivery target = the fabricated AMD (gBtAmdCtx). NULL-guards inside
+ * mt2_synth_amd_feed/button/inject drop deliveries during bring-up / teardown. */
 static void bt_sink_feed_frame(void *ctx, const mt2_frame *frame) {
     (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)bt_sink_amd();
-    if (!amd) return;
-    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point. */
-    if (frame->contact_count > 0)
-        MT2_DLOG(2, "feed x=%d y=%d -> btAMD", frame->transducers[0].currentCoordinates.x,
-                 frame->transducers[0].currentCoordinates.y);
-    uint8_t mt1[256];
-    int n = mt1_encode(frame, mt1, sizeof(mt1), bt_encode_uptime_ms());
-    if (n <= 0) return;
-    amd->handleTouchFrame(mt1, (unsigned int)n);
+    mt2_synth_amd_feed(gBtAmdCtx, frame, bt_encode_uptime_ms());
 }
 static void bt_sink_post_button_edge(void *ctx, unsigned mask) {
     (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)bt_sink_amd();
-    if (!amd) return;
-    MT2_DLOG(2, "post_button_edge mask=0x%x -> btAMD", mask);
-    amd->handlePointerEventFromDevice(0, 0, mask, 0);
+    mt2_synth_amd_button(gBtAmdCtx, mask);
 }
 static IOReturn bt_sink_inject(void *ctx, const unsigned char *bytes, unsigned int len) {
     (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)bt_sink_amd();
-    if (!amd) return kIOReturnNotReady;
-    return amd->handleTouchFrame((unsigned char *)bytes, len);
+    return mt2_synth_amd_inject(gBtAmdCtx, bytes, len);
 }
 static const mt2_transport_sink_t kBtSink =
     { bt_sink_feed_frame, bt_sink_post_button_edge, bt_sink_inject, 0 };

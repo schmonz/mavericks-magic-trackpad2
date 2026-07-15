@@ -6,7 +6,6 @@
 #include "mt2_log.h"              // MT2_DLOG
 #include "voodoo_wire.h"           // wire VoodooInputEvent + kIOMessage* + key macros
 #include "mt2_voodoo_translate.h"  // mt2_frame_from_voodoo (extern "C")
-#include "mt1_encode.h"
 #include <libkern/c++/OSNumber.h>
 
 OSDefineMetaClassAndStructors(com_schmonz_VoodooInput, IOService)
@@ -26,11 +25,7 @@ static uint32_t read_u32_prop(IOService *p, const char *key, uint32_t dflt) {
 /* Sink trampolines: dispatch each session effect to the mux's own synthetic AMD. */
 static void mux_feed_frame(void *ctx, const mt2_frame *frame) {
     com_schmonz_VoodooInput *self = (com_schmonz_VoodooInput *)ctx;
-    AppleMultitouchDevice *amd = self->synthAMD();
-    if (!amd) return;
-    unsigned char mt1[512];
-    int n = mt1_encode(frame, mt1, sizeof mt1, (uint32_t)uptime_ms());
-    if (n > 0) amd->handleTouchFrame(mt1, (unsigned int)n);
+    mt2_synth_amd_feed(self->synthCtx(), frame, (uint32_t)uptime_ms());
 }
 static void mux_post_button_edge(void *ctx, unsigned mask) { (void)ctx; (void)mask; }
 static void mux_arm_timer(void *ctx, uint32_t ms) { ((com_schmonz_VoodooInput *)ctx)->armIdle(ms); }
