@@ -237,14 +237,21 @@ static int mt2_batt_override(void) {
     return v;
 }
 
-/* Raw BNBTrackpadDevice node "BatteryPercent" (0-100), or -1 if absent (on USB the BT node is gone). */
+/* "BatteryPercent" (0-100) off our fabricated AppleMultitouchDevice node, or -1 if absent (USB publishes
+ * none; the BNBTrackpadDevice node is gone post-full-synthetic). Only our BT AMD carries BatteryPercent, so
+ * iterate the AMDs and take the first that has it (robust if a co-connected genuine AMD is also present). */
 static int mt2_read_node_battery(void) {
     int pct = -1;
-    io_service_t svc = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("BNBTrackpadDevice"));
-    if (svc) {
-        CFNumberRef n = (CFNumberRef)IORegistryEntryCreateCFProperty(svc, CFSTR("BatteryPercent"), kCFAllocatorDefault, 0);
-        if (n) { CFNumberGetValue(n, kCFNumberIntType, &pct); CFRelease(n); }
-        IOObjectRelease(svc);
+    io_iterator_t it = 0;
+    if (IOServiceGetMatchingServices(kIOMasterPortDefault,
+            IOServiceMatching("AppleMultitouchDevice"), &it) == KERN_SUCCESS && it) {
+        io_service_t svc;
+        while (pct < 0 && (svc = IOIteratorNext(it))) {
+            CFNumberRef n = (CFNumberRef)IORegistryEntryCreateCFProperty(svc, CFSTR("BatteryPercent"), kCFAllocatorDefault, 0);
+            if (n) { CFNumberGetValue(n, kCFNumberIntType, &pct); CFRelease(n); }
+            IOObjectRelease(svc);
+        }
+        IOObjectRelease(it);
     }
     return pct;
 }

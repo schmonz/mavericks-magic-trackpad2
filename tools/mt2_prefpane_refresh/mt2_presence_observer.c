@@ -88,11 +88,16 @@ mt2_presence_observer_t *presence_observer_create(void *runloop, int removal_ms,
     /* Arm live IOKit observers on BOTH transports, FirstMatch + Terminated. IOServiceMatching consumes
      * the dict, so build a fresh one per call. Drain the initial iterators WITHOUT acting (already
      * present services, not live events). */
+    /* Post-full-synthetic: no BNBTrackpadDevice / AppleUSBMultitouchDriver exists anymore — we drive our
+     * OWN fabricated AMD on both transports. Watch our per-transport READER classes instead: they are the
+     * 1:1 transport-presence signal (BT reader binds the L2CAP channel; USB reader binds interface 1). The
+     * BT side has TWO reader instances (control PSM17 + interrupt PSM19), so appear/remove fire twice — the
+     * SM's duplicate-edge tolerance (PRESENCE_ACT_NONE) coalesces them. */
     static const struct { const char *cls; const char *type; presence_event_t ev; const char *tag; } specs[4] = {
-        {"AppleUSBMultitouchDriver", kIOFirstMatchNotification, PRESENCE_EV_USB_APPEAR, "USB+"},
-        {"AppleUSBMultitouchDriver", kIOTerminatedNotification, PRESENCE_EV_USB_REMOVE, "USB-"},
-        {"BNBTrackpadDevice",        kIOFirstMatchNotification, PRESENCE_EV_BT_APPEAR,  "BT+"},
-        {"BNBTrackpadDevice",        kIOTerminatedNotification, PRESENCE_EV_BT_REMOVE,  "BT-"},
+        {"com_schmonz_MT2USBReader", kIOFirstMatchNotification, PRESENCE_EV_USB_APPEAR, "USB+"},
+        {"com_schmonz_MT2USBReader", kIOTerminatedNotification, PRESENCE_EV_USB_REMOVE, "USB-"},
+        {"com_schmonz_MT2BTReader",  kIOFirstMatchNotification, PRESENCE_EV_BT_APPEAR,  "BT+"},
+        {"com_schmonz_MT2BTReader",  kIOTerminatedNotification, PRESENCE_EV_BT_REMOVE,  "BT-"},
     };
     for (int i = 0; i < 4; i++) {
         o->cbctx[i].o = o; o->cbctx[i].ev = specs[i].ev; o->cbctx[i].tag = specs[i].tag;
@@ -126,8 +131,8 @@ presence_state_t presence_observer_state(const mt2_presence_observer_t *o) {
 /* Reconcile against device truth (poll): self-heal for missed/manually-started edges. */
 void presence_observer_reconcile(mt2_presence_observer_t *o) {
     if (!o) return;
-    int bt  = service_present("BNBTrackpadDevice");
-    int usb = service_present("AppleUSBMultitouchDriver");
+    int bt  = service_present("com_schmonz_MT2BTReader");    /* our fabricated-AMD readers = the transport */
+    int usb = service_present("com_schmonz_MT2USBReader");   /* signal now (BNB/AppleUSBMultitouch are gone) */
     presence_result_t r = presence_reconcile(o->state, bt, usb);
     if (r.action != PRESENCE_ACT_NONE) LOG("reconcile bt=%d usb=%d -> action", bt, usb);
     o->state = r.next;
