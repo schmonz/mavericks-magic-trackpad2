@@ -1,19 +1,15 @@
 /* MT2USBReader — the USB transport reader for the Magic Trackpad 2.
  *
- * Two halves. PER-TRANSPORT (the ~3%): match interface 1 of the cabled MT2, manual-start
- * Apple's genuine AppleUSBMultitouchDriver on it, seed the config it needs (geometry +
- * user-client, via the init dict), and send the MT2 0x02 USB multitouch-enable. SHARED
- * ENGINE (the ~97%) is what the seam feeds. There is ONE seam: mt2_usb_handle_report runs
- * in place of the genuine driver's handleReport, reframes each raw MT2 0x02 report by handing
- * the decoded mt2_frame to the shared session engine (policy row mt2_policy_default) whose
- * registered sink re-encodes + chains the original. Apple's driver owns the interface +
- * interrupt pipe and does all the contact/gesture/cursor work; we only translate the stream
- * at its seam.
+ * Two halves. PER-TRANSPORT (the ~3%): match interface 1 of the cabled MT2, open the
+ * interrupt-IN pipe, send the MT2 0x02 USB multitouch-enable, and async-read frames.
+ * SHARED ENGINE (the ~97%) is what it feeds. There is ONE seam: readComplete decodes
+ * each raw MT2 0x02 report (mt2_usb_decode -> mt2_frame) and hands it to the shared
+ * session engine (policy row mt2_policy_default) whose registered kUsbSink re-encodes
+ * and drives the fabricated AMD directly. No AppleUSBMultitouchDriver is ever started.
+ * No decision logic lives in this file.
  *
- * Dirty tricks, named where used: mt2_usb_handle_report (THE SEAM, the handleReport splice),
- * usb_gh_interpose (instance-scoped vtable clone), the pre-start 0x02 enable + settle, the
- * self-driven handleButton. Load-bearing RE prose is in docs/mt-stack/explanation.md
- * "MT2USBReader bring-up"; the code keeps one-line pointers.
+ * Load-bearing RE prose is in docs/mt-stack/explanation.md "MT2USBReader bring-up";
+ * the code keeps one-line pointers.
  *
  * Replaces the inert MT2USBClaim kext plus the userspace feeder loop.
  */
@@ -24,47 +20,23 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
-#define VTC_ALLOC(sz)  IOMalloc(sz)
-#define VTC_FREE(p,sz) IOFree((p), (sz))
-#include "vtable_clone.h"              /* instance-scoped vtable clone/override/restore */
 #include "mt2_usb_decode.h"            /* mt2_usb_decode -> mt2_frame (the decode seam) */
-#include "mt2_usb_bytes.h"           /* mt2_apple_checksum + mt2_usb_click_report */
 #include "mt1_encode.h"
 #include "MT2Gesture.h"                /* engine: connectionEstablished/submitFrame + sink type */
 #include "mt2_synth_amd.h"           /* mt2_synth_amd_build/amd/teardown — fabricated AMD */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
-#include "gh_default_adapter.h"        /* shared generic alloc/class_ok/start/detach/terminate/release */
-#include "mt2_geometry.h"              /* MT2_SURFACE_WIDTH/HEIGHT — one knob shared with the BT report */
-#include "../src/mt2_stack.h"          /* MT2_PARSER_* / MT2_PROP_* / MT2_MTHID_* property seeds */
 #include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "mt2_log.h"                   /* MT2_DLOG (runtime debug.mt2_log) */
-#include "mt2_splice_kext.h"           /* declarative interpose engine + kext ops (mt2_splice_kext_ops) */
 
-/* handleReport vtable BYTE offset 0x8b8 -> slot index (RE'd 2026-06-24). */
-#define USB_HANDLEREPORT_SLOT_INDEX  (0x8b8 / sizeof(void *))
-/* handleButton vtable BYTE offset 0xb28 -> slot index (RE'd 2026-06-24). The genuine driver gets the
- * physical button from a separate button-provider service (buttonPublished) that our manual-start
- * lacks, so handleButton never fires; we call it ourselves with a button report (byte[15]=state). */
-#define USB_HANDLEBUTTON_SLOT_INDEX  (0xb28 / sizeof(void *))
-#define USB_VTABLE_SPAN              0x2000
 /* Settle after the enable, before starting the AMD, or a mouse-mode getReport storm can panic —
  * see explanation.md "MT2USBReader bring-up". 50ms measured sufficient; don't delete it. */
 #define MT2_USB_ENABLE_SETTLE_MS     50
-
-/* USB handleReport seam state (mt2_splice). The row is declared after the shim it names
- * (mt2_usb_handle_report, below); usb_gh_interpose/restore stay the gh-lifecycle call sites,
- * so install/restore TIMING is unchanged. */
-static mt2_splice_state_t gUsbSpliceState;
-typedef IOReturn (*usb_handle_report_fn)(void *self, IOMemoryDescriptor *report,
-                                         IOHIDReportType type, IOOptionBits options);
-static usb_handle_report_fn gOrigUsbHandleReport = 0;
-typedef void (*usb_handle_button_fn)(void *self, uint8_t *report);
 
 /* Set by com_schmonz_MT2Gesture::start (same kext). */
 extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
 
 /* The reader instance = the session's source token (registered at connectionEstablished).
- * Single device -> one global, like gGenuineSelf. */
+ * Single device -> one global, like gUsbAmdCtx. */
 static IOService *gUsbReader = 0;
 
 /* The fabricated AppleMultitouchDevice context for USB.
@@ -72,26 +44,13 @@ static IOService *gUsbReader = 0;
  * A single global (one device at a time) — cleared on stop after the session deregisters. */
 static mt2_synth_amd_ctx *gUsbAmdCtx = 0;
 
-/* The chained handleReport's IOReturn + the caller's type/options, threaded through the
- * void-returning sink so mt2_usb_handle_report still returns Apple's real status. Safe NOT
- * because of the session lock but because every access happens on the ONE thread that can run
- * mt2_usb_handle_report (the genuine driver's interrupt-read completion; one outstanding read
- * per pipe, re-armed serially — the same single-caller invariant the retired gLastUsbButton
- * edge state relied on). If a second concurrent handleReport caller ever appears, these would
- * mix type/options between calls. */
-static IOReturn           gChainRc      = kIOReturnSuccess;
-static IOHIDReportType    gChainType    = kIOHIDReportTypeInput;
-static IOOptionBits       gChainOptions = 0;
-
-static void                *gGenuineSelf = 0;  /* the genuine driver instance = the USB sink's handleReport/handleButton target */
-
 static uint32_t usb_ts_22bit(void) {
     clock_sec_t s; clock_usec_t u;
     clock_get_system_microtime(&s, &u);
     return (uint32_t)(((uint64_t)s * 1000 + u / 1000) & 0x3FFFFF);   /* monotonic ms, 22-bit */
 }
 
-/* USB fabricated-AMD sink (the new default, mirrors SP2's kBtSink).
+/* USB fabricated-AMD sink (mirrors SP2's kBtSink).
  * Delivery target = the fabricated AMD (gUsbAmdCtx). NULL-guards drop deliveries during bring-up.
  * Calls arrive under the session lock. */
 static void *usb_sink_amd(void) { return (void *)mt2_synth_amd_amd(gUsbAmdCtx); }
@@ -123,94 +82,17 @@ static IOReturn usb_sink_inject(void *ctx, const unsigned char *bytes, unsigned 
 static const mt2_transport_sink_t kUsbSink =
     { usb_sink_feed_frame, usb_sink_post_button_edge, usb_sink_inject, 0 };
 
-/* Genuine-USB sink (Task 2 deletes; kept compiling alongside the fabricated-AMD sink above).
- * feed_frame: mt1_encode + checksum + chain original handleReport; post_button_edge: self-driven
- * handleButton. Used only via kUsbGenuineSink which startGenuine/mt2_usb_handle_report reference. */
-static void usb_genuine_sink_feed_frame(void *ctx, const mt2_frame *frame) {
-    (void)ctx;
-    if (!gOrigUsbHandleReport || !gGenuineSelf) return;
-    uint8_t out[256];
-    int n = mt1_encode(frame, out, sizeof(out) - 2, usb_ts_22bit());
-    if (n <= 0) return;
-    out[n] = out[n + 1] = 0;
-    mt2_apple_checksum(out, (size_t)n + 2);
-    size_t outlen = (size_t)n + 2;
-    IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::withCapacity(outlen, kIODirectionIn);
-    if (!md) { gChainRc = kIOReturnNoMemory; return; }
-    md->setLength(outlen);
-    md->writeBytes(0, out, outlen);
-    gChainRc = gOrigUsbHandleReport(gGenuineSelf, md, gChainType, gChainOptions);
-    md->release();
-}
-static void usb_genuine_sink_post_button_edge(void *ctx, unsigned mask) {
-    (void)ctx;
-    if (!gGenuineSelf) return;
-    uint8_t rep[16];
-    mt2_usb_click_report(mask, rep);
-    usb_handle_button_fn hb =
-        (usb_handle_button_fn)((*(void ***)gGenuineSelf)[USB_HANDLEBUTTON_SLOT_INDEX]);
-    if (hb) hb(gGenuineSelf, rep);
-}
-static const mt2_transport_sink_t kUsbGenuineSink =
-    { usb_genuine_sink_feed_frame, usb_genuine_sink_post_button_edge, /*inject_encoded*/ 0, 0 };
-
-/* THE SEAM (the reframe splice): runs in place of the genuine driver's handleReport (usb_gh_interpose
- * points the vtable slot here). Read the raw MT2 0x02 report, then — structurally mirroring the BT
- * reader (mt2_bt_decode -> submitFrame) — hand the decoded mt2_frame to the shared session
- * (policy row mt2_policy_default); the registered kUsbSink encodes + checksums + chains the original.
- * Non-touch reports pass through untouched. extern "C" free fn; first arg is `this`. */
-extern "C" IOReturn mt2_usb_handle_report(void *self, IOMemoryDescriptor *report,
-                                          IOHIDReportType type, IOOptionBits options) {
-    if (!gOrigUsbHandleReport) return kIOReturnError;
-    if (!report) return gOrigUsbHandleReport(self, report, type, options);
-
-    uint8_t mt2[256];
-    IOByteCount mn = report->getLength();
-    if (mn == 0 || mn > sizeof(mt2)) return gOrigUsbHandleReport(self, report, type, options);
-    report->readBytes(0, mt2, mn);
-    mt2_diag_raw(MT2_DIAG_USB, mt2[0]);                   /* shared diag: distinct id + resume-after-gap, pre-gate */
-    if (mt2[0] != 0x02)                                   /* not a touch report: pass through untouched */
-        return gOrigUsbHandleReport(self, report, type, options);
-
-    mt2_frame frame;
-    if (mt2_usb_decode(mt2, (size_t)mn, &frame) != 0)          /* decode -> mt2_frame (seam) */
-        return gOrigUsbHandleReport(self, report, type, options);
-    mt2_diag_frame(MT2_DIAG_USB, &frame, /*want_first=*/true);   /* pre-session, matching BT's diag point */
-
-    /* Cross the seam, structurally identical to BT's shim: the SHARED session conditions the
-       frame (mt2_policy_default = the old assembly byte-for-byte) and kUsbSink chains the original
-       handleReport, capturing its IOReturn so the USB stack still sees Apple's real status.
-       The physical-button edge now comes from the session's click path (same report[1] bit0,
-       via mt2_decode) instead of the retired raw-byte detector. A session-dropped frame is
-       swallowed and reports success — deliberate: there is no assembled frame to chain, and
-       passing the raw MT2 bytes through would fail Apple's validateChecksum. */
-    gChainType = type; gChainOptions = options;
-    gChainRc = kIOReturnSuccess;
-    if (gActiveMT2Gesture && gUsbReader)
-        gActiveMT2Gesture->submitFrame(gUsbReader, &frame);
-    IOReturn rc = gChainRc;
-    return rc;
-}
-
-/* USB handleReport seam as a declarative row: 1-slot vtable clone at 0x8b8, no gate. */
-static const mt2_splice_row_t kUsbHandleReportRow = {
-    "usb-handlereport", MT2_SPLICE_VTABLE_CLONE, MT2_GATE_NONE, 0, 0,
-    USB_HANDLEREPORT_SLOT_INDEX, (void *)&mt2_usb_handle_report,
-    /*slot2*/0, /*shim2*/0, USB_VTABLE_SPAN
-};
-
 OSDefineMetaClassAndStructors(com_schmonz_MT2USBReader, IOService)
 
 bool com_schmonz_MT2USBReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
     fIntf = OSDynamicCast(IOUSBInterface, provider);
     if (!fIntf) { IOLog("MT2USBReader: provider not IOUSBInterface\n"); return false; }
-    fGenuine = 0; fPipe = 0; fBuf = 0; fMaxPacket = 0; fStopping = false;
+    fPipe = 0; fBuf = 0; fMaxPacket = 0; fStopping = false;
 
     /* Direct interrupt-pipe read loop: open the interface, find the interrupt-IN pipe, send the
      * MT2 multitouch-enable, allocate the read buffer, build a fabricated AMD, register with the
-     * session, arm the first async read.  Mirrors SP2 (89cad00, MT2BTReader). The genuine AMD
-     * path (startGenuine) is kept compiling; Task 2 deletes it. */
+     * session, arm the first async read.  Mirrors SP2 (89cad00, MT2BTReader). */
     if (!fIntf->open(this)) { IOLog("MT2USBReader: interface open failed\n"); return false; }
 
     IOUSBFindEndpointRequest req;
@@ -235,7 +117,7 @@ bool com_schmonz_MT2USBReader::start(IOService *provider) {
     }
 
     /* Settle: let the device leave mouse mode before the AMD probes it (panic hardening;
-     * same settle as the genuine path; see explanation.md "MT2USBReader bring-up"). */
+     * see explanation.md "MT2USBReader bring-up"). */
     IOSleep(MT2_USB_ENABLE_SETTLE_MS);
 
     fBuf = IOBufferMemoryDescriptor::withCapacity(fMaxPacket ? fMaxPacket : 64, kIODirectionIn);
@@ -287,219 +169,27 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
     }
 }
 
-/* Set a 32-bit integer property in an init dictionary (released after init copies it). */
-static void mt2_dict_num(OSDictionary *d, const char *key, uint32_t val) {
-    OSNumber *n = OSNumber::withNumber(val, 32);
-    if (n) { d->setObject(key, n); n->release(); }
-}
-
-/* Set a C-string property in an init dictionary (released after init copies it). */
-static void mt2_dict_str(OSDictionary *d, const char *key, const char *val) {
-    OSString *s = OSString::withCString(val);
-    if (s) { d->setObject(key, s); s->release(); }
-}
-
-/* Set a raw-bytes (OSData) property in an init dictionary (released after init copies it). */
-static void mt2_dict_data(OSDictionary *d, const char *key, const void *bytes, unsigned int len) {
-    OSData *o = OSData::withBytes(bytes, len);
-    if (o) { d->setObject(key, o); o->release(); }
-}
-
-/* Build the init dict that seeds the manually-started AppleUSBMultitouchDriver. Seed via the INIT
- * dict, NOT setProperty (the driver drops unknown setProperty keys; init forwards to super::init which
- * populates the table). Manual-start does no personality merge and the device NAKs Apple's feature
- * reports, so without these the instance lacks its user-client, geometry, and hidd-engagement props —
- * see explanation.md "MT2USBReader bring-up". Values from src/mt2_geometry.c + Apple's genuine USB
- * personality. Some seeds are GENUINE per-transport and must NOT be unified with bt_build_bnb_props:
- * parser-options (USB's own 0x27), geometry via the init dict (BT answers it dynamically), and the
- * flat top-level nesting (BT wraps in DefaultMultitouchProperties) — see mt2_stack.h + decisions.md
- * "genuine-reuse tax". Caller releases; returned as void* (the gh_config_t build_props signature). */
-static void *usb_build_init_props(void) {
-    OSDictionary *initp = OSDictionary::withCapacity(24);
-    if (!initp) return 0;
-    OSString *ucc = OSString::withCString("AppleUSBMultitouchUserClient");
-    if (ucc) { initp->setObject("IOUserClientClass", ucc); ucc->release(); }
-    /* GENUINE MT2 geometry (one source of truth in mt2_geometry.h). */
-    mt2_dict_num(initp, "Family ID", MT2_FAMILY_ID);   /* 129 */
-    mt2_dict_num(initp, "Sensor Rows", MT2_SENSOR_ROWS);     /* 22 */
-    mt2_dict_num(initp, "Sensor Columns", MT2_SENSOR_COLS);  /* 30 */
-    mt2_dict_num(initp, "Sensor Surface Width", MT2_SURFACE_WIDTH);    /* 15600 = 156mm */
-    mt2_dict_num(initp, "Sensor Surface Height", MT2_SURFACE_HEIGHT);  /* 11040 = 110.4mm */
-    mt2_dict_data(initp, "Sensor Region Descriptor", mt2_region_descriptor, sizeof(mt2_region_descriptor));
-    mt2_dict_data(initp, "Sensor Region Param", mt2_region_param, sizeof(mt2_region_param));
-    {   /* Surface Descriptor = Width/Height u32 LE + the genuine 8-byte tail */
-        unsigned char sdesc[16];
-        sdesc[0] = MT2_SURFACE_WIDTH & 0xff;        sdesc[1] = (MT2_SURFACE_WIDTH >> 8) & 0xff;
-        sdesc[2] = (MT2_SURFACE_WIDTH >> 16) & 0xff; sdesc[3] = (MT2_SURFACE_WIDTH >> 24) & 0xff;
-        sdesc[4] = MT2_SURFACE_HEIGHT & 0xff;       sdesc[5] = (MT2_SURFACE_HEIGHT >> 8) & 0xff;
-        sdesc[6] = (MT2_SURFACE_HEIGHT >> 16) & 0xff; sdesc[7] = (MT2_SURFACE_HEIGHT >> 24) & 0xff;
-        for (unsigned i = 0; i < 8; i++) sdesc[8 + i] = mt2_surface_desc_tail[i];
-        mt2_dict_data(initp, "Sensor Surface Descriptor", sdesc, sizeof(sdesc));
-    }
-    mt2_dict_num(initp, "parser-type", MT2_PARSER_TYPE);
-    mt2_dict_num(initp, "parser-options", MT2_PARSER_OPTIONS_USB);   /* genuine USB value; see mt2_stack.h */
-    initp->setObject("Driver is Ready", kOSBooleanTrue);
-    initp->setObject(MT2_PROP_MTHID_DEVICE, kOSBooleanTrue);
-    /* No "Product" seed: the genuine AMD's start copies the device's real USB iProduct descriptor
-     * ("Magic Trackpad") onto the node, overriding any seed (verified live). See explanation.md. */
-    initp->setObject(MT2_PROP_HID_SERVICE_SUPPORT, kOSBooleanTrue);
-    mt2_dict_str(initp, "HIDDefaultBehavior", "Trackpad");   /* NOT the personality's Mouse: MT2 streams no mouse reports */
-    initp->setObject(MT2_PROP_MOMENTUM_SCROLL, kOSBooleanTrue);
-    initp->setObject(MT2_PROP_FOUR_FINGER_GESTURES, kOSBooleanTrue);
-    initp->setObject(MT2_PROP_SECONDARY_CLICK_CORNERS, kOSBooleanTrue);
-    initp->setObject("TrackpadThreeFingerDrag", kOSBooleanTrue);   /* USB-only; Stage-2 reconcile candidate */
-    initp->setObject(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
-    const char *prefKeys[] = { "Clicking", "Dragging", "TrackpadRightClick",
-        "TrackpadSecondaryClickCorners", "TrackpadMomentumScroll", "TrackpadScroll",
-        "TrackpadThreeFingerDrag", "TrackpadFourFingerGestures" };
-    OSDictionary *prefs = OSDictionary::withCapacity(8);
-    if (prefs) {
-        for (unsigned i = 0; i < sizeof(prefKeys) / sizeof(prefKeys[0]); i++)
-            prefs->setObject(prefKeys[i], kOSBooleanTrue);
-        initp->setObject("MultitouchPreferences", prefs);
-        initp->setObject("TrackpadUserPreferences", prefs);
-        prefs->release();
-    }
-    OSDictionary *plugins = OSDictionary::withCapacity(1);
-    OSString *pluginPath = OSString::withCString(MT2_MTHID_PLUGIN_PATH);
-    if (plugins && pluginPath) {
-        plugins->setObject(MT2_MTHID_PLUGIN_GUID, pluginPath);
-        initp->setObject("IOCFPlugInTypes", plugins);
-    }
-    if (pluginPath) pluginPath->release();
-    if (plugins) plugins->release();
-    return initp;
-}
-
-/* genuine_host adapter: the seven generic ops are the shared gh_default_* (gh_default_adapter.h), with
- * usb_build_init_props supplied via cfg.build_props; USB supplies only interpose (the handleReport
- * vtable clone) + restore. These read only h->obj (+ file-static clone state), so they need no ctx. */
-/* Dirty trick (instance-scoped vtable clone): clone the genuine driver's vtable on OUR instance and
- * point the handleReport slot at mt2_usb_handle_report (THE SEAM). Instance-scoped, so only this
- * driver's vtable pointer changes; the shared class vtable is untouched. Saves the original for the shim. */
-static int usb_gh_interpose(gh_host_t *h) {
-    if (mt2_splice_install(&kUsbHandleReportRow, h->obj,
-                           &mt2_splice_kext_ops, &gUsbSpliceState) != MT2_SPLICE_OK) return -1;
-    gOrigUsbHandleReport = (usb_handle_report_fn)gUsbSpliceState.captured_orig;
-    return 0;
-}
-static void usb_gh_restore(gh_host_t *h) {
-    mt2_splice_restore(h->obj, &kUsbHandleReportRow, &mt2_splice_kext_ops, &gUsbSpliceState);
-    gOrigUsbHandleReport = 0;
-}
-static const gh_adapter_t kUsbAdapter = {
-    gh_default_alloc, gh_default_class_ok, gh_default_init_attach, usb_gh_interpose,
-    gh_default_start, usb_gh_restore, gh_default_detach, gh_default_terminate, gh_default_release
-};
-
-/* Genuine-USB path, as a sequence of named steps (named alike to MT2BTReader where the action matches):
- * reset per-stream diagnostics, send the MT2 multitouch-enable, settle, host + interpose the genuine
- * driver, join the shared engine. The enable→settle→start ORDER is load-bearing (panic hardening) —
- * preserve it. The genuine driver OWNS the interface + interrupt pipe; our reader must NOT open them. */
-bool com_schmonz_MT2USBReader::startGenuine(IOService *provider) {
-    (void)provider;
-
-    resetTransportState();          /* fresh per-stream diagnostics */
-    sendEnable();                   /* MT2 USB multitouch-enable (control transfer on fIntf) */
-    settle();                       /* device leaves mouse mode before the AMD probes it */
-    if (!manualStartGenuineAmd())   /* host the genuine AMD + interpose handleReport */
-        return false;
-
-    gGenuineSelf = fGenuine;   /* the USB sink's handleReport/handleButton target */
-
-    /* Join the shared engine: register our policy row + sink, reset per-stream session state
-       (replaces the old mt2_usb_bytes_reset/gLastUsbButton reset — one reset point now).
-       Frames cannot flow until the interpose above exists, so reset-before-first-frame holds.
-       A report landing in the microsecond window between interpose-live and this registration
-       is dropped-with-success (by the shim's gUsbReader guard, then by the engine's single-active
-       guard once gUsbReader is set) — acceptable: the device was enabled 50ms ago and idle, and
-       the old code's first consumer was this same instant. */
-    gUsbReader = this;
-    if (gActiveMT2Gesture)
-        gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING, &mt2_policy_default, &kUsbGenuineSink);
-    else
-        IOLog("MT2USBReader: ENGINE NOT PUBLISHED at bring-up — input will be dead until replug (registration race)\n");
-
-    IOLog("MT2USBReader: genuine AppleUSBMultitouchDriver started + handleReport interposed (slot %lu)\n",
-          (unsigned long)USB_HANDLEREPORT_SLOT_INDEX);
-    registerService();
-    return true;
-}
-
-/* Step: reset the per-stream diagnostics (lifecycle + button state now reset by the engine at
- * connectionEstablished). A real re-enumeration re-observes report ids and re-arms the
- * first-frame + gap markers; a screensaver does NOT re-enter here, so the gap heartbeat
- * correctly spans the idle window. */
-void com_schmonz_MT2USBReader::resetTransportState() {
-    mt2_diag_reset(MT2_DIAG_USB);
-}
-
-/* Step: send the MT2's USB multitouch-enable (SET_REPORT control transfer on fIntf). Sent BEFORE
- * starting the AMD — the enable is independent of the AMD and the ordering is load-bearing (panic
- * hardening) — see explanation.md "MT2USBReader bring-up". */
-void com_schmonz_MT2USBReader::sendEnable() {
-    IOUSBDevRequest en;
-    uint8_t payload[2] = {0x02, 0x01};
-    en.bmRequestType = 0x21; en.bRequest = 0x09;
-    en.wValue = 0x0302; en.wIndex = 1; en.wLength = sizeof(payload); en.pData = payload;
-    IOReturn enrc = fIntf->DeviceRequest(&en);
-    IOLog("MT2USBReader: multitouch-enable SET_REPORT rc=0x%08x (pre-start)\n", enrc);
-}
-
-/* Step: let the device's async mode switch finish after the enable, before the AMD probes it, or a
- * mouse-mode getReport storm can panic — see explanation.md "MT2USBReader bring-up". */
-void com_schmonz_MT2USBReader::settle() {
-    IOSleep(MT2_USB_ENABLE_SETTLE_MS);
-}
-
-/* Step: host a genuine AppleUSBMultitouchDriver on our interface via the shared genuine_host core
- * (manual-start + class-gate + handleReport vtable interpose + start; gh_start fully unwinds on
- * failure). Sets fGenuine on success. */
-bool com_schmonz_MT2USBReader::manualStartGenuineAmd() {
-    static const gh_config_t cfg = { "AppleUSBMultitouchDriver", "AppleUSBMultitouchDriver",
-                                     usb_build_init_props };
-    if (gh_start(&fHost, &cfg, &kUsbAdapter, this, fIntf) != 0) {
-        IOLog("MT2USBReader: genuine host start failed\n");
-        return false;
-    }
-    fGenuine = (IOService *)fHost.obj;
-    (void)mt2_coordinator_activate(MT2_XPORT_USB, 0);   /* no-op seam (MT2 single-transport) */
-    return true;
-}
-
 /* Relinquish our hold on the interface and deregister from the engine. Idempotent. MUST run
  * during willTerminate (device unplug / re-enumerate): IOKit defers stop() until the interface
  * is released, so a stop()-only teardown deadlocks and leaks the dead device subtree.
  *
- * Synthetic path (the live default): we opened fIntf ourselves, so close it; abort the pipe
- * so the async read callback returns kIOReturnAborted and stops re-arming. The fabricated AMD
- * teardown is deferred to stop() (mirrors SP2) so quiesceDelivery runs after connectionClosed.
- *
- * Genuine path (Task 2 deletes): fGenuine is set; close via gh_stop, do NOT close fIntf
- * (the genuine driver owns it — an unmatched close would unbalance the open count). */
+ * We opened fIntf ourselves, so close it here; abort the pipe so the async read callback
+ * returns kIOReturnAborted and stops re-arming. The fabricated AMD teardown is deferred to
+ * stop() (mirrors SP2) so quiesceDelivery runs after connectionClosed. */
 void com_schmonz_MT2USBReader::releaseInterface(void) {
     fStopping = true;
 
-    /* Abort the in-flight async read (synthetic path) so readComplete stops re-arming.
+    /* Abort the in-flight async read so readComplete stops re-arming.
      * Safe to call even if fPipe is already NULL (first guard). */
     if (fPipe) { fPipe->Abort(); fPipe = 0; }
 
-    /* Clear the genuine sink's chain target so no feed can reach a dying target. */
-    gGenuineSelf = 0;
-
     /* Deregister from the engine: after connectionClosed returns, no session effect can reach
-     * kUsbSink or kUsbGenuineSink. */
+     * kUsbSink. */
     if (gActiveMT2Gesture) gActiveMT2Gesture->connectionClosed(this);
     gUsbReader = 0;
 
-    if (fGenuine) {
-        /* Genuine-USB path teardown (Task 2 deletes): restore vtable + terminate genuine driver.
-         * We never opened fIntf in this path; only null it. */
-        gh_stop(&fHost, &kUsbAdapter);
-        fGenuine = 0;
-        fIntf = 0;
-    } else if (fIntf) {
-        /* Synthetic path: we opened fIntf, so close it here. */
+    if (fIntf) {
+        /* We opened fIntf, so close it here. */
         fIntf->close(this);
         fIntf = 0;
     }
@@ -513,8 +203,8 @@ bool com_schmonz_MT2USBReader::willTerminate(IOService *provider, IOOptionBits o
 void com_schmonz_MT2USBReader::stop(IOService *provider) {
     releaseInterface();                          /* no-op if willTerminate already did it */
 
-    /* Tear down the fabricated AMD (synthetic path). NULL gUsbAmdCtx first so an in-flight
-     * delivery sees no AMD before we quiesce, then free after the drain. Mirrors SP2 stop(). */
+    /* Tear down the fabricated AMD. NULL gUsbAmdCtx first so an in-flight delivery sees no AMD
+     * before we quiesce, then free after the drain. Mirrors SP2 stop(). */
     if (gUsbAmdCtx) {
         mt2_synth_amd_ctx *usbAmdToTear = gUsbAmdCtx;
         gUsbAmdCtx = 0;
