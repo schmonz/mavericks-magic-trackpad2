@@ -9,7 +9,11 @@
  * built under `nub` and adopted by hidd. Multiple instances coexist (each mux owns one). Opaque. */
 typedef struct mt2_synth_amd_ctx mt2_synth_amd_ctx;
 
-mt2_synth_amd_ctx     *mt2_synth_amd_build(IOService *nub);              /* NULL on failure */
+/* Which transport the fabricated AMD advertises — the pane / MultitouchSupport read the "Transport"
+ * property and show transport-matching chrome (e.g. battery is BT-only). USB must NOT claim Bluetooth. */
+typedef enum { MT2_SYNTH_XPORT_BT = 0, MT2_SYNTH_XPORT_USB = 1 } mt2_synth_transport_t;
+
+mt2_synth_amd_ctx     *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t transport);  /* NULL on failure */
 AppleMultitouchDevice *mt2_synth_amd_amd(mt2_synth_amd_ctx *ctx);       /* the started AMD, or NULL */
 void                   mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx);
 

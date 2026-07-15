@@ -51,7 +51,8 @@ bool com_schmonz_VoodooInput::start(IOService *provider) {
               fLogicalMaxX, fLogicalMaxY);
 
     fSynth = 0; fWL = 0; fIdle = 0; fLock = IOLockAlloc();
-    fSynth = mt2_synth_amd_build(this);   /* under the mux nub itself; fail-soft */
+    fSynth = mt2_synth_amd_build(this, MT2_SYNTH_XPORT_BT);   /* under the mux nub itself; fail-soft.
+        External satellites report no transport here; keep the prior Bluetooth default (own concern). */
     if (!fSynth) IOLog("VoodooInputMux: WARNING synthetic AMD build failed; no cursor\n");
     fWL = IOWorkLoop::workLoop();
     fIdle = fWL ? IOTimerEventSource::timerEventSource(this, &idleTick) : 0;

@@ -30,7 +30,7 @@ static void probe_run(int n) {
     if (n == 1) {
         if (gProbeCtx) { IOLog("mt2_amd_probe: already up\n"); return; }
         int before = probe_amd_count();
-        gProbeCtx = mt2_synth_amd_build(nub);
+        gProbeCtx = mt2_synth_amd_build(nub, MT2_SYNTH_XPORT_BT);   /* oracle: transport is arbitrary */
         IOLog("mt2_amd_probe: BUILD ctx=%p amd_count %d->%d\n", gProbeCtx, before, probe_amd_count());
     } else if (n == 0) {
         if (!gProbeCtx) { IOLog("mt2_amd_probe: nothing to tear down\n"); return; }
@@ -41,7 +41,7 @@ static void probe_run(int n) {
     } else { /* n >= 2: churn, with adoption settle each cycle */
         int base = probe_amd_count();
         for (int i = 0; i < n; i++) {
-            mt2_synth_amd_ctx *c = mt2_synth_amd_build(nub);
+            mt2_synth_amd_ctx *c = mt2_synth_amd_build(nub, MT2_SYNTH_XPORT_BT);
             IOSleep(300);   /* let hidd/AppleMultitouchDriver adopt -> frames-client forms */
             mt2_synth_amd_teardown(nub, c);
             IOSleep(100);

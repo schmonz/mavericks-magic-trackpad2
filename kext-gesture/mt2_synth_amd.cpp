@@ -93,7 +93,11 @@ static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
 
 /* ---- MT2HIDShell property dict (BT Magic Trackpad identity; mirrors old makeHidProps) ------- */
 
-static OSDictionary *makeHidProps(void) {
+static const char *xport_str(mt2_synth_transport_t xport) {
+    return (xport == MT2_SYNTH_XPORT_USB) ? "USB" : "Bluetooth";
+}
+
+static OSDictionary *makeHidProps(mt2_synth_transport_t xport) {
     OSDictionary *p = OSDictionary::withCapacity(8);
     if (!p) return 0;
     struct { const char *k; unsigned v; } nums[] = {
@@ -104,7 +108,7 @@ static OSDictionary *makeHidProps(void) {
         OSNumber *n = OSNumber::withNumber(nums[i].v, 32);
         if (n) { p->setObject(nums[i].k, n); n->release(); }
     }
-    OSString *t = OSString::withCString("Bluetooth");
+    OSString *t = OSString::withCString(xport_str(xport));
     if (t) { p->setObject("Transport", t); t->release(); }
     OSString *pr = OSString::withCString("Magic Trackpad");
     if (pr) { p->setObject("Product", pr); pr->release(); }
@@ -115,7 +119,7 @@ static OSDictionary *makeHidProps(void) {
 
 /* ---- public API ------------------------------------------------------------------------------ */
 
-mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub) {
+mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t transport) {
     /* 0. Allocate the per-build context. */
     mt2_synth_amd_ctx *ctx = IONew(mt2_synth_amd_ctx, 1);
     if (!ctx) {
@@ -136,7 +140,7 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub) {
     ctx->shell = 0;
     {
         com_schmonz_MT2HIDShell *hid = new com_schmonz_MT2HIDShell;
-        OSDictionary *hp = makeHidProps();
+        OSDictionary *hp = makeHidProps(transport);
         if (hid && hp && hid->init(hp)) {
             if (hid->attach(nub) && hid->start(nub)) {
                 ctx->shell = hid;
@@ -230,6 +234,9 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub) {
     /* MultitouchSupport::MTDeviceIsBuiltIn reads "MT Built-In"; "Driver is Ready" is
      * cached by mt_CachePropertiesForDevice. Set before start() so they are present
      * when the device registers. */
+    /* Transport-match the pane/MultitouchSupport chrome: USB must not claim Bluetooth (battery is
+     * BT-only; the BT device list is BT-only). Set on the AMD too, not just the HID shell. */
+    dev->setProperty("Transport", xport_str(transport));
     dev->setProperty("MT Built-In", kOSBooleanTrue);
     dev->setProperty("Driver is Ready", kOSBooleanTrue);
 

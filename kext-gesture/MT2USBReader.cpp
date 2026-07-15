@@ -110,7 +110,7 @@ bool com_schmonz_MT2USBReader::start(IOService *provider) {
     if (!fBuf) { IOLog("MT2USBReader: buffer alloc failed\n"); fIntf->close(this); return false; }
 
     gUsbReader = this;
-    gUsbAmdCtx = mt2_synth_amd_build(gActiveMT2Gesture);
+    gUsbAmdCtx = mt2_synth_amd_build(gActiveMT2Gesture, MT2_SYNTH_XPORT_USB);
     if (!gUsbAmdCtx) IOLog("MT2USBReader: fabricated AMD build FAILED - no cursor\n");
 
     if (gActiveMT2Gesture)

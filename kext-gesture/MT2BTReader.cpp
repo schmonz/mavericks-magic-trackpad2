@@ -198,7 +198,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
         /* Build the SP1-hardened fabricated AMD: we own the interrupt channel's
          * delegate directly (listenAt below); no BNB is started, no interpose needed. */
-        gBtAmdCtx = mt2_synth_amd_build(gActiveMT2Gesture);
+        gBtAmdCtx = mt2_synth_amd_build(gActiveMT2Gesture, MT2_SYNTH_XPORT_BT);
         if (!gBtAmdCtx) IOLog("MT2BTReader: fabricated AMD build FAILED - no cursor\n");
         /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> submitFrame.
          * listenAt is safe here because no BNB races us for this channel (no manual-start). */
