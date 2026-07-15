@@ -25,6 +25,7 @@
 #include <IOKit/IOWorkLoop.h>
 #include "MT2Gesture.h"
 #include "mt2_log.h"           /* gMT2LogLevel, MT2_DLOG, sysctl register/unregister */
+#include "mt2_amd_probe.h"    /* debug.mt2_amd_probe oracle (build/teardown/churn + live-AMD count) */
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
 
@@ -127,6 +128,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
         return false;
     }
     mt2_log_register();         /* debug.mt2_log sysctl (single-instance nub owns its lifetime) */
+    mt2_amd_probe_register();  /* debug.mt2_amd_probe oracle */
 
     /* DEBUG/TEST seam: advertise a user client so userspace tools can inject encoded
      * 0x28 frames (selector 0 -> feedFrame -> handleTouchFrame) for hands-free on-device
@@ -194,6 +196,7 @@ void com_schmonz_MT2Gesture::stop(IOService *provider) {
     /* Timer is fully removed above (no more idleTimeout), so the lock has no more
      * users and is safe to free. */
     if (fSessionLock) { IOLockFree(fSessionLock); fSessionLock = 0; }
+    mt2_amd_probe_unregister(); /* remove debug.mt2_amd_probe before the kext can unload */
     mt2_log_unregister();   /* remove debug.mt2_log before the kext can unload */
     IOService::stop(provider);
 }
