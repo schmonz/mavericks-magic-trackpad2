@@ -1,0 +1,30 @@
+#!/bin/sh
+# mt2_amd_oracle — assert the fabricated AppleMultitouchDevice count returns to baseline after teardown.
+# Drives debug.mt2_amd_probe (needs the SP1 kext loaded). Exit 0 = clean, 1 = orphan/leak detected.
+#
+# The single assertion here (count returns to baseline) is what would have caught the two orphaned
+# AppleMultitouchDevice instances before the 2026-07-15 shutdown-teardown panic. See
+# docs/mt-stack/decisions.md "ROOT CAUSE — genuine-path orphaned-AMD kernel panic".
+set -e
+
+amd_count() { ioreg -rc AppleMultitouchDevice 2>/dev/null | grep -c '+-o'; }
+
+base=$(amd_count)
+echo "baseline AppleMultitouchDevice count = $base"
+
+sudo sysctl -w debug.mt2_amd_probe=1 >/dev/null; sleep 1
+up=$(amd_count); echo "after build      = $up"
+[ "$up" -gt "$base" ] || { echo "FAIL: build did not publish an AMD"; exit 1; }
+
+sudo sysctl -w debug.mt2_amd_probe=0 >/dev/null; sleep 1
+back=$(amd_count); echo "after teardown   = $back"
+[ "$back" -eq "$base" ] || { echo "FAIL: teardown left an ORPHAN ($back != baseline $base)"; exit 1; }
+echo "PASS: single cycle returns to baseline"
+
+echo "churn x10 ..."
+sudo sysctl -w debug.mt2_amd_probe=10 >/dev/null; sleep 6
+fin=$(amd_count); echo "after churn      = $fin"
+[ "$fin" -eq "$base" ] || { echo "FAIL: churn left orphans ($fin != baseline $base)"; exit 1; }
+echo "PASS: 10-cycle churn returns to baseline"
+
+echo "ORACLE PASS: fabricated AMD returns to baseline (single + churn)"
