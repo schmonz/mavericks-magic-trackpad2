@@ -154,17 +154,15 @@ static void mt2_publish_battery(IOService *node, uint8_t pct) {
     MT2_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
 }
 
-/* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), log it.
- * Publishing is deferred to Task 3 (re-homes to the fabricated AMD node). The pure parse is
- * host-tested (tests/test_battery.c). No-op when the packet isn't 0x90. */
+/* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), publish the capacity as
+ * "BatteryPercent" on the FABRICATED AMD node (the BNB node is gone). mt2_synth_amd_amd() returns NULL
+ * until the AMD is built + ready and again once teardown starts, so this self-fences. The pure parse is
+ * host-tested (tests/test_battery.c). No-op when the packet isn't 0x90 or no AMD is up. */
 static void mt2_maybe_publish_battery(const void *data, size_t len) {
-    /* Task 3 wires this to publish on the fabricated AMD node; for now just parse (so the
-     * poll fires and the decode path is exercised) but skip publishing. */
     uint8_t pct;
-    if (mt2_parse_battery_report((const uint8_t *)data, len, &pct)) {
-        MT2_DLOG(1, "battery = %u%% (publish deferred to Task 3)", (unsigned)pct);
-        (void)mt2_publish_battery;   /* suppress unused-function warning until Task 3 calls it */
-    }
+    if (!mt2_parse_battery_report((const uint8_t *)data, len, &pct)) return;
+    AppleMultitouchDevice *amd = mt2_synth_amd_amd(gBtAmdCtx);
+    if (amd) mt2_publish_battery((IOService *)amd, pct);
 }
 
 /* CONTROL-channel (PSM 17) delegate shim. Unlike the interrupt shim (which consumes touch frames),
