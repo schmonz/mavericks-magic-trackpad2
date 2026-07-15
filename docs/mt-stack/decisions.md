@@ -527,6 +527,56 @@ tap · scroll · right-click · 3/4-finger · **prefpane recognition** · **batt
 divergence table that decides retire-genuine-or-keep-the-split. Spec/plan under `docs/superpowers/`
 (transient). Do the A/B, THEN update this section with the result.
 
+### ROOT CAUSE — genuine-path orphaned-AMD kernel panic (2026-07-15), and why it forces full-synthetic
+**Panic:** `Kernel_2026-07-15-082259.panic` — NX fault at shutdown in `AppleMultitouchDevice::removeFramesClient`
+(named from AppleMultitouchDriver disasm: slot 0x688=`getWorkLoop`, 0x938=`_removeFramesClient`, faulting
+`callq *0x1a0(%r10)` = a workloop dispatch), process `hidd`, RIP = a stale pointer landing in our reloaded
+kext's `__DATA`. So Apple's stack ran teardown on an **`AppleMultitouchDevice` whose memory was already
+freed/corrupted** — `getWorkLoop()` returned garbage. Live evidence: **`AppleMultitouchDevice`=2 with
+`BNBTrackpadDevice`=0** — two GENUINE AMDs orphaned with no transport. No synthetic objects existed this
+session (`MT2HIDShell`=0, `VoodooInput`=0, zero `mt2_synth_amd` log lines); the session-2 synth commits are
+no-ops in genuine mode. So this is the GENUINE path, not synthetic, not the A/B code.
+
+**Failure model (the mechanism):** the genuine BT path manual-starts Apple's `BNBTrackpadDevice`
+(`gh_start` → alloc/init/attach/**start outside IOKit's matching flow**, `MT2BTReader::manualStartGenuineBnb`).
+Apple's `AppleMultitouchDriver` matches the BNB and spawns an `AppleMultitouchDevice` as its **client**.
+Manual-starting outside matching leaves the BNB with an **unbalanced busy count** (already documented at
+`MT2BTReader.cpp` stop(): *"the BNB never balances its start-time busy so a wait can never succeed"*). On
+disconnect the L2CAP channel (the reader's provider) terminates → reader `stop()` → `gh_stop` → BNB
+`terminate()`+`release()` with **NO waitQuiet** — but `terminate()` **can never finalize** because busy≠0, so
+the BNB's stop/detach/free stalls, and **its client AMD's termination stalls with it → the AMD orphans**
+(half-torn-down, still retained by Apple). Each connect/disconnect cycle repeats → orphans **accumulate**
+(2 after this session's wedged-BT connect churn). At shutdown Apple runs `removeFramesClient` on an orphan →
+`getWorkLoop()` on freed memory → NX fault. **Fatal amplifier:** the hot `make reload` swapped a very
+different binary (deployed Jul-9 kext → Jul-15 build, +24KB `__TEXT`) into the same address range, so the
+stale pointer hit non-exec data. Same-binary reloads (normal dev) mask it — which is why we'd "never seen
+this": it needs orphaned AMDs AND a big-binary-delta reload, both novel this session.
+
+**Why this forces full-synthetic (single ownership):** the defect is **split ownership** — Apple spawns the
+AMD off a BNB we manual-started but can't cleanly terminate. It is INHERENT to reuse-Apple-BNB, and it does
+not generalize (unknown devices have no BNB). Full-synthetic allocs OUR OWN `AppleMultitouchDevice` under OUR
+nub (no manual-started BNB, no unbalanced-busy provider) so WE own start/stop/terminate → a clean teardown is
+achievable. Caveat: synthetic still creates a real `AppleMultitouchDevice`, so its teardown must ALSO
+finalize cleanly (deregister frames-client/workloop before free) — that is SP1's teardown-hardening. See
+`docs/superpowers/specs/` (MT2→full-synthetic program: SP1 map+oracle+harden, SP2 BT own-the-wire, SP3 USB,
+SP4 retire genuine).
+
+### SP1 busy question resolved OFF-DEVICE by RE (2026-07-15) — fabricated AMD is terminatable
+The open question for the hardened synthetic teardown (does `terminate()` finalize on our manually-started
+fabricated `AppleMultitouchDevice`, or stall on unbalanced busy like the genuine BNB?) is answered by
+disassembling `AppleMultitouchDevice` in the `AppleMultitouchDriver` binary: **`::start` is a plain
+`IOService` doing SYNCHRONOUS setup** (IORecursiveLock allocs, OSArray/OSDictionary, `addMatchingNotification`
+to observe event drivers) — **no `adjustBusy`, no `registerService`, no `IOCreateThread`/`thread_call`, no
+async HID handshake.** `::willTerminate` and `::stop` only `IOLog` (no `waitQuiet`/blocking). Contrast the
+BNB: its imbalance came from `IOHIDDevice`'s ASYNC bring-up holding busy until a callback we never get in
+manual context. **Conclusion: the fabricated AMD does NOT inherit the un-terminatable-busy defect;
+`terminate(kIOServiceSynchronous)` (SP1's hardened teardown) will finalize.** The RE also confirms the
+VoodooInput divergence (terminate, not direct `stop()`): the AMD holds its OWN matching-notification/frames-
+client/workloop state, so its `free()` (reached only via the terminate handshake) is what releases them —
+the old direct `stop()` bypassed that. Residual (why on-device T6 still confirms, now expected-PASS): static
+RE can't fully model the live client graph under real hidd adoption. This de-risks deferring T4/T6 while the
+user is away.
+
 ### Post HID input reports (let Apple own the AMD) — NOT viable on 10.9 (spike 2026-07-13)
 Re-tested the "most-Apple-reuse" synthetic model prompted by a MacRumors thread question: publish an
 `IOHIDDevice` presenting the MT1 descriptor and POST `0x28` multitouch input reports, letting Apple's
