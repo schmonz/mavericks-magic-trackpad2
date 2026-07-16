@@ -38,7 +38,7 @@ macOS-current.
 | Terminal | Mechanism | Reuses Apple's… | Where you pay | Status |
 |---|---|---|---|---|
 | **① Fabricate-AMD** (current) | our nub allocs its **own** `AppleMultitouchDevice`, feed it `handleTouchFrame` (0x28) | recognizer + hidd, **from the AMD down** | identity above the AMD is lost → per-consumer osax swizzles (pane view, icon, battery, the **bezel HUD in a process the osax can't reach**) | **SHIPPED.** Input works; pane/identity is whack-a-mole |
-| **② Subclass-the-class** | our reader `: public AppleUSBMultitouchDriver` / `BNBTrackpadDevice`; inherit **identity**, override **behavior** with our synthetic pipeline | class *identity* (all consumers match via metaCast); not Apple's driver *code* | **per-version RE**: reconstruct the undocumented class vtable + enumerate the **consumed method surface** so no call falls through to un-started `super` (= panic). USB tractable (already matches `IOUSBInterface`); BT hard (`BNBTrackpadDevice` born inside Apple's BT HID stack) | **Untried.** Gates confirmed viable 2026-07-15: `_IOServiceMatching` matches subclasses; `gMetaClass`/`superClass` exported on both classes |
+| **② Subclass-the-class** | our reader `: public AppleUSBMultitouchDriver` / `BNBTrackpadDevice`; inherit **identity**, override **behavior** with our synthetic pipeline | class *identity* (all consumers match via metaCast); not Apple's driver *code* | **per-version RE**: reconstruct the undocumented class vtable + enumerate the **consumed method surface** so no call falls through to un-started `super` (= panic). USB tractable (already matches `IOUSBInterface`); BT hard (`BNBTrackpadDevice` born inside Apple's BT HID stack) | **CLOSED — kernel panic on load (2026-07-16).** All RE validated (size 1672; true lineage `AppleUSBMultitouchDriver : IOUSBHIDDriver : IOHIDDevice`; `kxld -n` reported "loadable") — but `registerService()` on a bare `IOHIDDevice`-lineage node null-derefs in `IOHIDDevice::_publishDeviceNotificationHandler`. Identity is inseparable from *starting* the device. Full closure entry below. |
 | **③ Device-emulate transport-native** (VoodooInput-faithful) | publish a *started* virtual device with a **natively-supported** identity — **MT1 over BT**, **onboard/built-in trackpad over USB** — let Apple's driver **own** the AMD; our reader drives the real MT2 into it | Apple's **driver + AMD + recognizer + pane**, the most of all; also **decouples Apple's driver from the real-hardware churn** → dodges the getReport panic that motivated the USB pivot | reproducing the device + **enable handshake** + passing **built-in gating** (USB multitouch is built-in-only gated; BT external is not — which is exactly why the transport split is MT1-BT / onboard-USB) | **Partially tried, NOT closed.** Genuine-BT (Apple owns AMD) **shipped and worked**; the pure-vhid USB spike got **adoption but no dispatch** with the failure **un-isolated** |
 
 ### Evidence already on record (don't re-tread)
@@ -78,11 +78,62 @@ understood if we keep any osax-driven detection — the staged `service_present`
 
 ---
 
+### ② "subclass-the-class" for USB — NOT FUNCTIONING (kernel panic, on-device 2026-07-16); DECISION: USB=genuine, BT=synthetic
+
+**What we tried.** A binary subclass of the private `AppleUSBMultitouchDriver` to hold its class identity
+(so the pane's `loadMainView` matches it) while running **none** of Apple's driver code — "wear the class,
+override the behavior." Minimal proof: `com_schmonz_AumdShimTest : AppleUSBMultitouchDriver`, matched on
+`IOResources`, `start()` = a size/identity safety gate then `registerService()`. Artifacts (now removed;
+git history + this entry are the trail): `kext-gesture/apple_usb_mt_shim.h`, `examples/AumdShimTest/`.
+
+**How far it got — all the RE was correct.** The reconstruction fully validated OFF-device:
+- instance size `0x688` (1672) — compile-time `static_assert` passed against Apple's metaclass-ctor literal;
+- **true lineage RE'd via `kxld` + vtable relocations: `AppleUSBMultitouchDriver : IOUSBHIDDriver : IOHIDDevice
+  : IOService`** — NOT `IOHIDEventService` (that's the sibling `AppleUSBMultitouchHIDEventDriver`, the
+  `IOHIDInterface` personality). The whole base chain has on-box headers, so the vtable is correct **by
+  construction** (`#include <IOKit/usb/IOUSBHIDDriver.h>`, needs `-DKERNEL=1`);
+- `kxld -n` dry-run: **"appears to be loadable"** — vtable, size, and `OSBundleLibraries` (via `kextlibs`:
+  `AppleUSBMultitouch` + `IOHIDFamily` + `IOUSBHIDDriver`) all resolved against the running kernel.
+- **`kxld -n` is a genuine off-device oracle** for vtable/link correctness — reusable technique; it caught
+  every structural error (wrong size → "malformed"; wrong base → "super vtable out of date") before any load.
+
+**How it failed.** `kextload` → **instant kernel panic** (lost SSH/VNC). Null-pointer page fault at IOHIDFamily
+offset `0x3c02` = **`IOHIDDevice::_publishDeviceNotificationHandler`**, triggered by our `start()`'s
+`registerService()`. Machine recovered on reboot (the kext was in `/tmp`, never installed to `/S/L/E`). The
+`start()` safety gate *passed* (the RE was right) — the fault is **inside** `registerService`'s IOHIDDevice
+publish machinery, downstream of anything our gate can guard.
+
+**Why — the load-bearing conclusion.** `AppleUSBMultitouchDriver` **is an `IOHIDDevice`**. Registering an
+`IOHIDDevice` fires `_publishDeviceNotificationHandler`, which dereferences state that only `IOHIDDevice::start`
+initializes. So **a registered `IOHIDDevice` must be a properly *started* one** — `registerService()` on a
+bare/un-started node is a guaranteed panic. This is EXACTLY the pre-existing "Own / bare `IOHIDDevice`" entry
+below (and the "② hazard is real" note in the terminal-design-space section above) — both predicted it; the
+load should not have happened without heeding them. Therefore **"identity-only, run none of Apple's code" is
+impossible for any `IOHIDDevice`-lineage class.** To hold the `AppleUSBMultitouchDriver` identity you must
+`start` it (Apple's HID machinery), i.e. **② collapses into genuine for USB.** (Same lineage on BT:
+`BNBTrackpadDevice : IOHIDDevice` — which is exactly why genuine-BNB worked by *manually starting a real
+started IOHIDDevice*, per the entry below.) This also retires my earlier mis-claim that USB was the "clean
+synchronous `IOHIDEventService`" case — both transports are the hard `IOHIDDevice` lineage.
+
+**DECISION (2026-07-16, user):** **USB = genuine** (Apple's real `AppleUSBMultitouchDriver` started on the MT2
++ interpose/translate — recover the retired genuine-USB path, as synthetic-BT was recovered); **BT = synthetic**
+(current fabricated-AMD + direct L2CAP listener — works, clean teardown). A per-transport terminal split.
+- **Roads eliminated for USB:** ② subclass (this panic); ③ device-emulate (futile — the AMD is spawned only by
+  the `IOUSBInterface` transport driver, not the HID path; see the terminal-design-space section).
+- **Generalization preserved (the mission constraint holds):** both are *publish-backends* behind one shared
+  device-read/conditioning seam — a future device plugs into the read seam regardless of transport. Genuine-USB
+  is a *generic* backend ("make Apple's driver bind+drive it, translate its reports"), not a per-device special
+  case. The implementation-layer inconsistency (genuine USB / synthetic BT) mirrors Apple's own 10.9 stack
+  asymmetry (USB `IOUSBHIDDriver`/`IOHIDDevice` monolith vs BT `BNBTrackpadDevice`/L2CAP clean seams); the
+  consistency that matters is at the interface layer. Re-accepts the genuine-USB tax (the getReport churn
+  panic — already HARDENED `22bbf1a`; ledger in [[genuine-vs-owned-device-reeval]] / the REPLACE entry).
+
 ### Own / bare `IOHIDDevice` for the prefpane — *not functioning*
 To light the prefpane we tried publishing our own `IOHIDDevice` of the matched class. Publishing an
 **un-started** `IOHIDDevice` null-derefs in `_publishDeviceNotificationHandler` → kernel panic. You
 can't `registerService()` a bare nub of that class. (Led to: manually start a *genuine*
-`BNBTrackpadDevice` instead, which is a real started IOHIDDevice.)
+`BNBTrackpadDevice` instead, which is a real started IOHIDDevice.) **CONFIRMED again on-device 2026-07-16**
+by the ② subclass attempt above — same fault, same handler.
 
 ### REPLACE — drop genuine BNB, own the device outright — *not desirable*
 A clean reimplementation that owns the BT channels + input was viable, but the user pinned **stock

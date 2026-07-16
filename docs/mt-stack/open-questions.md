@@ -750,7 +750,13 @@ USB. There is NO off-device one-liner; the diagnostic must run first. (Memory: `
 
 ---
 
-## Prefpane shows "No Trackpad Connected" on synthetic USB — ROOT CAUSE CONFIRMED (2026-07-15)
+## Prefpane shows "No Trackpad Connected" on synthetic USB — ROOT CAUSE CONFIRMED (2026-07-15); RESOLVED BY DECISION (2026-07-16)
+
+> **RESOLVED 2026-07-16 → `decisions.md` "② subclass … USB=genuine, BT=synthetic".** The two candidate fixes
+> both fell: ② subclass **panics** (bare `IOHIDDevice`-lineage `registerService`), ③ device-emulate is futile
+> (AMD spawns only from the `IOUSBInterface` transport driver). Decision: **USB goes genuine** — Apple's real
+> `AppleUSBMultitouchDriver` starts on the MT2, which lights the pane **natively** (no swizzle, no synthetic
+> node). This entry is kept for the root-cause RE; the fix is the genuine-USB recovery, not anything here.
 
 **Symptom (verified live, screenshot):** with synthetic-USB connected and gestures working, the Trackpad
 prefpane renders the **NoTrackpad** view ("No Trackpad Connected", Continue/Go Back). Anticipated when the
@@ -792,7 +798,13 @@ the detection puzzle.
 
 ---
 
-## In-pane presence poll returns usb=0 for the synthetic reader — UNEXPLAINED (2026-07-15)
+## In-pane presence poll returns usb=0 for the synthetic reader — UNEXPLAINED (2026-07-15); MOOT under genuine-USB (2026-07-16)
+
+> **MOOT 2026-07-16.** This anomaly only mattered because the osax was driving the pane's present/absent for a
+> *synthetic* USB node. Per the USB=genuine decision (`decisions.md`), a real `AppleUSBMultitouchDriver` is
+> published, so the pane detects USB **natively** and the osax poll is no longer the view's presence signal.
+> Left recorded (not chased) — revisit only if the osax still needs an in-`SysPref` USB poll for some other
+> reason (e.g. battery/transport UI), where the same discrepancy could resurface.
 
 The osax's `presence_observer_reconcile` (polls `service_present("com_schmonz_MT2USBReader")` =
 `IOServiceMatching`+`IOServiceGetMatchingService`) reports **usb=0 inside System Preferences** (no
