@@ -10,6 +10,74 @@ For *open* unknowns (vs these resolved ones) see `open-questions.md`.
 
 ---
 
+## Terminal design space — the three ways to present to 10.9 (framing + open experiment, 2026-07-15)
+
+The stack has three OS-agnostic layers we've paid for once — the **VoodooInput inbound interface** (satellites
+send `VoodooInputEvent`s), the **conditioning pipeline** (MT2 decode → MT1 `0x28` contact format,
+`mt1_encode`), and the **terminal**: the node that *presents to the OS* so the pane/gestures/identity
+consumers see a trackpad. The terminal is the only **per-OS-version** layer. Adding 10.8/10.7/10.6 = swap the
+terminal, not re-architect. This section frames the three terminal mechanisms and the one experiment that
+would pick between them; the individual "roads not taken" below are the evidence.
+
+**The VoodooInput analogy, stated precisely.** VoodooInput and us share the *goal* ("make the native stack
+see a supported trackpad") but conform at **different layers**. VoodooInput's `VoodooInputSimulatorDevice`
+**fabricates a fake MT2 device** and lets IOKit *matching* bind Apple's own driver to it — device-layer
+conformance, reusing Apple's driver+AMD+pane wholesale. It has **zero code to drive a real Magic Trackpad**
+(that front-half is uniquely ours; see "Run VoodooInput on 10.9" below). Two 10.9 facts force us off their
+exact mechanism: (a) our device (MT2) is *unsupported* on 10.9 — there's no native MT2 driver to bind an
+emulated MT2; (b) the nearest *bindable* 10.9 driver path is panic-prone (getReport churn). So we conform at a
+*lower, more brittle* layer than VoodooInput does.
+
+**Why we're unusually willing to subclass/depend-on a private API here:** these OSes are **frozen**. Any
+per-version RE (vtable order, consumed method surface, enable handshake) is a **one-time cost that never
+rots**. That converts "brittle" into "pay once per version, permanently" — a bargain that would be reckless on
+macOS-current.
+
+### The three terminals
+
+| Terminal | Mechanism | Reuses Apple's… | Where you pay | Status |
+|---|---|---|---|---|
+| **① Fabricate-AMD** (current) | our nub allocs its **own** `AppleMultitouchDevice`, feed it `handleTouchFrame` (0x28) | recognizer + hidd, **from the AMD down** | identity above the AMD is lost → per-consumer osax swizzles (pane view, icon, battery, the **bezel HUD in a process the osax can't reach**) | **SHIPPED.** Input works; pane/identity is whack-a-mole |
+| **② Subclass-the-class** | our reader `: public AppleUSBMultitouchDriver` / `BNBTrackpadDevice`; inherit **identity**, override **behavior** with our synthetic pipeline | class *identity* (all consumers match via metaCast); not Apple's driver *code* | **per-version RE**: reconstruct the undocumented class vtable + enumerate the **consumed method surface** so no call falls through to un-started `super` (= panic). USB tractable (already matches `IOUSBInterface`); BT hard (`BNBTrackpadDevice` born inside Apple's BT HID stack) | **Untried.** Gates confirmed viable 2026-07-15: `_IOServiceMatching` matches subclasses; `gMetaClass`/`superClass` exported on both classes |
+| **③ Device-emulate transport-native** (VoodooInput-faithful) | publish a *started* virtual device with a **natively-supported** identity — **MT1 over BT**, **onboard/built-in trackpad over USB** — let Apple's driver **own** the AMD; our reader drives the real MT2 into it | Apple's **driver + AMD + recognizer + pane**, the most of all; also **decouples Apple's driver from the real-hardware churn** → dodges the getReport panic that motivated the USB pivot | reproducing the device + **enable handshake** + passing **built-in gating** (USB multitouch is built-in-only gated; BT external is not — which is exactly why the transport split is MT1-BT / onboard-USB) | **Partially tried, NOT closed.** Genuine-BT (Apple owns AMD) **shipped and worked**; the pure-vhid USB spike got **adoption but no dispatch** with the failure **un-isolated** |
+
+### Evidence already on record (don't re-tread)
+
+- **③ on BT worked and shipped:** genuine `BNBTrackpadDevice` let Apple spawn+own the AMD; retired by the
+  full-synthetic pivot (SP2) for single-ownership/clean-teardown/generalization — *not* because it failed
+  (see "REPLACE" below, `explanation.md` transport table).
+- **③ on USB, the decisive spike (2026-07-13):** kextless `IOHIDUserDevice` (`src/vhid_mt1.c`) presenting the
+  MT1 descriptor + posting `0x28` → `AppleMultitouchHIDEventDriver` **adopted** it and made an `IOHIDPointing`
+  shell, but **no `AppleMultitouchDevice` was spawned and the cursor didn't move.** Concluded "not a drop-in
+  win" — **but the residual was explicitly NOT isolated:** the bare vhid used a *generic* MT1 identity and
+  **lacked the enable handshake + built-in context** the real device has. See "Post HID input reports" below.
+- **② hazard is real:** publishing a **bare un-started** `IOHIDDevice` of the matched class panics
+  (`_publishDeviceNotificationHandler` null-deref) — this is the completeness obligation ②/③ both carry
+  (a started device / full override avoids it; genuine-BNB worked because it's a *real started* IOHIDDevice).
+- The clean "publish-a-nub-let-IOKit-match" question is **already logged open** (see "Run VoodooInput on 10.9"),
+  with three named teeth: catalogue residue, built-in gating, the un-started-IOHIDDevice panic.
+
+### The one experiment that discriminates ② vs ③ (and would retire the fabricate-AMD whack-a-mole)
+
+**On USB, close the 2026-07-13 residual:** publish a **started** IOHIDDevice with the **onboard/built-in**
+identity (`MT Built-In=true` + the onboard interface match keys), drive the **full MT1 enable handshake**,
+feed `0x28`, and observe whether Apple now **spawns the AMD and dispatches** (the step the bare vhid skipped).
+- **If it dispatches:** ③ is the cleanest terminal (pane + all identity consumers native, driver decoupled
+  from hardware churn); ② becomes unnecessary; the fabricate-AMD swizzles retire.
+- **If it still won't dispatch:** we've finally isolated *recognizer-needs-a-real-AMD* vs *didn't-pass-the-
+  built-in-enable-gate*, and ② (subclass) or ① (keep fabricating) stand — decided on evidence, not guess.
+
+**Paired USB ② prototype (run only if ③ doesn't dispatch):** flip `MT2USBReader`'s base
+`IOService`→`AppleUSBMultitouchDriver`, override `start()` to run our synthetic pipeline (no `super::start`),
+RE+override the consumed surface, load, and measure: does the pane light **natively**, do icon/bezel/battery
+consumers resolve natively, and **how large was the override surface** (that number sizes the per-version BT
+cost). Both experiments are USB-first by design (BT is the expensive transport for both ② and ③) — validate
+the generalizable claim on the cheap transport before buying the multi-version roadmap. **Prerequisite for
+either:** the in-pane `usb=0` detection anomaly (`open-questions.md`) is moot for ③ (native match) but must be
+understood if we keep any osax-driven detection — the staged `service_present` DIAG log resolves it on one load.
+
+---
+
 ### Own / bare `IOHIDDevice` for the prefpane — *not functioning*
 To light the prefpane we tried publishing our own `IOHIDDevice` of the matched class. Publishing an
 **un-started** `IOHIDDevice` null-derefs in `_publishDeviceNotificationHandler` → kernel panic. You

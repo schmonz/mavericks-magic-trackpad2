@@ -747,3 +747,96 @@ Apple's). **REAL DIAGNOSTIC (on-device, BOTH transports):** `ioreg -l -w0 | grep
 TrackpadThreeFingerDrag` — which node carries it top-level on BT (the one the pane finds), and does the USB
 node actually carry our seed at top level? THEN the fix = put the property on the matchable node/level on
 USB. There is NO off-device one-liner; the diagnostic must run first. (Memory: `mt2-three-finger-drag-usb-parity`.)
+
+---
+
+## Prefpane shows "No Trackpad Connected" on synthetic USB — ROOT CAUSE CONFIRMED (2026-07-15)
+
+**Symptom (verified live, screenshot):** with synthetic-USB connected and gestures working, the Trackpad
+prefpane renders the **NoTrackpad** view ("No Trackpad Connected", Continue/Go Back). Anticipated when the
+synthetic pivot deleted the genuine nodes.
+
+**Root cause (RE-confirmed, three ways):** Apple's `-[Trackpad loadMainView]` decides Trackpad-vs-NoTrackpad
+**solely** by `_IOServiceMatching("AppleUSBMultitouchDriver")` (USB) / `("BNBTrackpadDevice")` (BT) →
+`IOServiceGetMatchingService` → sets `mFoundBTTrackpad` → picks nib (`MTTrackpadController` vs `NoTrackpad`).
+Both genuine classes are now `count 0` (deleted by `292a08d` USB / `89cad00` BT). We publish a fabricated
+`AppleMultitouchDevice` instead, which the pane **never** matches. `_magicTrackpadAction:deviceConnected:`
+only manages the BT battery UI (re-matches `BNBTrackpadDevice` when `connected=0`); it does NOT pick the nib.
+`_isServiceAvailable:` (a *different* method: `IOServiceMatching("IOService")` + `IOPropertyMatch{prop:true}`)
+runs only *after* awakeFromNib to gate per-gesture options (3FDrag/cornerclick/4-finger) — the secondary
+[3FD-parity] concern, not the view decision. So `loadMainView` is the sole gate.
+
+**FIX OPTION A — kext presence-shim subclass (VALIDATED viable both gates; likely cleanest):** publish a
+node that **subclasses** `AppleUSBMultitouchDriver` (USB) / `BNBTrackpadDevice` (BT). Then Apple's
+`loadMainView` matches it **natively** (no swizzle) and lights up. Both gates checked 2026-07-15:
+- **Subclass matching works:** `loadMainView` uses `_IOServiceMatching` → `{IOProviderClass:name}`, and IOKit
+  matches IOProviderClass by `metaCast` → class **and all subclasses**.
+- **Apple classes are subclassable:** `__ZN24AppleUSBMultitouchDriver10gMetaClassE` and
+  `__ZN17BNBTrackpadDevice10gMetaClassE` are **exported** (`nm -g`, `S`), with `superClass` exported.
+  → declare a dependency on `com.apple.driver.AppleUSBMultitouch` / `AppleBluetoothMultitouch`,
+  `OSDefineMetaClassAndStructors(OurShim, AppleUSBMultitouchDriver)`, override `start()` to just
+  `registerService()` (NO `super::start()` → never drives hardware), existing purely to satisfy matching while
+  the fabricated AMD carries input. Threads the needle between full-synthetic and genuine (cf.
+  `decisions.md` / the iphone2g&3gfan hybrid noted in memory `genuine-vs-owned-device-reeval`).
+  **Caveats:** (a) re-introduces a dependency on the Apple classes the SP1/SP2 rip-out deliberately shed;
+  (b) matching is **system-wide** — anything matching `AppleUSBMultitouchDriver` now finds the shim, not just
+  the pane; verify no other Apple consumer tries to drive/prod it; (c) confirm registration timing + that an
+  inert `start()` is safe for these particular classes.
+
+**FIX OPTION B — osax `loadMainView` swizzle (no fishhook):** swizzle `+[Trackpad loadMainView]`; when a
+trackpad is present but Apple picked NoTrackpad, re-run Apple's OWN factory
+`[self controlerForNIBName:@"MTTrackpadController"]` (reuses nib + awakeFromNib + feature-gating). ObjC-only,
+fits the existing osax. BUT it depends on the osax reliably DETECTING the device in-pane — which currently
+fails (see the anomaly below). Keeps everything userland, no kext coupling, but adds osax weight and inherits
+the detection puzzle.
+
+---
+
+## In-pane presence poll returns usb=0 for the synthetic reader — UNEXPLAINED (2026-07-15)
+
+The osax's `presence_observer_reconcile` (polls `service_present("com_schmonz_MT2USBReader")` =
+`IOServiceMatching`+`IOServiceGetMatchingService`) reports **usb=0 inside System Preferences** (no
+`reconcile … -> action`, no `perform: ON_USB` in syslog for pids 17113/21615), so even with reconcile-at-open
+(committed, deployed 19:18 build is current) the pane is never driven to the trackpad view. YET:
+- a standalone probe (`clang`; `IOServiceGetMatchingService("com_schmonz_MT2USBReader")`) as the **same uid
+  501, unsandboxed** returns **FOUND (0x1007)**, stably (4×);
+- the node is `registered, matched, active`, `IOProviderClass=IOUSBInterface`;
+- System Preferences is **not** sandboxed (0 app-sandbox entitlement, no sandboxd denials);
+- under the **old** kext at 19:15 the same in-pane reconcile returned **usb=1** → `ON_USB` and the pane lit up.
+
+So the *new* synthetic reader node is matchable by a standalone uid-501 process but **not** by System
+Preferences, while the *old* reader node was matchable by both — same class name, same process uid. Not
+staleness, not sandbox. **NEEDS on-device instrumentation:** add a temp log to `service_present` printing the
+raw `io_service_t` per class *inside* SysPrefs, reopen the pane, read what it sees. Note: `AppleMultitouchDevice`
+IS matchable standalone (probe FOUND) — if it's also matchable in-pane, keying "light up" detection on the
+transport-agnostic AMD (presence is all the view needs) could sidestep this. Option A (subclass) makes the
+whole anomaly moot for the view (native match, no poll).
+
+---
+
+## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
+
+**Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
+keyboard, then plugged USB. Log (`19:21:36`→`19:24`): BT **host controller** up (`19:21:37`), trackpad
+**validly paired** (`com.apple.Bluetooth.plist`: `04-4b-ed-ec-02-07` "Mavericks Trackpad 2",
+`HIDEmulationTrackpad`), all Apple BT kexts loaded (`IOBluetoothHIDDriver`, `AppleBluetoothMultitouch`) — yet
+**zero** HCI connection / `BNB` / control-channel-attach for the trackpad (`conn-trace` empty). The click never
+reached the host as a connection. Because the current BT path is synthetic (`89cad00` deleted genuine-BNB;
+`53b3f6d` = direct L2CAP listener drives the fabricated AMD), and the connect SM (`mt2_connect_sm.h`) only
+advances on `CSM_EV_CONTROL_ATTACH`, **none of the synthetic-BT machinery ran** — the failure is one layer
+below it (device didn't page, or host page-scan). We don't gate Apple's baseband accept, so a page would have
+logged. This was the FIRST on-device exercise of restored synthetic-BT and it learned nothing about synthetic-BT
+itself. **NEEDS a live, logged reconnect test** (disrupts USB; mind the reconnect-panic/`enableMultitouch`-fails
+history). Rule out device-side (asleep/battery/bonded elsewhere) vs host page-scan.
+
+---
+
+## CoD exact-match misses the MT2 (live CoD carries service bit) — CONFIRMED bug (2026-07-15)
+
+The MT2's stored `ClassOfDevice` is `9620` = **`0x2594`**: device-class `0x594` (major 5 / minor 0x25, correct)
+**plus** the `0x2000` Limited-Discoverable service bit. Three tools compare with **exact equality** and so
+silently miss the MT2 when the service bit is set: `tools/mt2_usb_bt_handoff.m:38,60` (this is why `19:23:49`
+logged "USB removed but no paired CoD-0x594 MT2 found" → USB-unplug→BT handoff currently broken),
+`tools/mt2_bt_bounce.m:34`, `tools/mt2_prefpane_refresh.c:1246`. **Fix:** mask — `(cod & 0x1FFF) == 0x594` (or
+compare only the device-class bits) instead of `== 0x594`. Small, low-risk. Passed validation on 2026-07-04
+because the runtime CoD didn't carry the discoverable bit then.
