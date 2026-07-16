@@ -128,6 +128,24 @@ synchronous `IOHIDEventService`" case — both transports are the hard `IOHIDDev
   consistency that matters is at the interface layer. Re-accepts the genuine-USB tax (the getReport churn
   panic — already HARDENED `22bbf1a`; ledger in [[genuine-vs-owned-device-reeval]] / the REPLACE entry).
 
+**IMPLEMENTED + ON-DEVICE VALIDATED (2026-07-16).** The genuine-USB terminal was recovered from `9573611^`
+(last genuine `start()`) and reconciled onto HEAD: OUR `com_schmonz_MT2USBReader` is the sole matcher of the
+MT2's `IOUSBInterface` (PID 613 / 0x265 is not in Apple's `idProductArray`), then manual-starts Apple's genuine
+`AppleUSBMultitouchDriver` and instance-scoped-clones its `handleReport` (vtable byte offset `0x8b8` = slot 279,
+**re-verified this session** against the live `/S/L/E` driver via `re vtable`; button `handleButton` @ `0xb28`).
+Each MT2 `0x02` report → `mt2_usb_decode` → shared session (`mt2_policy_default`) → `kUsbSink` MT1-encodes +
+checksums + chains Apple's original `handleReport`; Apple's recognizer does the gesture work. Reconcile deltas
+vs `9573611^`: the shared `gh_default_adapter` (only USB used it) was dropped and its seven generic manual-start
+ops inlined as file-static in `MT2USBReader.cpp`; interpose migrated to the declarative `mt2_splice_kext` row
+(`kUsbHandleReportRow`). Validated live on USB: gestures/clicks good; **Trackpad prefpane shows the full native
+UI** (Point&Click / Scroll&Zoom / More Gestures / About, battery 100%) — the payoff synthetic-USB could not
+deliver; **teardown clean** (unload → both our reader AND the manual-started AMD go to count 0, `MT2USBReader:
+stopped`, no orphaned AMD, no panic); reload re-establishes cleanly (1 reader + 1 AMD each cycle, still
+responsive, no re-enumerate needed). BT reader unchanged (still synthetic fabricated-AMD). Commits `6ce9e37`
+(genuine_host core + test) + `ea82e2a` (genuine reader) on `main`. The recovered code is byte-for-byte the
+previously-validated genuine-USB path (interfaces did not drift); the only novelty is the reconcile, covered by
+the 32/32 host suite (incl. `test_genuine_host`) + this on-device run.
+
 ### Own / bare `IOHIDDevice` for the prefpane — *not functioning*
 To light the prefpane we tried publishing our own `IOHIDDevice` of the matched class. Publishing an
 **un-started** `IOHIDDevice` null-derefs in `_publishDeviceNotificationHandler` → kernel panic. You
