@@ -76,20 +76,37 @@ balances its busy and orphans its AMD. Clean seams didn't save genuine-BT; clean
 
 ## 4. What would have to change for our approach to change
 
-None of these are open today. Owned-BT is the intended production terminal.
+Owned-BT is the intended production terminal, for 10.9 and the sub-10.9 roadmap. State the reopening bar
+precisely so we don't hedge: **reconsidering genuine-BT requires a CONJUNCTION of two things, not either
+alone** —
 
-- **A forcing function from below** — *if* an owned-BT reliability problem turned out to be fixable *only* by
-  the genuine stack. The live candidate is the **login-screen no-connect** (`open-questions.md`: host
-  controller up, MT2 paired, but zero HCI connection on click — a layer *below* our synthetic machinery). We
-  don't yet believe it forces genuine (it looks like device-page / host-page-scan, not terminal choice), and
-  characterizing it is precisely how we confirm we *won't* be forced. This is the only realistic reopener, and
-  it is not believed to be one.
+- **(a) The teardown panic must first be *solved*.** Genuine-BT is disqualified *today* by the un-terminatable
+  busy: a manual-started `BNBTrackpadDevice` sits at `busyState=1` for its whole life (`deviceReady` never
+  reached; watchdog cycles) → `terminate()` never finalizes → orphaned AMD → shutdown UAF (`removeFramesClient`),
+  proven on-device (`7168593`, `44261f4`). The only known path out is landing the full
+  `waitForChannelState(OPEN)` control-channel handshake so BNB reaches `deviceReady` and settles to `busy=0`
+  (`decisions.md` `waitQuiet` reopening criterion). Until that is built, genuine-BT is off the table no matter
+  what else is true — reverting today would just trade a bug for a shutdown panic. And note that *even solving
+  it* would not make us *want* genuine-BT: it re-adds split ownership and the hybrid `+0x1b0` poke whose teardown
+  drove the `ultimate-hat.panic`. The handshake fix only makes genuine-BT *possible* to reconsider, not desirable.
+- **(b) AND a must-have capability must prove genuinely impossible in owned-BT** by any means.
 
-- **Reverting to genuine-BNB** would require **solving the un-terminatable busy**: land the full
-  `waitForChannelState(OPEN)` control-channel handshake so the manual BNB reaches `deviceReady` genuinely and
-  settles to `busy=0`, making a real synchronous teardown possible (`decisions.md` `waitQuiet` reopening
-  criterion). *Even then we would not want it* — it re-adds split ownership and the hybrid `+0x1b0` poke whose
-  teardown drove the `ultimate-hat.panic`. Genuine-BNB is graveyarded on stability grounds, not just effort.
+Both, together. That is a remote conjunction, which is why "we plan owned, full stop" is a decision, not a hedge.
+
+**The login-screen reconnect is NOT that forcing function — it is an owned-BT regression to fix.** Earlier
+genuine-BT reliably reconnected on click at the login screen; owned-BT does not (`open-questions.md`). That is a
+capability the pivot *lost*: Apple's `IOBluetoothHIDDriver` gave paired-device host-initiated reconnection for
+free, and by listening on L2CAP directly we stopped going through it. It fails **both** bars above — reverting
+doesn't clear (a), and reconnecting a paired HID device is BT-stack registration / page-scan behavior, not a
+genuine-vs-fabricated-AMD choice, so it doesn't meet (b). The fix is to **recover that reconnection inside
+owned-BT** (register the paired device for reconnect / keep page-scan armed / re-arm on click). And the clincher:
+even if we ever proved we needed Apple's reconnection machinery specifically, the answer is a *narrow* reuse of
+that one hook — never the manual-start-BNB terminal, which re-imports the panic. So genuine-BT-the-terminal stays
+disqualified either way.
+
+- **Porting below 10.9** — owned-BT is *already* the portable choice (the reeval's whole point: owned carries
+  forward, genuine re-derives Apple internals per version). Sub-10.9 ports **keep** owned-BT; there is nothing
+  to reopen. (Contrast USB, where genuine's per-version RE tax is the standing reason to re-open owned/hybrid.)
 
 - **The old "REPLACE not desirable" verdict is already OVERTURNED.** `decisions.md` REPLACE once ruled owning
   the device "not desirable" for one reason only — "stock Apple prefpane mandatory, and the pane matches
@@ -123,9 +140,13 @@ None of these are open today. Owned-BT is the intended production terminal.
   by default, so identity (battery, icon, live-transport, the presence the pane observes) is delivered by the
   shipped osax/SIMBL swizzles rather than for free. It works and is shipped, but it is standing machinery to
   maintain, and the **BT pane device *picture* is a known unfixable 10.9 limitation** (CoD-driven vault).
-- **We own the L2CAP handshake correctness.** PSM 17/19 bind ordering, the `0xF1` enable, and reconnect are
-  ours to get right — the surface of the **reconnect enable-fails** bug (rapid power-cycle) and the reason the
-  **login-screen link** failure needs characterizing. Genuine-BNB would have leaned on Apple's stack here.
+- **We own the whole BT link lifecycle — including reconnection Apple used to give us for free.** PSM 17/19
+  bind ordering, the `0xF1` enable, and reconnect are ours to get right: the surface of the **reconnect
+  enable-fails** bug (rapid power-cycle) and the **login-screen reconnect regression** — earlier genuine-BT
+  reconnected on click at the login screen because Apple's `IOBluetoothHIDDriver` provides host-initiated
+  reconnection of a paired device; listening on L2CAP directly, owned-BT lost it and must recover it (register
+  the paired device for reconnect / keep page-scan armed / re-arm on click). A cost of owning the terminal, but
+  a *feature to add to owned-BT*, not a reason to reconsider genuine (§4).
 - **Transport asymmetry with USB** (owned BT / genuine USB) — an internal inconsistency, accepted for the same
   reason as in `usb-decisions.md`: it mirrors Apple's own 10.9 stack (BT clean seams, USB monolith), and the
   consistency that matters is at the interface layer (both terminals are publish-backends behind one shared

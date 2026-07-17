@@ -826,6 +826,21 @@ whole anomaly moot for the view (native match, no poll).
 
 ---
 
+## BT reconnect-on-click at the login screen — an owned-BT REGRESSION (recharacterized 2026-07-16)
+
+> **RECHARACTERIZED 2026-07-16 (user): this is a regression the genuine→synthetic pivot introduced, not a
+> mystery.** Earlier **genuine-BT reliably reconnected on click at the login screen** (recent genuine for sure;
+> earlier synthetic unknown). Owned/synthetic BT does not. Apple's `IOBluetoothHIDDriver` provides
+> host-initiated reconnection of a *paired* HID device for free; by binding L2CAP directly (not going through
+> that driver) owned-BT lost the hook. So the fix is to **recover reconnection inside owned-BT** — register the
+> paired MT2 for reconnect / keep page-scan armed / re-arm on the click — NOT to reconsider genuine-BT (which is
+> disqualified by its teardown panic regardless; see `bt-decisions.md` §4, the two-part forcing conjunction).
+> The MT2 is confirmed bonded (blued link key present for `04-4b-ed-ec-02-07`), so it is not an unpaired-device
+> problem. **Intermittent** — a fresh boot sometimes connects (e.g. 2026-07-16 16:46 did). Catch a failure live
+> with `tools/re bt-timeline` and read the ladder: no `*MT2*`/`[PAGE]`/`[blud]` near the click = device didn't
+> page / host didn't scan (recover the reconnect trigger); `[blud]*MT2*` + connection but no `[OURS]` = link
+> formed, our reader missed it. Original 2026-07-15 write-up (mis-framed as "link-layer upstream") below.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
