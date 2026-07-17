@@ -12,6 +12,7 @@
 #   str-xref string ref -> enclosing function     amd-actuation cursor-wiring verdict
 #   xref     who references an abs addr (arm64)
 #   xref-offset struct-field accesses             conn-trace    BT connect timeline verdict
+#                                                    bt-timeline   BT connect activity, all layers
 #   vtable   slot offset <-> method               mt-contacts   stream recognizer contacts
 #   strings  printable strings                     mt-devices    MultitouchSupport device list
 #                                                    mt2-name      READ on-device HID DeviceName reports
@@ -530,6 +531,31 @@ sub_conn_trace() {  # [logfile]   (no arg = stdin)
     }'
 }
 
+sub_bt_timeline() {  # [tail-N]  — MT2 BT connect activity across ALL layers, newest N (default 60)
+  # Unlike conn-trace (which parses only OUR kext's CONNTRACE, so it's empty when the connection
+  # never reaches us), this extracts the whole ladder from the syslog so a login-screen "click did
+  # nothing" is diagnosable: did the device PAGE the host at all, or did it stall further up?
+  # Tags:  [PAGE] baseband/HCI connection to the device   [HCI ] controller/transport
+  #        [blud] blued userland (link key / connect)      [HID ] Apple BT HID (BNB/AppleBluetoothMultitouch)
+  #        [OURS] our reader / CONNTRACE.   Lines touching the MT2's address are flagged *MT2*.
+  n=${1:-60}
+  mt2=04-4b-ed-ec-02-07
+  grep -iE "bluetooth|HCI|BNB|baseband| ACL |link key|incoming connection|connection request|paging|page scan|AppleBluetoothMultitouch|IOBluetoothHIDDriver|CONNTRACE|MT2BTReader|MT2Gesture|$mt2" /var/log/system.log 2>/dev/null \
+    | grep -ivE "SuspendDevice|iCloudHelper|com.apple.audio|DriverHelper|cs_invalid_page|GPU Hardware|vm_page_bootstrap|Got boot device|sudo\[|COMMAND=|kextd|MT2PaneRefresh" \
+    | tail -"$n" \
+    | awk -v mt2="$mt2" '
+        {
+          tag="[bt  ]"
+          if      ($0 ~ /CONNTRACE|MT2BTReader|MT2Gesture/)                          tag="[OURS]"
+          else if ($0 ~ /IOBluetoothHIDDriver|AppleBluetoothMultitouch|BNBTrackpad/) tag="[HID ]"
+          else if ($0 ~ /[Bb]lued/)                                                  tag="[blud]"
+          else if ($0 ~ /[Cc]onnection [Rr]equest|[Ii]ncoming [Cc]onnection|[Pp]aging|page scan|[Aa][Cc][Ll]/) tag="[PAGE]"
+          else if ($0 ~ /HCIController|HostController|baseband/)                      tag="[HCI ]"
+          flag = ($0 ~ mt2) ? " *MT2*" : ""
+          print tag flag "  " $0
+        }'
+}
+
 sub_ioreg_class() {  # <IOClassName> [more...]
   [ -n "$1" ] || { echo "usage: $me ioreg-class <IOClassName> [more...]" >&2; return 2; }
   dump=$(ioreg -l -w0 2>/dev/null)
@@ -663,6 +689,7 @@ case "$cmd" in
   plist)         sub_plist "$@" ;;
   amd-actuation) sub_amd_actuation "$@" ;;
   conn-trace)    sub_conn_trace "$@" ;;
+  bt-timeline)   sub_bt_timeline "$@" ;;
   ioreg-class)   sub_ioreg_class "$@" ;;
   ioreg-props)   sub_ioreg_props "$@" ;;
   klog)          sub_klog "$@" ;;
