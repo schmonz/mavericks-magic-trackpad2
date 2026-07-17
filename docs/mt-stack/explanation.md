@@ -154,7 +154,16 @@ behaviour matches BT — not a regression).
 - **Our `com_schmonz_MT2Gesture`** — the session/conditioning nub (shared MT2→MT1 pipeline) and the
   click sink; also owns the `debug.mt2_log` sysctl.
 
-## End-to-end data flow (full-BNB, the shipped architecture)
+## End-to-end data flow (full-BNB — RETIRED genuine-BNB era, NOT current)
+
+> **STALE for BT as of `89cad00` (2026-07-15): this section describes the genuine-BNB manual-start path,
+> which was DELETED. Current BT is owned/synthetic** — `MT2BTReader` matches the `IOBluetoothL2CAPChannel`
+> nub as its provider, `listenAt(incomingData)` on PSM 19, sends the deferred `0xF1` on PSM 17, and drives
+> a *fabricated* AMD (no `BNBTrackpadDevice` manual-start, no delegate interpose, no geometry vtable-clone).
+> The Apple-stack RE below (PSM ordering, `0xF1` framing, transport vtable slots `0xcc8`/`0xcd8`, the 5 s
+> watchdog, geometry values) remains VALID as facts about Apple's stack; only the "our reader manual-starts
+> BNB / interposes" description is retired. Ground truth + the reconnection-ladder RE:
+> `open-questions.md` "Reconnection mechanism — RE'd 2026-07-16"; the decision: `bt-decisions.md`.
 
 1. The MT2 connects over Bluetooth: control channel **PSM 17**, interrupt channel **PSM 19**.
 2. Our reader **wins PSM 17** (high `IOProbeScore` + VID/PID), excluding the generic

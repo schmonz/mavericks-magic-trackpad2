@@ -841,6 +841,47 @@ whole anomaly moot for the view (native match, no poll).
 > page / host didn't scan (recover the reconnect trigger); `[blud]*MT2*` + connection but no `[OURS]` = link
 > formed, our reader missed it. Original 2026-07-15 write-up (mis-framed as "link-layer upstream") below.
 
+### Reconnection mechanism — RE'd 2026-07-16 (corrects the "owned lost Apple's hook" hypothesis)
+
+**Ground truth of the current owned reader (reconciles the stale genuine-BNB RE elsewhere in the KB).**
+`com_schmonz_MT2BTReader::start` takes the matched `IOBluetoothL2CAPChannel` as its provider
+(`MT2BTReader.cpp:270`), then `listenAt(self, incomingData)` on the interrupt channel (PSM 19 = 0x13) and
+sends the deferred `0xF1` on control (PSM 17 = 0x11). **No BNB is manual-started, no delegate is interposed**
+— those descriptions in `reference.md`/`explanation.md` are genuine-BNB-era (deleted `89cad00`). Our reader is
+a *consumer that matches an already-published channel nub*.
+
+**The reconnection ladder (RE'd from IOBluetoothFamily / IOBluetoothHIDDriver on this 10.9 box):**
+1. **Host page-scan enabled** — `IOBluetoothHCIController::BluetoothHCIWriteScanEnable` /
+   `CallWriteScanEnableToEnableScan` / `…WritePageScanActivity`. Without it the host never hears the device page.
+2. **PSM 17/19 on the allowed-incoming list** — `IOBluetoothHCIController::AddAllowedIncomingL2CAPChannel` /
+   `IsAllowedIncomingL2CAPChannelForDevice` / `RemoveAllowedIncomingL2CAPChannel`. The incoming L2CAP connection
+   is only accepted if its PSM is allowed for that device.
+3. **Channel nub published → a consumer matches it.** Both Apple's `IOBluetoothHIDDriver`
+   (`IOProviderClass=IOBluetoothL2CAPChannel`, `PSM=17`, confirmed in its Info.plist) **and our
+   `MT2BTReader`** are equal consumers here — identical matching layer.
+
+**Correction to the earlier hypothesis.** `IOBluetoothHIDDriver` does **not** import `AddAllowedIncomingL2CAPChannel`
+or `*ScanEnable` (checked its symbols) — the HID driver does *not* register scan / allowed-incoming itself. Those
+are `IOBluetoothHCIController` methods driven via `IOBluetoothHCIUserClient::DispatchHCIWriteScanEnable` etc., i.e.
+**`blued` (userland) manages page-scan + allowed-incoming system-wide from the paired-device database**, independent
+of which kext consumer matches the channel. So **owned-vs-genuine at the consumer layer does NOT change reconnection
+acceptance** — steps 1–2 are the same whether Apple's HID driver or our reader would consume the nub. The regression
+is therefore *not* "owned dropped Apple's HID reconnection hook."
+
+**So what differs (genuine reliably reconnected, owned intermittent)?** Narrowed to, in order of likelihood:
+(a) **lower-layer page-scan / device-wake intermittency** that is independent of the terminal choice (steps 1–2,
+blued/controller state) — plausibly not causally tied to genuine-vs-owned at all; (b) **link-keepalive**: genuine-BNB
+may have held the ACL link up (or re-armed scan) so a true reconnect was rarely needed, where owned lets it idle-disconnect;
+(c) a boot-order/timing effect at login. **The live `bt-timeline` capture decides which**, mapped to the ladder:
+- **No `*MT2*` / no ACL at all near the click** → step 1/2: host wasn't page-scanning or PSM not allowed-incoming
+  (blued/controller state) — RE target is **blued** (the scan / allowed-incoming manager) + `IsAllowedIncomingL2CAPChannelForDevice`.
+- **ACL/`[blud]*MT2*` forms but no channel** → step 2: allowed-incoming missing for PSM 17/19.
+- **Channel forms (`[OURS]` setupInGate) but no stream** → our side (the enable/first-frame path, overlaps the
+  reconnect-enable-fails item).
+
+Do NOT deep-RE blued until the capture points below L2CAP — it may prove to be lower-layer intermittency we fix by
+re-arming scan, not a terminal concern. See `bt-decisions.md` §4/§5.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
