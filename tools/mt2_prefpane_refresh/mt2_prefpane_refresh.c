@@ -56,6 +56,7 @@
 #include "mt2_presence.h"
 #include "mt2_presence_observer.h"
 #include "mt2_single_load.h"
+#include "../mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
 #define LOG(...) syslog(LOG_NOTICE, "[MT2PaneRefresh] " __VA_ARGS__)
 
@@ -1243,7 +1244,7 @@ static id mt2_bt_device(void) {
     for (unsigned long i = 0; i < n; i++) {
         id d = ((id (*)(id, SEL, unsigned long))objc_msgSend)(arr, sel_registerName("objectAtIndex:"), i);
         unsigned cod = ((unsigned (*)(id, SEL))objc_msgSend)(d, sel_registerName("getClassOfDevice"));
-        if (cod == 0x594) return d;
+        if (mt2_cod_is_mt2(cod)) return d;   /* mask service bits (live CoD may be 0x2594) */
     }
     return NULL;
 }

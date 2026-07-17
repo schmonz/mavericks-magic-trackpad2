@@ -843,7 +843,13 @@ history). Rule out device-side (asleep/battery/bonded elsewhere) vs host page-sc
 
 ---
 
-## CoD exact-match misses the MT2 (live CoD carries service bit) — CONFIRMED bug (2026-07-15)
+## CoD exact-match misses the MT2 (live CoD carries service bit) — CONFIRMED bug (2026-07-15); FIXED 2026-07-16
+
+> **FIXED 2026-07-16.** All three sites now match via one shared predicate `mt2_cod_is_mt2()` in
+> `tools/mt2_cod_match.h` — `(cod & 0x1FFF) == 0x594` (mask off the service-class bits, compare the
+> device-class field). Guarded by `tests/test_cod_match.c` (asserts `0x594` and `0x2594` and any service
+> bits all match; wrong minor / mouse / zero do not). Unblocks USB→BT handoff. On-device confirmation of the
+> handoff still pending a live unplug test (the predicate itself is host-tested). Below is the original bug.
 
 The MT2's stored `ClassOfDevice` is `9620` = **`0x2594`**: device-class `0x594` (major 5 / minor 0x25, correct)
 **plus** the `0x2000` Limited-Discoverable service bit. Three tools compare with **exact equality** and so

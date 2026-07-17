@@ -24,8 +24,7 @@
 #import <IOKit/IOKitLib.h>
 #include <string.h>
 #include "mt2_presence_observer.h"
-
-#define MT2_COD 0x594   /* Peripheral(5) + pointing + digitizer minor 0x25 — the MT2 over BT */
+#include "mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
 /* Wake the deep-idle BT MT2 the same way mt2_bt_bounce does: a plain openConnection. When the USB
  * cable is pulled the BT link is already down (single-transport device), so this is a pure wake —
@@ -35,7 +34,7 @@ static void wake_bt_mt2(void) {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         int n = 0;
         for (IOBluetoothDevice *d in devs) {
-            if ([d getClassOfDevice] != MT2_COD) continue;
+            if (!mt2_cod_is_mt2([d getClassOfDevice])) continue;
             if ([d isConnected]) { n++; continue; }   /* already up — nothing to wake */
             IOReturn ro = [d openConnection];          /* synchronous baseband re-establish */
             NSLog(@"mt2_usb_bt_handoff: USB removed -> openConnection %@ -> 0x%08x", [d addressString], ro);
@@ -57,7 +56,7 @@ static void bounce_bt_mt2(void) {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         int n = 0;
         for (IOBluetoothDevice *d in devs) {
-            if ([d getClassOfDevice] != MT2_COD) continue;
+            if (!mt2_cod_is_mt2([d getClassOfDevice])) continue;
             n++;
             if ([d isConnected]) {
                 IOReturn rc = [d closeConnection];       /* synchronous: returns after the link is down */

@@ -18,8 +18,7 @@
  */
 #import <Foundation/Foundation.h>
 #import <IOBluetooth/IOBluetooth.h>
-
-#define MT2_COD 0x594   /* Peripheral(5) + pointing + digitizer minor 0x25 — the MT2 over BT */
+#include "mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
@@ -31,7 +30,7 @@ int main(int argc, const char *argv[]) {
             if (addr && [[d addressString] caseInsensitiveCompare:
                          [addr stringByReplacingOccurrencesOfString:@":" withString:@"-"]] != NSOrderedSame)
                 continue;
-            if (!addr && [d getClassOfDevice] != MT2_COD) continue;
+            if (!addr && !mt2_cod_is_mt2([d getClassOfDevice])) continue;
 
             BOOL wasConnected = [d isConnected];
             if (wasConnected) {

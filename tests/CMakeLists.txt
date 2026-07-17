@@ -24,6 +24,11 @@ add_executable(test_vtable_clone test_vtable_clone.c)
 target_include_directories(test_vtable_clone PRIVATE ${CMAKE_SOURCE_DIR}/kext-gesture)
 add_test(NAME test_vtable_clone COMMAND test_vtable_clone)
 
+# test_cod_match needs the tools/ include dir for the shared CoD predicate; no other deps.
+add_executable(test_cod_match test_cod_match.c)
+target_include_directories(test_cod_match PRIVATE ${CMAKE_SOURCE_DIR}/tools)
+add_test(NAME test_cod_match COMMAND test_cod_match)
+
 # Vendored VoodooInput wire ABI (no mt2core; standalone header assertions).
 # The upstream headers are C++ (tag-less struct/enum); compile as C++ without
 # editing the pristine vendored files.
