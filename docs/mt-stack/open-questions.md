@@ -882,6 +882,158 @@ may have held the ACL link up (or re-armed scan) so a true reconnect was rarely 
 Do NOT deep-RE blued until the capture points below L2CAP — it may prove to be lower-layer intermittency we fix by
 re-arming scan, not a terminal concern. See `bt-decisions.md` §4/§5.
 
+### First live capture of a failed login-screen boot — maps to ladder step 1/2, but CONTAMINATED (2026-07-16)
+
+User rebooted on BT; **no cursor at the login screen even after clicking**, then plugged USB. `tools/re bt-timeline`
++ `klog` captured both the failed boot and, for contrast, an earlier clean BT boot the same day:
+
+| | clean boot 16:46 (self-healed) | failed boot 21:48 |
+|---|---|---|
+| BT controller up (`[HCI]`) | 16:46:13 | 21:48:05 |
+| `MT2Gesture: nub up` | 16:46:15 | 21:48:08 |
+| **`[blud]*MT2*` link key saved** (= BT connect completes) | **16:46:20 (+7s)** | **21:48:15 (+10s)** |
+| `AppleUSBMultitouchDriver` present? | **no** — pure BT self-reconnect | **yes, at 21:48:15** (the USB plug) |
+
+**Reading against the ladder.** During the actual login-screen dead window (21:48:08→:14) there is **no `[blud]*MT2*`,
+no channel nub, no `[OURS]` stream** — matches the top rung: *device didn't page / host wasn't page-scanning* (ladder
+step 1/2), i.e. **not our reader**. Corroborated by `bluetoothaudiod: Failed to create connection to the daemon:
+connection timeout` at 21:48:14 → BT userland was sluggish on that boot. Ruled out on this boot: **not**
+enable-fails (no `_enableMultitouch`/`0xD7`/`0xe00002bc`/basic-HID `0x02` anywhere), **not** kext-unloaded
+(`AppleBluetoothMultitouch 80.14` + `IOBluetoothHIDDriver` both loaded). `conn-trace` empty (kernel syslog carries
+no per-device HCI ACL request/complete — that layer needs blued HCI logging to see).
+
+**Why this capture is NOT yet decisive — the repro is contaminated.** The MT2's BT link key + connection completed at
+**21:48:15, the exact second the USB plug enumerated** (plugging USB cannot make blued save a *BT* link key, so BT
+genuinely connected then too — both transports arrived in the same second, USB won per the single-transport rule and
+drove the cursor). So we cannot separate the two surviving hypotheses:
+- **(a) slow-but-fine reconnect** — BT reliably connects at login in ~7–10s (clean boot did at +7s; this one shows +10s)
+  and the user's patience simply ran out at ~10s, cabling USB right as BT arrived. Would be a *latency*/UX problem, not
+  a connect failure.
+- **(b) genuinely stuck until stimulus** — BT would not have connected on its own, and the USB plug (device
+  re-advertise / physical wake / host re-scan) is what unstuck it.
+
+**Decisive next repro (clean, uncontaminated):** reboot on BT; at the login screen **wait ≥60s WITHOUT plugging USB and
+WITHOUT tapping**, watching whether the cursor self-connects (the clean 16:46 boot proves it can, at +7s). If it comes
+alive on its own → (a), measure the delay, fix = keepalive/scan re-arm to shrink it. If it never does until a
+tap/other stimulus → (b), fix = recover a host- or device-initiated reconnect trigger. Only cable USB as the escape
+hatch *after* the observation window closes. To also capture the missing ACL/page layer, enable blued HCI logging
+before the boot so the next `conn-trace` shows the connection request/complete for `04-4b-ed-ec-02-07`.
+
+### CONFIRMED empirically 2026-07-16 (fair test) — owned-BT does NOT reconnect at login; hypothesis (b)
+
+**The two earlier captures were both contaminated; this one was clean and the user is a reliable witness.** User
+rebooted on BT, started a 60s timer **when loginwindow appeared** (so it was 60s of real BT airtime, not boot time),
+did NOT plug USB and did NOT tap — cursor stayed dead to motion AND to clicks for the full 60s. Plugging USB then
+worked instantly. **Verdict: owned/synthetic BT does not self-reconnect at the login screen given a fair window →
+hypothesis (b) "genuinely stuck," NOT (a) "slow-but-fine."** (My contaminated-capture theories — "flaky cable at
+boot," "firmware ate the 60s" — were wrong; the earlier same-second USB/BT coincidences were an artifact of me
+plugging near the natural connect time, not evidence. Do not resurrect them.)
+
+### CODE-GROUNDED regression candidate — we EVICT Apple's IOBluetoothHIDDriver (overturns the RE conclusion above)
+
+Pointing skepticism at the recently-changed code (owned-BT pivot `53b3f6d` "direct L2CAP listener" + `89cad00`
+"delete genuine-BNB machinery"; the latter's own commit message: *"residual risk: on-device BT untested until
+Task 5"*) surfaced a concrete behavioral difference the earlier RE missed. **`kext-gesture/Info.plist.in`
+`MT2BTControl`/`MT2BTInterrupt` (PSM 17/19) match with `IOProbeScore=100000` and NO `IOMatchCategory` — the
+comment states the intent explicitly: "we compete in the DEFAULT category against the generic IOBluetoothHIDDriver
+(probe score 0) and win … EXCLUDING it. That hands us the device so our interrupt listener is the sole reader."**
+So the owned pivot does not merely *replace* BNB at the actuation layer (genuine did that and left Apple's HID
+stack running) — it **evicts Apple's `IOBluetoothHIDDriver` from the device entirely.** That HID driver carries the
+bonded-HID wake/idle machinery (`handleWake`, GET/SET_IDLE, `decrementOutstandingIO`→`commandWakeup`); the
+host-initiated reconnect primitive is `IOBluetoothFamily::BluetoothHCICreateConnection`. **This directly overturns
+the prior claim in this file that "owned-vs-genuine at the consumer layer does NOT change reconnection acceptance"**
+— empirically it does, and the eviction is the most likely reason.
+
+**Still-open edge (needs the HCI capture or a coexistence experiment to close):** whether login reconnect is
+host-initiated (blued/kext pages the device) or device-initiated (click pages the host), and therefore whether
+IOBluetoothHIDDriver's presence is *causal* or merely *correlated*. Don't over-claim past this — I already
+over-swung once from doubting the user into a confident code theory; this candidate is strong but not yet proven.
+
+**Minimal test = a coexistence experiment (crash-risk kext change → needs go/no-go + the genuine-teardown-panic
+tradeoff, see `bt-decisions.md` §4).** Stop excluding Apple's `IOBluetoothHIDDriver`: drop our L2CAP probe score
+below Apple's / add an `IOMatchCategory` so both consume, or let Apple's HID stack win the channel and reconnect
+the device while we keep only the actuation-layer personalities. If login reconnect returns → candidate confirmed.
+⚠️ Re-admitting Apple's genuine BT HID stack risks re-introducing the BNB teardown panic the pivot was meant to
+escape — design the experiment so Apple *starts* BNB (normal flow), we never *manual-start* it (the panic was our
+manual-start racing teardown). This is a genuine architecture fork (owned-reconnect-fix vs the genuine-teardown
+panic); surface it to the user before loading anything.
+
+### ROOT CAUSE NARROWED 2026-07-17 (on-device) — owned-BT never implements the HID-host role
+
+A long live-debugging session (device + dtrace + kernel log) reframes the whole item. **The reconnect ladder
+above is NOT where it dies — the ladder assumes the failure is page-scan / allowed-incoming, and it isn't.**
+What was actually observed, in order:
+
+1. **The connection does not persist even during PAIRING.** Fresh re-pair (`06:04:33`): both L2CAP channels
+   open, BOTH reader personalities bind (PSM 17 + 19), the fabricated AMD registers and the OS configures it
+   (`SET-REPORT 0xdc/0xdd/0xc8`, `ENABLE-MT enable=1`) — then `connection closed` **within ~1 second**, clean
+   teardown, and it stays down (channel count 0). So this is not "never forms a link"; the link forms and
+   **collapses in ~1s.**
+2. **On reconnect (touch/click the paired-but-disconnected trackpad), the host sees NOTHING.** A clean
+   connect-path dtrace (`AcceptConnectionRequest` / `RejectConnectionRequest` / `CreateConnection` /
+   `IsAllowedIncomingL2CAPChannelForDevice` / `WriteScanEnable`) caught **zero events** while the user clicked
+   repeatedly. No page reaches the controller — consistent with the device not being held in a reconnectable
+   HID relationship (device state), not with a reject. `system_profiler`: Paired=Yes, Configured=Yes,
+   **Host Connectable=Yes, Connected=No** (device VID 0x4C/PID 0x265, fw 0x0318 — device is fine).
+3. **Confirmed code gap (`MT2BTReader.cpp`):** our reader does a bare `listenAt` + `0xF1` and **nothing else** —
+   `grep` confirms it NEVER calls `waitForChannelState(OPEN)` and implements none of Apple's HID-host bring-up.
+   Apple's evicted `IOBluetoothHIDDriver` does the full job in `prepInterruptChannelWL`/`processCommandWL`:
+   drive the interrupt channel to OPEN (`waitForChannelState`), set HID protocol, set idle rate, probe reports,
+   VirtualCable, and **hold/maintain** the connection. We evict it (probe 100000 vs 0) and replaced all of that
+   with two lines.
+
+**Conclusion: owned-BT never implemented the HID-host connect/maintain role — it is a passive channel consumer
+of a link Apple's driver used to establish AND hold.** That is why it "worked before" (Apple did it in every
+era: genuine-BNB, and the earlier `f24766e` owned build was only ever *live-verified in-session*, never across
+a real idle→reconnect). The "spot we missed in the restore" is not a lost line — it is the entire HID-host role.
+
+**NOT yet proven:** the exact byte-level reason for the ~1s drop (device-initiated disconnect vs host close vs
+missing-handshake timeout). Live disconnect capture failed operationally this session (traced disconnects while
+no connection existed; then process-management churn). The reliable trigger is a **re-pair** (produces a
+connect→drop every time) — arm BOTH connect+disconnect tracers cleanly, re-pair, read the reason. That one datum
+tells us WHICH handshake step, when absent, drops the link → what to implement.
+
+**Also ruled out this session:** the immediate-`0xF1`-enable "restore `f24766e`" change (built, loaded, tested) —
+it fired *after* teardown on an already-inactive channel and did nothing; reverted. The enable timing is not it.
+
+**Fix fork (see `bt-decisions.md §4`):** (1) reimplement the HID-host role inside owned-BT (mission-aligned;
+needs the disconnect-reason datum first), or (2) stop evicting `IOBluetoothHIDDriver` and let Apple connect/hold
+while we observe/actuate (fast, but reverts toward genuine-BT and re-opens the teardown-panic decision).
+
+### RESOLVED (Layer B) 2026-07-17 — waitForChannelState(OPEN) handshake wired in + on-device proven (`4d5350a`)
+
+The connect-then-drop is FIXED. `MT2BTReader` now does the genuine acceptance (`reference.md` "BT connect
+handshake"): control `listenAt(controlData)` + `waitForChannelState(OPEN)`, interrupt `waitForChannelState(OPEN)`
+before arming. On-device a re-pair reaches `STEADY`+`MT_MODE_CONFIRMED`, both channels stay up, gestures stream,
+battery interpose finally installs. Device-initiated **click-reconnect now works and persists**. This was the
+RE'd-but-never-implemented fix (`how-to.md` "fix the connect flap"); the user's "we've had synthetic BT before,
+missed a spot" was exactly right — the spot was the HID-host acceptance handshake.
+
+### STILL OPEN (Layer A) 2026-07-17 — host-initiated boot reconnect + list-persistence = the evicted VIRTUAL-CABLE role
+
+The handshake did NOT fix the login-screen/cold-boot reconnect. On-device reboot: the MT2's L2CAP channels
+**never open at boot**, our reader **never runs** (`grep` of the boot log: no `setup on PSM`), so the handshake
+can't engage — while a *different* paired device reconnected normally. **User's key observation (unifying clue):**
+after reboot the MT2 **vanished from the Bluetooth device list** even though it stayed paired
+(`com.apple.Bluetooth.plist` PairedDevices still lists `04-4b-…` "Mavericks Trackpad 2"), and it **reappeared only
+after a USB attach/detach**. A genuine Magic Mouse stays listed while disconnected; ours used to.
+
+**Understanding (RE'd):** list-persistence-while-disconnected AND host-initiated boot-reconnect are the **same
+missing role** — the **HID Virtual Cable** that Apple's `IOBluetoothHIDDriver` maintains for a bonded HID device
+(it only sends `VirtualCableUnplug` — RE'd in its `processCommandWL` — to *break* the cable on real removal).
+Structurally: **our readers are children of the transient `IOBluetoothL2CAPChannel` nubs; nothing of ours holds
+the `IOBluetoothDevice` at the device level.** So when the channels drop, the device object is not held → it
+leaves the list and nothing re-pages it at boot. The USB attach transiently recreates the device object → it
+reappears. We evicted the one thing (Apple's HID driver, probe 100000 vs 0) that held the device as
+virtually-cabled → we lost list-persistence AND boot-reconnect together.
+
+**Fix direction for Layer A (next):** hold/register the MT2 at the DEVICE level as a reconnectable
+virtually-cabled HID device — candidates: (a) a minimal owned personality matching `IOBluetoothDevice` (not the
+channel) that just holds it + registers reconnect, coexisting with our channel readers (mission-aligned, owned);
+or (b) re-admit Apple's `IOBluetoothHIDDriver` for device-level management only (re-opens the genuine/teardown-panic
+tension, `bt-decisions.md §4`). Confirm the exact registration first (what keeps a Magic Mouse listed+reconnectable
+vs the MT2) before building — likely one live capture of a genuine device's boot reconnect vs ours.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
