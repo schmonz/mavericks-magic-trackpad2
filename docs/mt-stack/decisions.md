@@ -38,7 +38,7 @@ macOS-current.
 | Terminal | Mechanism | Reuses Apple's… | Where you pay | Status |
 |---|---|---|---|---|
 | **① Fabricate-AMD** (current) | our nub allocs its **own** `AppleMultitouchDevice`, feed it `handleTouchFrame` (0x28) | recognizer + hidd, **from the AMD down** | identity above the AMD is lost → per-consumer osax swizzles (pane view, icon, battery, the **bezel HUD in a process the osax can't reach**) | **SHIPPED.** Input works; pane/identity is whack-a-mole |
-| **② Subclass-the-class** | our reader `: public AppleUSBMultitouchDriver` / `BNBTrackpadDevice`; inherit **identity**, override **behavior** with our synthetic pipeline | class *identity* (all consumers match via metaCast); not Apple's driver *code* | **per-version RE**: reconstruct the undocumented class vtable + enumerate the **consumed method surface** so no call falls through to un-started `super` (= panic). USB tractable (already matches `IOUSBInterface`); BT hard (`BNBTrackpadDevice` born inside Apple's BT HID stack) | **CLOSED — kernel panic on load (2026-07-16).** All RE validated (size 1672; true lineage `AppleUSBMultitouchDriver : IOUSBHIDDriver : IOHIDDevice`; `kxld -n` reported "loadable") — but `registerService()` on a bare `IOHIDDevice`-lineage node null-derefs in `IOHIDDevice::_publishDeviceNotificationHandler`. Identity is inseparable from *starting* the device. Full closure entry below. |
+| **② Subclass-the-class** | our reader `: public AppleUSBMultitouchDriver` / `BNBTrackpadDevice`; inherit **identity**, override **behavior** with our synthetic pipeline | class *identity* (all consumers match via metaCast); not Apple's driver *code* | **per-version RE**: reconstruct the undocumented class vtable + enumerate the **consumed method surface** so no call falls through to un-started `super` (= panic). USB tractable (already matches `IOUSBInterface`); BT hard (`BNBTrackpadDevice` born inside Apple's BT HID stack) | **PARTLY CLOSED (2026-07-16).** The *bare* subclass panics: `registerService()` on a bare `IOHIDDevice`-lineage node null-derefs in `_publishDeviceNotificationHandler` (all RE validated — size 1672; lineage `AppleUSBMultitouchDriver : IOUSBHIDDriver : IOHIDDevice`; `kxld -n` "loadable"). But a **REIMPLEMENTED name-wearing subclass is VIABLE** (`OSDefineMetaClassAndStructors(AppleUSBMultitouchDriver, IOHIDDevice)` + full lifecycle — iphone2g&3gfan) = the **owned-USB** terminal, portable + no vtable offsets; caveat = metaclass-name collision with Apple's co-resident kext. See the CORRECTION in the closure entry below. |
 | **③ Device-emulate transport-native** (VoodooInput-faithful) | publish a *started* virtual device with a **natively-supported** identity — **MT1 over BT**, **onboard/built-in trackpad over USB** — let Apple's driver **own** the AMD; our reader drives the real MT2 into it | Apple's **driver + AMD + recognizer + pane**, the most of all; also **decouples Apple's driver from the real-hardware churn** → dodges the getReport panic that motivated the USB pivot | reproducing the device + **enable handshake** + passing **built-in gating** (USB multitouch is built-in-only gated; BT external is not — which is exactly why the transport split is MT1-BT / onboard-USB) | **Partially tried, NOT closed.** Genuine-BT (Apple owns AMD) **shipped and worked**; the pure-vhid USB spike got **adoption but no dispatch** with the failure **un-isolated** |
 
 ### Evidence already on record (don't re-tread)
@@ -114,6 +114,27 @@ impossible for any `IOHIDDevice`-lineage class.** To hold the `AppleUSBMultitouc
 `BNBTrackpadDevice : IOHIDDevice` — which is exactly why genuine-BNB worked by *manually starting a real
 started IOHIDDevice*, per the entry below.) This also retires my earlier mis-claim that USB was the "clean
 synchronous `IOHIDEventService`" case — both transports are the hard `IOHIDDevice` lineage.
+
+**CORRECTION 2026-07-16 (iphone2g&3gfan, MacRumors) — "② collapses into genuine" was TOO STRONG.** What our
+`AumdShimTest` proved is narrower: a **bare, un-started** subclass panics. It does NOT follow that ② collapses
+into genuine — only that the started `IOHIDDevice` requirement must be *met*. It can be met by **reimplementing
+the class** instead of starting Apple's. iphone2g&3gfan (VoodooInput Wellspring backend) does exactly this:
+`OSDefineMetaClassAndStructors(AppleUSBMultitouchDriver, IOHIDDevice)` — a **from-scratch reimplementation that
+wears Apple's class name** (so `IOObjectConformsTo(service,"AppleUSBMultitouchDriver")` — the same recognition
+gate we RE'd at `open-questions.md` `_MTDeviceCreateFromService`/`IOObjectConformsTo`→type 1 — returns true for
+his subclass), then `VoodooInputWellspringSimulator : AppleUSBMultitouchDriver`. Because he implements the full
+`IOHIDDevice` lifecycle, `registerService()` is safe — no panic. Our shim panicked because it inherited Apple's
+real class but ran *none* of its code; his *is* the code. So the accurate closure is: **bare-subclass = CLOSED
+(panic); reimplemented name-wearing subclass = VIABLE — it is the OWNED-USB terminal** (portable, no per-version
+vtable offsets, no manual-start/interpose UAF, no monolithic-driver taxes; the USB analog of owned-BT). Open
+caveat on 10.9: his trick redefines the `AppleUSBMultitouchDriver` metaclass, which **collides** with Apple's
+co-resident `AppleUSBMultitouch.kext` (loaded for MT1s; our genuine path `allocClassWithName`s from it) — a
+same-name metaclass conflict he sidesteps by *replacing* Apple's driver in the Wellspring-internal context.
+Resolving that co-residence is the prerequisite to adopting owned-USB here. **QUEUED (user, 2026-07-16): return
+to owned-USB via this route once owned-BT is where we want it** — see `usb-decisions.md` §4. His reusable
+"plumb frames upward + name-wearing simulator" is the portable OS-publish backend the merge-map predicted
+([[genuine-vs-owned-device-reeval]]); he is posting it on GitHub. His device is fed by VoodooInput satellites,
+so a real MT2 needs *our* front-half bus driver — complementary, not drop-in.
 
 **DECISION (2026-07-16, user):** **USB = genuine** (Apple's real `AppleUSBMultitouchDriver` started on the MT2
 + interpose/translate — recover the retired genuine-USB path, as synthetic-BT was recovered); **BT = synthetic**

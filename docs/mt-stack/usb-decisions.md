@@ -99,6 +99,22 @@ Each door names the exact evidence that reopens it. None are open today.
   conformance+reuse, owned subclass for a stable seam) is the middle path to study — it's the OS-publish seam
   we'd otherwise reinvent per version ([[mt2-supported-os-range]]).
 
+- **▶ QUEUED (user, 2026-07-16): move USB to OWNED, via a name-wearing reimplemented driver.** The most
+  actionable reopener, to pursue *once owned-BT is where we want it*. iphone2g&3gfan (VoodooInput Wellspring
+  backend) proved the mechanism our ② closure wrongly dismissed: `OSDefineMetaClassAndStructors(
+  AppleUSBMultitouchDriver, IOHIDDevice)` — a **from-scratch reimplementation wearing Apple's class name** so it
+  passes the recognition gate (`IOObjectConformsTo(service,"AppleUSBMultitouchDriver")` — the same gate we RE'd
+  at `open-questions.md` `_MTDeviceCreateFromService`), then a simulator subclass fed frames. It implements the
+  full `IOHIDDevice` lifecycle, so `registerService()` is safe (our `AumdShimTest` panicked only because it was
+  *bare*). This is the **owned-USB terminal**: it erases every con in §5 — no `0x8b8` vtable dependency
+  (portable down toward Leopard), no manual-start/interpose UAF, no monolithic-driver taxes (settle,
+  geometry residual), and no fragile "Apple must not match the interface" assumption. **Open caveat on 10.9:**
+  redefining the `AppleUSBMultitouchDriver` metaclass collides with Apple's co-resident `AppleUSBMultitouch.kext`
+  — resolving that co-residence (or not loading Apple's) is the prerequisite. Complementary, not drop-in: his
+  simulator is fed by VoodooInput satellites, so a real MT2 needs *our* front-half reader. He is posting the code
+  on GitHub. Full analysis + the ② closure correction: `decisions.md` ("CORRECTION 2026-07-16"); merge-map
+  [[genuine-vs-owned-device-reeval]].
+
 - **The USB manual-start teardown proves untenable** (an orphaned-AMD panic on USB like the BT one) — fall
   back to ① synthetic-USB (still live for BT/VoodooInput, so no capability is lost), or pursue the "intercept
   Apple's match / claim the interface" direction (`60c2c51`, `open-questions.md`). Not observed: USB teardown
