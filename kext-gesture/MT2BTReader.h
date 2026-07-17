@@ -39,6 +39,15 @@ public:
     static void incomingData(IOService *target, IOBluetoothL2CAPChannel *channel,
                              unsigned short length, void *data);
 
+    /* Control-channel accept delegate (INERT — ignores every arg). Its only purpose is to be the
+     * listenAt callback that "accepts" the control channel: genuine IOBluetoothHIDDriver listenAt's
+     * control then waitForChannelState(OPEN), and that acceptance is what provokes the device to open
+     * its (device-initiated) PSM 19 interrupt channel. Because it derefs nothing, it stays safe even if
+     * the battery interpose's restore leaves the channel pointing at a freed reader. Battery sniffing is
+     * still done by bt_control_shim (the interpose), not here. See reference.md "BT connect handshake". */
+    static void controlData(IOService *target, IOBluetoothL2CAPChannel *channel,
+                            unsigned short length, void *data);
+
     /* IOTimerEventSource handler: deferred 0xF1 multitouch enable (retried until first frame),
      * then steady-state battery polling. */
     static void interposeTimerFired(OSObject *owner, IOTimerEventSource *ts);

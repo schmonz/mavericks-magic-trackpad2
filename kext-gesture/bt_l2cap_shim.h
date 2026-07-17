@@ -19,7 +19,15 @@ class IOCommandGate;
  *   __ZN23IOBluetoothL2CAPChannel13channelIsOpenEv
  *   __ZN23IOBluetoothL2CAPChannel14setOutgoingMTUEt
  *   __ZN23IOBluetoothL2CAPChannel6getPSMEv
+ *   __ZN23IOBluetoothL2CAPChannel19waitForChannelStateE28IOBluetoothL2CAPChannelState
  */
+
+/* L2CAP channel state passed to waitForChannelState(). The enum's NAME must be exactly
+ * IOBluetoothL2CAPChannelState so waitForChannelState below mangles to the exported symbol
+ * (…19waitForChannelStateE28IOBluetoothL2CAPChannelState). Only OPEN (= MT2_L2CAP_STATE_OPEN
+ * = 4) is used. */
+enum IOBluetoothL2CAPChannelState { kIOBluetoothL2CAPChannelStateOpen = 4 };
+
 class IOBluetoothObject : public IOService {
 public:
     /* The command gate guarding this object's Bluetooth workloop. IOBluetoothFamily
@@ -46,6 +54,14 @@ public:
                     IOService *target, unsigned long long refcon1, unsigned long long refcon2);
 
     bool channelIsOpen();
+
+    /* Block (bounded internally, ~5 s) until the channel reaches `state`. The genuine
+     * IOBluetoothHIDDriver calls this on the control channel, then the interrupt channel,
+     * as the "correct acceptance" that provokes the device to open its (device-initiated)
+     * PSM 19 interrupt channel. Omitting it is the ~1 s connect-flap where PSM 19 never
+     * opens. See docs/mt-stack/reference.md "BT connect handshake". */
+    IOReturn waitForChannelState(IOBluetoothL2CAPChannelState state);
+
     IOReturn setOutgoingMTU(unsigned short mtu);
     unsigned short getPSM();
 };

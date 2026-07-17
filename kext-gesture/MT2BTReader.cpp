@@ -203,6 +203,9 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> submitFrame.
          * listenAt is safe here because no BNB races us for this channel (no manual-start). */
         self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
+        /* Genuine handshake step 4 (reference.md "BT connect handshake"): WAIT for the interrupt
+         * channel to reach OPEN before arming the session — accept-then-wait, don't race the device. */
+        self->fChannel->waitForChannelState(kIOBluetoothL2CAPChannelStateOpen);
         if (gActiveMT2Gesture) {
             IOLog("MT2BTReader: DIRECT terminal — fabricated AMD, direct L2CAP listener\n");
             gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
@@ -212,12 +215,19 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     }
 
     self->fIsControl = (psm == 0x11);
-    /* The 0xF1 multitouch enable is DEFERRED to the phase-2 reEnable timer (firing it before the
-     * channel is OPEN flaps the link) — see explanation.md "Deferred 0xF1 multitouch enable". */
+    /* The 0xF1 multitouch enable stays DEFERRED to the reEnable timer (it must not precede OPEN). */
     IOLog("MT2BTReader: setup on PSM=%u\n", psm);
     /* A control channel coming up starts a new connection attempt — bump the id, mark CONTROL_UP, and
      * reset the shared diag so a reconnect re-observes report ids + re-arms the first-frame/gap markers. */
-    if (psm == 0x11) { gConnId++; mt2_diag_reset(MT2_DIAG_BT); bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0); }
+    if (psm == 0x11) {
+        gConnId++; mt2_diag_reset(MT2_DIAG_BT); bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0);
+        /* Genuine handshake steps 1-2 (reference.md "BT connect handshake"): ACCEPT the control channel
+         * (listenAt) then WAIT for it to reach OPEN, writing no HID byte first. This acceptance is the
+         * wire action that provokes the device to open its device-initiated PSM 19 interrupt channel;
+         * omitting it is the ~1s flap where PSM 19 never opens. The 0xF1 enable stays deferred (below). */
+        self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::controlData);
+        self->fChannel->waitForChannelState(kIOBluetoothL2CAPChannelStateOpen);
+    }
     return kIOReturnSuccess;
 }
 
@@ -260,6 +270,15 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
     /* Cross the seam: hand the decoded frame to the SHARED session via the fabricated AMD sink. */
     if (gActiveMT2Gesture && gInterruptReader)
         gActiveMT2Gesture->submitFrame(target, &tf);   /* target = this reader */
+}
+
+/* Control-channel accept delegate — INERT. Its sole purpose is to be the listenAt callback that
+ * "accepts" the control channel (with the following waitForChannelState(OPEN)), reproducing what the
+ * genuine IOBluetoothHIDDriver does to provoke the device to open PSM 19. It derefs nothing (not even
+ * target), so it is safe to be called on an already-freed reader — which the battery interpose's
+ * restore can leave in place. Battery GET_REPORT(0x90) sniffing lives in bt_control_shim, not here. */
+void com_schmonz_MT2BTReader::controlData(IOService * /*target*/, IOBluetoothL2CAPChannel * /*channel*/,
+                                          unsigned short /*length*/, void * /*data*/) {
 }
 
 bool com_schmonz_MT2BTReader::start(IOService *provider) {
@@ -331,9 +350,10 @@ void com_schmonz_MT2BTReader::armInterposeTimer() {
 IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg0,
                                                  void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
-    /* Clear our delegate only on the interrupt channel (PSM 19) where we set it.
-     * The control reader never set a delegate via listenAt, so clearing there is a no-op. */
-    if (self && !self->fIsControl && self->fChannel) self->fChannel->listenAt(self, 0);
+    /* Clear our listenAt delegate before we can be freed, else the channel's newDataIn derefs a
+     * dangling reader (UAF panic). BOTH channels now register a delegate (interrupt = incomingData,
+     * control = controlData), so clear whichever channel this reader owns. */
+    if (self && self->fChannel) self->fChannel->listenAt(self, 0);
     return kIOReturnSuccess;
 }
 
