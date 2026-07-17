@@ -1034,6 +1034,38 @@ or (b) re-admit Apple's `IOBluetoothHIDDriver` for device-level management only 
 tension, `bt-decisions.md §4`). Confirm the exact registration first (what keeps a Magic Mouse listed+reconnectable
 vs the MT2) before building — likely one live capture of a genuine device's boot reconnect vs ours.
 
+### DECISIVE 2026-07-17 — Layer A is DEVICE-SIDE, not host-side (login HCI capture)
+
+A boot LaunchDaemon ran an HCI connect-path DTrace (`tools/bt_login_capture.d`: `WriteScanEnable`,
+`Accept/RejectConnectionRequest`, `CreateConnection`, `CreateDeviceFromConnectionResults`,
+`IsAllowedIncomingL2CAPChannelForDevice`) live across the login window while the user clicked the trackpad.
+**Entire capture:** `WriteScanEnable = 0x02` (page-scan ON) at boot +4s — and then **nothing** for 240s.
+No incoming connection, no accept, no reject. **The host is page-scanning (ready to hear a reconnect); the
+MT2 simply never pages it on a login-screen click.** Corroborated by the earlier daemon result: a host
+`openConnection` also got HCI `0x04` **Page Timeout** (device didn't answer the host's page either).
+
+**Conclusion: the login-screen no-reconnect is DEVICE-SIDE — after a host reboot the MT2 is in a deep sleep
+it neither pages out of (on a click) nor answers a host page from.** In-session it's a lighter sleep, so the
+handshake-fixed click-reconnect works. This **overturns the whole host-side program above** (eviction /
+allowed-incoming / page-scan / virtual-cable-hold / an owned `IOBluetoothDevice` personality / a wake daemon):
+none can make a silent device transmit. `#3` and `#(a)/(b)` as Layer-A fixes are **ruled out** for this
+symptom — the host is already doing its half.
+
+**BUT it is NOT a device limitation — genuine-BT reconnects on click at login (observed; user certain,
+battery 100%).** So the device CAN page at login; owned just doesn't put it in the state to. The capture
+localizes *where* (device silent), not *why-unfixable*. The difference is host-side and we haven't done it.
+
+**Leading candidate — owned's HID handshake is INCOMPLETE.** `reference.md` "BT connect handshake" step 5 =
+`deviceReady`: **`SET_PROTOCOL` (`0x70 | bit`, subclass bit-inversion for 05AC:0309) + `SET_IDLE`** after both
+channels OPEN — the full HID device setup Apple's `IOBluetoothHIDDriver` performs. Owned-BT never wired it in
+(we send only `0xF1` + now `waitForChannelState`). The hypothesis: the full genuine HID setup is what leaves
+the device "properly HID-connected" and thus reconnect-ready across a reboot; a `0xF1`-only session streams but
+does not arm the device's reconnect. This is the same RE'd-but-unimplemented gap the `waitForChannelState` fix
+just closed for the in-session flap. **Next: implement step 5 (SET_PROTOCOL + SET_IDLE), reboot, test.** If the
+device still won't page at login after the full handshake, the remaining difference is captured by temporarily
+restoring genuine-BT and diffing its connect HID exchange vs ours (mind the genuine teardown panic).
+Battery ruled out (100%). Shutdown-disconnect cleanliness is a secondary candidate.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
