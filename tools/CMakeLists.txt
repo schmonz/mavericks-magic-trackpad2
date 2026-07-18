@@ -163,56 +163,43 @@ add_custom_target(usb-bt-handoff-uninstall
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_usb_bt_handoff.sh uninstall
   COMMENT "Uninstalling the USB->BT handoff LaunchDaemon")
 
-# ---- MavericksTrackpad2Updater.app (Sparkle 1.27 host) --------------------------------------------
+# ---- MavericksTrackpad2Updater.app (shared MavericksSparkle) --------------------------------------
 # Built only when a fetched Sparkle framework path is provided (MT2_SPARKLE_FRAMEWORK); otherwise the
-# rest of the tree still builds without the network fetch. Minimal-declaration main.m (no Sparkle
-# headers) -> builds on clang 6.0 (dev) and modern clang (CI).
+# rest of the tree still builds without the network fetch. The updater host now lives in
+# mavericks-shared-cmake (templated main.m/Info.plist); we just configure it per product here.
 if(MT2_SPARKLE_FRAMEWORK)
-  set(UPD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mt2_updater)
-  set(UPD_APP ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater.app)
-  configure_file(${UPD_DIR}/Info.plist.in ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater-Info.plist @ONLY)
-
-  add_executable(MavericksTrackpad2Updater ${UPD_DIR}/main.m)
-  set_target_properties(MavericksTrackpad2Updater PROPERTIES OUTPUT_NAME MavericksTrackpad2Updater)
-  target_compile_options(MavericksTrackpad2Updater PRIVATE -fobjc-arc)
-  target_link_libraries(MavericksTrackpad2Updater PRIVATE
-    "-F${MT2_SPARKLE_FRAMEWORK}/.."
-    "-framework Sparkle"
-    "-framework Cocoa"
-    "-Wl,-rpath,@executable_path/../Frameworks")
-
-  add_custom_command(TARGET MavericksTrackpad2Updater POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/MacOS
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/Frameworks
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${UPD_APP}/Contents/Resources
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:MavericksTrackpad2Updater> ${UPD_APP}/Contents/MacOS/MavericksTrackpad2Updater
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater-Info.plist ${UPD_APP}/Contents/Info.plist
-    # Product .icns (CFBundleIconFile) so Sparkle's dialog shows the trackpad, not a generic icon.
-    # Committed pre-built from Apple's TrackpadPicture.png (see the file's provenance) -> no CI dependency.
-    COMMAND ${CMAKE_COMMAND} -E copy ${UPD_DIR}/MavericksTrackpad2Updater.icns ${UPD_APP}/Contents/Resources/MavericksTrackpad2Updater.icns
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${MT2_SPARKLE_FRAMEWORK} ${UPD_APP}/Contents/Frameworks/Sparkle.framework
-    COMMENT "Assembling MavericksTrackpad2Updater.app")
+  include(MavericksSparkle)
+  mavericks_add_updater_app(
+    NAME MavericksTrackpad2Updater
+    PRODUCT_NAME "Mavericks Trackpad 2"
+    BUNDLE_ID com.schmonz.MavericksTrackpad2Updater
+    FEED_URL "https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml"
+    ED_PUBKEY "E8ZTStxLUfSWtTDg24bwnanLII20R27NVm+RxZtElGs="
+    ICON "${CMAKE_CURRENT_SOURCE_DIR}/mt2_updater/MavericksTrackpad2Updater.icns"
+    VERSION "${MT2_VERSION}"
+    AUTO_CHECK false
+    SPARKLE_FRAMEWORK "${MT2_SPARKLE_FRAMEWORK}"
+    LOG_PREFIX "MT2Updater"
+    CONFIRM_TITLE "Mavericks Trackpad 2 updated"
+    CONFIRM_BODY "The trackpad driver was updated and is ready to use."
+    RELAUNCH_MARKER "/tmp/.mt2updater-relaunched"
+    PANE_HINT_KEY "MT2AvailableUpdateVersion")
 
   mavericks_compat_guard(MavericksTrackpad2Updater)
 
   add_custom_target(updater-install
     COMMAND sudo ${CMAKE_COMMAND} -E rm -rf /usr/local/lib/mt2d/MavericksTrackpad2Updater.app
-    COMMAND sudo ${CMAKE_COMMAND} -E copy_directory ${UPD_APP} /usr/local/lib/mt2d/MavericksTrackpad2Updater.app
+    COMMAND sudo ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater.app /usr/local/lib/mt2d/MavericksTrackpad2Updater.app
     COMMAND ${CMAKE_COMMAND} -E echo "Installed /usr/local/lib/mt2d/MavericksTrackpad2Updater.app"
     COMMENT "Installing MavericksTrackpad2Updater.app")
   add_dependencies(updater-install MavericksTrackpad2Updater)
 endif()
 
-# ---- Native EdDSA signer + keygen (10.9-buildable Sparkle sign_update / generate_keys) -----------
-# Built only when a fetched orlp/ed25519 src dir is provided (MT2_ED25519_SRC = $(sh
-# cmake/fetch_ed25519.sh)). Uses the SAME ed25519 library Sparkle vendors, so signatures are
-# byte-identical to the official Swift sign_update and the framework accepts them -- but this builds
-# native on the 10.9 toolchain (plain C, no Swift). sign_update is habitual; keep it available locally.
+# ---- Native EdDSA signer + keygen (shared MavericksSparkle) --------------------------------------
+# Built only when a fetched orlp/ed25519 src dir is provided (MT2_ED25519_SRC). The signer/keygen
+# sources now live in mavericks-shared-cmake; this builds mavericks_sign_update + mavericks_generate_keys
+# (into ${CMAKE_BINARY_DIR}/sbin via the project-wide CMAKE_RUNTIME_OUTPUT_DIRECTORY).
 if(MT2_ED25519_SRC)
-  file(GLOB ED25519_SRCS "${MT2_ED25519_SRC}/*.c")
-  add_executable(mt2_sign_update   mt2_sign_update/sign_update.c   ${ED25519_SRCS})
-  add_executable(mt2_generate_keys mt2_sign_update/generate_keys.c ${ED25519_SRCS})
-  foreach(t mt2_sign_update mt2_generate_keys)
-    target_include_directories(${t} PRIVATE "${MT2_ED25519_SRC}" ${CMAKE_CURRENT_SOURCE_DIR}/mt2_sign_update)
-  endforeach()
+  include(MavericksSparkle)
+  mavericks_add_signer(ED25519_SRC "${MT2_ED25519_SRC}")
 endif()

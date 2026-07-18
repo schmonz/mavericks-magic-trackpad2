@@ -31,7 +31,7 @@ env:
   # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
   # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
   # deliberately to pick up shared-machinery changes.
-  MSC_REF: 3aebb2b4f699c58ffa88267e92c7c095c3b6ac21  # mavericks-shared-cmake
+  MSC_REF: f4cf6fb8922e58fc420c07a5c3662b8c511cec91  # mavericks-shared-cmake
 
 jobs:
   build-macos:
@@ -89,34 +89,33 @@ jobs:
           MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.mt2-sdk-cache
         run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_10_9_sdk.sh")" >> "$GITHUB_OUTPUT"
 
-      # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for MavericksTrackpad2Updater.app. Cache keyed on
-      # the fetch script (URL + pinned SHA live there), so bumping Sparkle auto-invalidates the cache.
+      # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for MavericksTrackpad2Updater.app. The fetch script
+      # (URL + pinned SHA) now lives in mavericks-shared-cmake, so key the cache on MSC_REF.
       - name: Cache the Sparkle framework
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-sparkle-cache
-          key: sparkle-1.27.3-${{ hashFiles('cmake/fetch_sparkle.sh') }}
+          key: sparkle-1.27.3-${{ env.MSC_REF }}
 
       - name: Fetch + checksum-verify + thin Sparkle 1.27.3
         id: sparkle
         env:
           MT2_SPARKLE_CACHE: ${{ github.workspace }}/.mt2-sparkle-cache
-        run: echo "path=$(sh cmake/fetch_sparkle.sh)" >> "$GITHUB_OUTPUT"
+        run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_sparkle.sh")" >> "$GITHUB_OUTPUT"
 
-      # orlp/ed25519 (the same lib Sparkle vendors) for our native mt2_sign_update, which signs the
-      # .pkg -- no Swift-binary dependency. Cache keyed on the fetch script (pinned commit + SHA live
-      # there), so bumping the lib auto-invalidates the cache.
+      # orlp/ed25519 (the same lib Sparkle vendors) for our native mavericks_sign_update, which signs the
+      # .pkg -- no Swift-binary dependency. Fetch script lives in mavericks-shared-cmake; key on MSC_REF.
       - name: Cache orlp/ed25519
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-ed25519-cache
-          key: ed25519-${{ hashFiles('cmake/fetch_ed25519.sh') }}
+          key: ed25519-${{ env.MSC_REF }}
 
       - name: Fetch + checksum-verify orlp/ed25519
         id: ed25519
         env:
           MT2_ED25519_CACHE: ${{ github.workspace }}/.mt2-ed25519-cache
-        run: echo "path=$(sh cmake/fetch_ed25519.sh)" >> "$GITHUB_OUTPUT"
+        run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_ed25519.sh")" >> "$GITHUB_OUTPUT"
 
       - name: Configure + build (x86_64 @ 10.9 userland + kext + updater + signer)
         run: |
@@ -153,10 +152,10 @@ jobs:
           # attrs (sparkle:edSignature="..." length="...") and self-checks the signature against the
           # key's public half, so a bad key fails HERE instead of shipping an update the framework
           # rejects. gen_appcast.sh inlines docs/release-notes/vVER.md as the <description>.
-          ENCLOSURE=$(build/sbin/mt2_sign_update -s "$SPARKLE_PRIVATE_KEY" "$PKG")
+          ENCLOSURE=$(build/sbin/mavericks_sign_update -s "$SPARKLE_PRIVATE_KEY" "$PKG")
           echo "enclosure: $ENCLOSURE"
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/mt2d-$VER.pkg"
-          sh cmake/gen_appcast.sh "$VER" "$URL" "10.9.5" "docs/release-notes/v$VER.md" "$ENCLOSURE" > build/appcast.xml
+          sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/gen_appcast.sh" "Mavericks Trackpad 2" "$VER" "$URL" "10.9.5" "docs/release-notes/v$VER.md" "$ENCLOSURE" > build/appcast.xml
           echo "=== appcast.xml ==="; cat build/appcast.xml
 
       - name: Upload build artifact (always)

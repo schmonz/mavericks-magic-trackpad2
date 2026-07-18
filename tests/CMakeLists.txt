@@ -98,5 +98,5 @@ endif()
 if(MT2_ED25519_SRC)
   add_test(NAME test_signer_roundtrip
     COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_signer_roundtrip.sh
-            $<TARGET_FILE:mt2_sign_update> $<TARGET_FILE:mt2_generate_keys>)
+            $<TARGET_FILE:mavericks_sign_update> $<TARGET_FILE:mavericks_generate_keys>)
 endif()

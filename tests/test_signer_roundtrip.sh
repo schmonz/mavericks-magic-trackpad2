@@ -1,12 +1,12 @@
 #!/bin/sh
-# Round-trip regression test for the native EdDSA signer (mt2_sign_update / mt2_generate_keys).
+# Round-trip regression test for the native EdDSA signer (mavericks_sign_update / mavericks_generate_keys).
 # Proves, with no network and no real secret:
 #   - a generated key signs, and the signature self-verifies (so the framework would accept it),
 #   - the exact Sparkle enclosure format is emitted,
 #   - signing is deterministic (RFC 8032 -> byte-identical, so it matches the official sign_update),
 #   - the signature is bound to the file content,
 #   - a corrupt key is rejected (the signer's self-check fails loudly rather than emitting garbage).
-# Args: $1 = mt2_sign_update binary, $2 = mt2_generate_keys binary (passed by ctest as TARGET_FILEs).
+# Args: $1 = mavericks_sign_update binary, $2 = mavericks_generate_keys binary (passed by ctest as TARGET_FILEs).
 set -eu
 
 SIGN="$1"; GEN="$2"

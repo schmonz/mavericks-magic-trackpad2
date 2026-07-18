@@ -1,10 +1,13 @@
 #!/bin/sh
-# Asserts cmake/gen_appcast.sh renders our Markdown release notes to the expected HTML fragment
-# (Sparkle shows <description> in a WebView; raw Markdown collapses into one line-joined blob).
+# Asserts the shared gen_appcast.sh (mavericks-shared-cmake) renders our Markdown release notes to the
+# expected HTML fragment (Sparkle shows <description> in a WebView; raw Markdown collapses to one blob).
 set -e
 here=$(dirname "$0")
 root=$(cd "$here/.." && pwd)
-gen="$root/cmake/gen_appcast.sh"
+# gen_appcast.sh now lives in mavericks-shared-cmake (located via the find_package user registry).
+_msc=$(cat "$HOME/.cmake/packages/MavericksSharedCMake/"* 2>/dev/null | head -1)
+gen="$_msc/scripts/gen_appcast.sh"
+[ -f "$gen" ] || { echo "SKIP: mavericks-shared-cmake not installed ($gen)"; exit 0; }
 
 tmp="${TMPDIR:-/tmp}/mt2-appcast-notes.$$"
 mkdir -p "$tmp"
@@ -49,7 +52,7 @@ echo "$real" | grep -qF '<ul>' || { echo "FAIL: v0.3.0 has no list"; echo "$real
 echo "$real" | grep -qF '<strong>Check for Updates, in the pane</strong>' || { echo "FAIL: v0.3.0 bold bullet lead"; echo "$real"; exit 1; }
 
 # full appcast path also embeds the rendered HTML (not raw Markdown) inside the CDATA
-full=$(sh "$gen" 0.3.0 https://example/pkg 10.9.5 "$root/docs/release-notes/v0.3.0.md" 'sparkle:edSignature="x" length="1"')
+full=$(sh "$gen" "Mavericks Trackpad 2" 0.3.0 https://example/pkg 10.9.5 "$root/docs/release-notes/v0.3.0.md" 'sparkle:edSignature="x" length="1"')
 echo "$full" | grep -qF '<h2>Mavericks Trackpad 2' || { echo "FAIL: appcast lacks rendered heading"; echo "$full"; exit 1; }
 
 echo OK
