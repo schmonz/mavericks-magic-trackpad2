@@ -1156,6 +1156,20 @@ keyboard-class CoD instead, minor 0x40, if the controller HW-reconnects keyboard
 tradeoff (mouse/keyboard CoD → pane shows non-trackpad; osax swizzle papers it; gestures unaffected). This is
 the concrete build target: seed/interpose a mouse-or-keyboard CoD where blued's UHE re-derivation reads it.
 
+**2026-07-18 — build obstacle pinned: classification is at PAIRING off the LIVE CoD, not cache-editable.** Tested
+setting `DeviceCache:04-4b…:ClassOfDevice` to mouse (9600) and keyboard (9536) with the MT2 disconnected, then
+bouncing blued: **blued did NOT re-classify the MT2 into any UHE slot** — it keeps the stored `HIDEmulationMouse`
+(Magic Mouse) and does not iterate DeviceCache to re-derive. Also: while CONNECTED, blued overwrites the cached CoD
+with the device's live `0x594` on every connect. So a cache CoD edit is a dead end — **`addDeviceToHIDEmulationMode`
+(the gate + slot add) runs at PAIRING/connect off the device's LIVE-advertised CoD**, not at respawn off the cache.
+**THE BUILD = interpose the CoD blued sees at classification time:** (a) rewrite the remote CoD in the HCI
+connection-complete/inquiry path so the MT2 presents as keyboard(0x2540)/mouse(0x2580) to blued (mission-aligned
+layer; `IOBluetoothFamily::CreateDeviceFromConnectionResults` reads the remote CoD — same fn family already RE'd in
+`tools/bt_login_capture.d`), or (b) DYLD-interpose blued's CoD read for our address, or (c) re-pair while (a)/(b)
+is active. Slot: keyboard (empty, keeps Magic Mouse). Verified device-free tooling: `/tmp/mt2_disc` (closeConnection),
+PlistBuddy on `DeviceCache`. **NEXT SESSION STARTS HERE:** find the HCI connection-complete CoD seam + whether our
+kext / a filter can rewrite it so blued classifies the MT2 as a keyboard once, arming the controller.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
