@@ -1170,6 +1170,52 @@ is active. Slot: keyboard (empty, keeps Magic Mouse). Verified device-free tooli
 PlistBuddy on `DeviceCache`. **NEXT SESSION STARTS HERE:** find the HCI connection-complete CoD seam + whether our
 kext / a filter can rewrite it so blued classifies the MT2 as a keyboard once, arming the controller.
 
+**2026-07-18 — ★ CORRECTION from disassembling `-[BluetoothHIDManager addDeviceToHIDEmulationMode:]` (blued
+`0x1000322bf`): the "class gate rejects minor 0x25" claim above is WRONG. The gate does NOT reject the trackpad.**
+Actual branch structure (device is the arg, `deviceClassMajor`/`deviceClassMinor` read off the `IOBluetoothDevice`):
+- `deviceClassMajor != 5` → return (MT2 major 5 PASSES).
+- `deviceClassMinor == 0x20` → **`HIDEmulationMouse`** slot.
+- else `isPointingDevice && (minor & 0xf) == 5` → **`HIDEmulationTrackpad`** slot ← **MT2 (minor 0x25) LANDS HERE — recognized, NOT rejected.**
+- else `minor == 0x10` → **`HIDEmulationKeyboard`** slot.
+- else → NSLog `"unrecognized HID device; NOT storing the link keys"` → return.
+The `"…not Apple-supported hardware"` reject (`0x32811`) is gated on **`r12` = is the HOST CONTROLLER an Apple-supported
+Broadcom** (a USB-product-ID bitmap test on the local controller), **NOT** on the device's class. On our genuine Apple
+Broadcom host that passes. So blued IS willing to register the MT2 — as a **Trackpad** — and calls
+`-[IOBluetoothHostController(BroadcomHostController) addHIDEmulationDevice:classOfDevice:linkKey:]` with the device's real
+CoD, provided a link key is present (`cmpb $1` on the fetched key at `0x32701`; else logs `"no link key"`).
+
+**WHERE it's called from:** a `[LinkKeyNotification]` handler in `EventNotifications.m` (blued `~0xa190`) — i.e. **at
+PAIRING**, when a link key is created for a device that passes `isConfiguredHIDDevice:`. Not at every connect; at the
+pair. Path: `writeLinkKeyToHardwareForDevice:` then `addDeviceToHIDEmulationMode:`.
+
+**SO WHAT ACTUALLY BLOCKS TRACKPAD LOGIN-RECONNECT (structural, disasm-confirmed):** blued persists both
+`HIDEmulationMouse` **and** `HIDEmulationMouseWasWrittenInHardware` (+ the same pair for Keyboard) — the
+`…WasWrittenInHardware` flag tracks the controller's autonomous boot-reconnect HW slot. For Trackpad there is only
+`HIDEmulationTrackpad` — **NO `TrackpadWasWrittenInHardware` string exists in blued.** So a trackpad link key can be
+stored in the config plist but is **never written into the controller's autonomous-reconnect hardware slot**; the
+controller (which HW-re-pages stored devices at reset before the OS is up) only tracks Mouse + Keyboard. THIS — not a
+class gate — is why the MT2 doesn't reconnect. The KB's overall direction ("wear a mouse/keyboard identity for the
+reconnect layer") is therefore RIGHT; only the stated reason was wrong.
+
+**REVISED SEAM (the real target):** make blued's `addDeviceToHIDEmulationMode:` take the **KEYBOARD** branch for the MT2
+(`deviceClassMinor == 0x10`, major already 5) **at pairing time**, so the key lands in the empty `HIDEmulationKeyboard`
+slot + its `…WasWrittenInHardware` HW path. Keyboard slot is EMPTY on the live host (`defaults read
+com.apple.Bluetooth DaemonControllersConfigurationKey` → only `HIDEmulationMouse = 34-15-9e-cd-0e-2c` Magic Mouse; no
+keyboard/trackpad slot, and the MT2 has NO slot at all today). Choose keyboard (empty) over mouse (displaces Magic
+Mouse). Seam value = `-[IOBluetoothDevice deviceClassMinor]` (and `classOfDevice`, the arg passed to `addHIDEmulationDevice`)
+as READ INSIDE BLUED at pairing. Cleanest surgical option: **DYLD-interpose in blued** — swizzle
+`deviceClassMinor`/`deviceClassMajor`/`classOfDevice` to keyboard-class **only for our MT2 address**, then re-pair once.
+(A kext-level CoD rewrite in IOBluetoothFamily has a much larger blast radius — pane, `isPointingDevice`, everything —
+so blued-local interposition is preferred.)
+
+**BEFORE ANY CODE — the cheap on-device oracle (U1):** the MT2 has no UHE slot at all today, so we don't yet know the
+MT2 pairing even REACHES `addDeviceToHIDEmulationMode` (maybe `isConfiguredHIDDevice:` is false, or synthetic/manual-start
+BT bypasses the normal LinkKeyNotification). blued's branch NSLogs to ASL (`"major class: %d minor class: %d"`,
+`"unrecognized HID device…"`, `"…no link key"`, `"addHIDEmulationDevice, error = 0x%04X"`), or enable
+`/var/log/blued.log` via `IOBluetoothFileLogHelper`. **Next step: watch the log while doing a FRESH MT2 BT pair and read
+which branch fires** — that tells us whether the seam is "flip trackpad→keyboard slot" or "the call never happens for us."
+Only then write the interposer.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
