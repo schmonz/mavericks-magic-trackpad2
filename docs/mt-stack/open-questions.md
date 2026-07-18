@@ -1097,6 +1097,36 @@ L2CAP match + blued's management (DeviceID SDP / EIR / `IOBluetoothDevice` node)
 present MT1 there without disturbing the real L2CAP link. Check `device-identity-map.md` first (may already RE
 the identity-read path).
 
+### ★ MECHANISM FOUND 2026-07-18 — login reconnect = controller HID-Emulation (UHE), gated on device CLASS
+
+RE of **blued** pinned it (device-free, provable on this host). Login reconnect is **not** an OS/blued
+software page — it's the **Broadcom controller's HID Emulation Mode (UHE)**: blued writes a recognized HID
+device's link key **into the controller hardware** (`addDeviceToHIDEmulationMode:` → `BroadcomHostController
+addHIDEmulationDevice:classOfDevice:linkKey:` → `BluetoothHCIWriteStoredLinkKey`), and the **controller
+autonomously re-pages + reconnects that device at boot/reset, before the OS is up** (`DisableHIDAutoConnectOnReset`
+gates it). **It is Mouse + Keyboard ONLY** — the written-in-hardware paths are `HIDEmulationMouseWasWrittenInHardware`
+/ `HIDEmulationKeyboardWasWrittenInHardware`; there is **no Trackpad-in-hardware**. Gate log:
+`"addDeviceToHIDEmulationMode … not Apple-supported hardware"` / `"unrecognized HID device; NOT storing the link
+keys to the module."`
+
+**PROOF on-host:** `com.apple.Bluetooth` has `HIDEmulationMouse = "34-15-9e-cd-0e-2c"` (Magic Mouse — key in
+controller HW → reconnects every boot) and **NO** `HIDEmulationTrackpad` for our MT2 `04-4b`. The MT2 doesn't
+reconnect **because it is a trackpad** (CoD `0x594`); the controller only HW-reconnects mice/keyboards. Same
+host/blued — the ONLY difference is device class. (Explains the DTrace: host page-scan on, device silent — the
+*controller* would page it if its key were stored, but it isn't.)
+
+**THE FIX (the "wear a known identity" idea, made precise):** register the MT2 into HID-Emulation as a
+**Mouse-class** device so the controller stores its key + autonomously reconnects it. The two classification
+systems are **independent** (this file's "two classification systems … do NOT share a signal"; the multitouch
+layer keys on `parser-type`/geometry and NEVER consults CoD) — so the device can be a **mouse for
+HID-emulation/reconnect** AND a **trackpad for gestures/pane** at once. We ALREADY RE'd the API
+(`device-identity-map.md` comb#2): `BroadcomHostController addHIDEmulationDevice:classOfDevice:linkKey:` is a
+**real Broadcom impl** (HCI vendor cmd) + `BluetoothHCIWriteStoredLinkKey:inDeviceAddress:inLinkKey:`. Call
+`addHIDEmulationDevice` for the MT2 with a **mouse CoD + its link key**, decoupled from its real trackpad CoD.
+**NEXT:** trace the exact call — `addHIDEmulationDevice` args/signature, where to get the stored link key
+(`ReadStoredLinkKey`), and the call point (our reader's connect, or a userland helper on connect notification).
+Same shape for USB later. NOT `RecantConnection` (disconnect). Wear a MOUSE, not an MT1, for the reconnect layer.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
