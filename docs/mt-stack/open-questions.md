@@ -1066,6 +1066,37 @@ device still won't page at login after the full handshake, the remaining differe
 restoring genuine-BT and diffing its connect HID exchange vs ours (mind the genuine teardown panic).
 Battery ruled out (100%). Shutdown-disconnect cleanliness is a secondary candidate.
 
+### RESOLVED root cause + NEW direction 2026-07-17/18 — reconnect is blued device-management; wear a known identity
+
+Exhaustive on-device session. **Ruled out (all tested):** (1) deviceReady handshake — `SET_PROTOCOL(0x71)`
++`SET_IDLE(0)` on control (RE'd from `IOBluetoothHIDDriver::setProtocol`@0x5cd2 / `setIdle`@0x5dbc; the
+`0x5AC:0x309` bit-inversion does NOT apply to our 0x4C:0x265 MT2). Fires clean in-session (multitouch confirmed
+in 1 enable vs old 6–24), but did NOT change cold-boot: device still silent at login. Per-connection commands
+don't persist to arm the next boot. (2) host-side wake daemon — `openConnection` → HCI `0x04` Page Timeout. (3)
+letting Apple's HID driver take the channel by lowering our probe to -1000 — **our specific VID/PID+PSM match
+still wins**; Apple has **NO HID personality for VID 76/PID 613** (only VID/PID-specific ones + a generic that
+loses to us). This is the exact reason the project manual-started BNB originally.
+
+**ROOT (definitive):** login reconnect is **blued's HID-device management** — it reconnects devices it recognizes
+(`hidDeviceWeAreConnectingTo`, `setConnectableAdvertising:`, `addToFavorites`, `HIDNormallyConnectable`, keyed on
+the device having an Apple personality / SDP HID reconnect attrs `HIDReconnectInitiate`/`HIDNormallyConnectable`;
+`RecantConnection` (feature report 0x41) is the *dis*connect signal, not reconnect). **Owned-BT's direct-L2CAP
+grab bypasses blued's HID flow**, so the MT2 is never kept reconnectable. LIVING PROOF on this host: the paired
+`34-15` **Magic Mouse reconnects at every boot** (Apple has its personality) while our MT2 stays silent — same
+host, same blued, same page-scan-on. Not a device limitation; a management gap.
+
+**NEW DIRECTION (user, mission-aligned — the layer, not a driver):** don't reimplement blued's reconnect — make
+the device **wear an identity the system already reconnects** (a Magic Trackpad 1: VID 1452 / PID 782, which
+Apple's `BNBTrackpadDevice` matches). Same pattern we already use one layer up (`MT2HIDShell` wears the MT1
+identity at `IOHIDInterface` for cursor actuation) — push it DOWN to the BT identity layer. If the MT2 presents
+as an MT1 at the BT level, Apple's `BNBTrackpadDevice` matches it **naturally** → login reconnect + native
+multitouch + HUD/pane identity for free, AND **no manual-start teardown panic** (natural match rides Apple's own
+clean lifecycle; the panic was OUR manual-start racing teardown). This could dissolve the owned-vs-genuine
+tension entirely. **Next:** find where the BT device identity (VID/PID) is read for Apple's `BNBTrackpadDevice`
+L2CAP match + blued's management (DeviceID SDP / EIR / `IOBluetoothDevice` node), and whether the layer can
+present MT1 there without disturbing the real L2CAP link. Check `device-identity-map.md` first (may already RE
+the identity-read path).
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
