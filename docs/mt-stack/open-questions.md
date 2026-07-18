@@ -1127,6 +1127,22 @@ HID-emulation/reconnect** AND a **trackpad for gestures/pane** at once. We ALREA
 (`ReadStoredLinkKey`), and the call point (our reader's connect, or a userland helper on connect notification).
 Same shape for USB later. NOT `RecantConnection` (disconnect). Wear a MOUSE, not an MT1, for the reconnect layer.
 
+**2026-07-18 — plist shortcut is DEAD; the lever is blued's CLASS classification.** Tested editing the nested
+`DaemonControllersConfigurationKey → <controller-addr> → HIDEmulationMouse` (and `…Keyboard`) to our MT2:
+**blued RE-DERIVES every UHE slot from the actually-paired mice/keyboards on each respawn/boot and drops
+anything else** — our edit was reverted to the Magic Mouse (mouse slot) and removed entirely (keyboard slot).
+So we cannot just park the MT2 in a slot, and a direct `addHIDEmulationDevice` call would likewise be evicted
+on the next re-derivation. **The only durable path: make blued CLASSIFY the MT2 as a mouse/keyboard so its OWN
+machinery arms the controller** — i.e. the MT2 must present a mouse (or keyboard) CoD where blued reads it.
+Tradeoffs: gestures unaffected (multitouch layer is CoD-independent); the Bluetooth/Trackpad PANE keys on CoD
+minor `0x25` so it'd show as mouse (papered over by the osax swizzle we already run); slot choice = keyboard
+(empty, keeps Magic Mouse) vs mouse (displaces the unused Magic Mouse). **OPEN — RE next:** (1) the exact
+`"not Apple-supported hardware"` gate criteria — is UHE-eligibility keyed on **CoD** (wear a mouse CoD) or on a
+specific **Apple mouse/keyboard MODEL VID/PID** (wear that model)? (2) WHERE blued reads that classifying
+identity — the device's live advertisement (overwrites the paired-store cache on every connect) vs the cached
+paired-store record — and whether the layer can present it durably. The single-slot + re-derivation constraints
+are the "weird constraint" the whole approach must satisfy.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
