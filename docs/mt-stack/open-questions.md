@@ -1143,6 +1143,19 @@ identity — the device's live advertisement (overwrites the paired-store cache 
 paired-store record — and whether the layer can present it durably. The single-slot + re-derivation constraints
 are the "weird constraint" the whole approach must satisfy.
 
+**2026-07-18 — gate is CoD-CLASS-based, NOT model-based (good).** The UHE eligibility gate in blued (the fn
+holding `"not Apple-supported hardware"` @vmaddr `0x1000327xx`) LOGS `"major class: … minor class: …"` right at
+the decision and branches on the **major/minor device class**, not on a specific VID/PID model. CoD math:
+Magic Mouse CoD `0x2580` = major 5 / **minor 0x20 (mouse)** — eligible; our MT2 CoD `0x594` = major 5 /
+**minor 0x25 (trackpad)** — rejected. So the lever is confirmed simple: **present a mouse-class CoD (minor 0x20,
+e.g. `0x2540`/`0x2580`)** and blued classifies the MT2 as a mouse → puts it in `HIDEmulationMouse` → arms the
+controller. No specific Apple model needed. REMAINING: (1) WHERE to present the mouse CoD durably so blued's
+re-derivation reads it — the paired-store `ClassOfDevice` cache (settable) vs the device's live advertisement
+(re-writes on connect); mind that the mouse slot is single + Magic-Mouse-occupied (so consider the empty
+keyboard-class CoD instead, minor 0x40, if the controller HW-reconnects keyboards — it does), and (2) the pane
+tradeoff (mouse/keyboard CoD → pane shows non-trackpad; osax swizzle papers it; gestures unaffected). This is
+the concrete build target: seed/interpose a mouse-or-keyboard CoD where blued's UHE re-derivation reads it.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
