@@ -227,6 +227,20 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
          * omitting it is the ~1s flap where PSM 19 never opens. The 0xF1 enable stays deferred (below). */
         self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::controlData);
         self->fChannel->waitForChannelState(kIOBluetoothL2CAPChannelStateOpen);
+        /* Genuine handshake step 5 = deviceReady (reference.md "BT connect handshake"): the HID device
+         * setup Apple's IOBluetoothHIDDriver does on connect that owned-BT skipped entirely —
+         * SET_PROTOCOL(report) then SET_IDLE(0) on the control channel. RE'd from IOBluetoothHIDDriver:
+         * setProtocol sends one byte 0x70|bit (0x70=boot, 0x71=report); the 0x5AC:0x0309 bit-inversion
+         * does NOT apply to our MT2 (BT-SIG 0x4C:0x0265), so report = 0x71. setIdle sends {0x90, rate};
+         * rate 0 = report-on-change. The device already streams report 0x31, so SET_PROTOCOL(report) is a
+         * no-op for streaming. HYPOTHESIS (open-questions.md Layer A): completing the full HID setup is
+         * what leaves the device "properly HID-connected" and thus reconnect-ready at the login screen —
+         * a 0xF1-only session streams but does not arm the device's cold-boot reconnect. */
+        static const uint8_t kSetProtocolReport[] = { MT2_HIDP_SET_PROTOCOL | 0x01 }; /* 0x71 */
+        static const uint8_t kSetIdle[]           = { 0x90, 0x00 };                   /* SET_IDLE rate 0 */
+        self->fChannel->sendTo((void *)kSetProtocolReport, sizeof(kSetProtocolReport), 0, self, 0, 0);
+        self->fChannel->sendTo((void *)kSetIdle, sizeof(kSetIdle), 0, self, 0, 0);
+        IOLog("MT2BTReader: deviceReady — sent SET_PROTOCOL(report 0x71) + SET_IDLE(0) on control\n");
     }
     return kIOReturnSuccess;
 }
