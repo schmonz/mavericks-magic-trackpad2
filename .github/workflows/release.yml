@@ -31,7 +31,7 @@ env:
   # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
   # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
   # deliberately to pick up shared-machinery changes.
-  MSC_REF: f4cf6fb8922e58fc420c07a5c3662b8c511cec91  # mavericks-shared-cmake
+  MSC_REF: 8bc9fc38d40c40aaa5c95aefe21f29c64ce34d31  # mavericks-shared-cmake
 
 jobs:
   build-macos:
@@ -39,16 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Install mavericks-shared-cmake so `cmake -S . -B build` can find_package it.
-      # It self-registers in the per-user CMake package registry, so no CMAKE_PREFIX_PATH
-      # is needed downstream. Pinned to MSC_REF (above). The install prefix also holds
-      # the shared scripts/ used by the SDK-fetch step below.
-      - name: Install mavericks-shared-cmake (pinned)
-        run: |
-          git clone https://github.com/schmonz/mavericks-shared-cmake /tmp/msc
-          git -C /tmp/msc checkout --quiet "$MSC_REF"
-          cmake -S /tmp/msc -B /tmp/msc/build
-          cmake --install /tmp/msc/build --prefix "$HOME/.local"
+      # shared-cmake installs itself via its own action (HTTPS via the runner token). It self-registers
+      # in the per-user CMake package registry (no CMAKE_PREFIX_PATH downstream), and the install prefix
+      # holds the shared scripts/ used by the SDK-fetch step. @<sha> matches MSC_REF above (cache keys).
+      - name: Install mavericks-shared-cmake
+        uses: schmonz/mavericks-shared-cmake/.github/actions/install@8bc9fc38d40c40aaa5c95aefe21f29c64ce34d31  # mavericks-shared-cmake
 
       - name: Determine version (from CMake MT2_VERSION — single source of truth)
         id: ver
