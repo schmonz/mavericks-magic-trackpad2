@@ -1467,3 +1467,19 @@ scales, i.e. Apple ALSO works around a slow device enable rather than having an 
 device-level; A already mitigates it (basic cursor at login while it settles)". NEXT SESSION: finish the genuine enable
 RE (deviceReady @0x18d6 + setProtocol @0x1bfa + the setReport report id/sequence + those timer semantics) and compare to
 our reEnableInGate; decide whether to mirror the genuine timing or accept the lag as device-level.
+
+**2026-07-19 — ★ CORRECTION to the entry above: the enable-lag is NOT device-level — it's OUR 10.9 enable.** User
+(ground truth): the MT2 enters multitouch mode INSTANTLY on newer macOS. So the device is fine given the right enable;
+our 10.9 owned-stack enable is the bug. The ~14s/3.6s timers in 10.9's IOAppleBluetoothHIDDriver::deviceReady are a RED
+HERRING — 10.9 predates native MT2 support, so its "genuine" BT-multitouch path was never a real MT2 driver. Do NOT
+conclude "device-level / accept it". Corrected dig (next session):
+1. **Reliable repro (no reboot):** the cold state must be reproduced by getting the MT2 into Apple-HID BASIC mode first
+   (`kextunload MT2Gesture` + `mt2_usb_bt_handoff --bounce-once` → confirm `IOBluetoothHIDDriver`=1), THEN reload our
+   kext + bounce + `debug.mt2_log=2` and time from load to the first `MT2: BT shim saw report id 0x31`. (First attempt
+   was confounded: after unload, Apple HID needs a bounce to actually attach; and a stale "multitouch confirmed" from a
+   prior boot matched the grep — use a fresh log marker.)
+2. **Capture the device's RESPONSE to our 0xF1 SET_REPORT** during the dead window (does it ACK/NAK/ignore?) — install
+   the control-channel (PSM 17) shim EARLY (before streaming) or sniff L2CAP. Distinguishes transport-not-landing vs
+   device-accepts-but-delays.
+3. **Compare to a known-correct enable:** Linux `hid-magicmouse` drives the MT2 (public enable sequence); and our USB
+   path works locally — check whether USB multitouch is instant vs BT slow, then diff the two enable paths.
