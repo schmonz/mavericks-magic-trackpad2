@@ -43,7 +43,7 @@ jobs:
       # in the per-user CMake package registry (no CMAKE_PREFIX_PATH downstream), and the install prefix
       # holds the shared scripts/ used by the SDK-fetch step. @<sha> matches MSC_REF above (cache keys).
       - name: Install mavericks-shared-cmake
-        uses: schmonz/mavericks-shared-cmake/.github/actions/install@8bc9fc38d40c40aaa5c95aefe21f29c64ce34d31  # mavericks-shared-cmake
+        uses: schmonz/mavericks-shared-cmake/.github/actions/install@35428eeff13fa1e66c9aa40ad678cdc512f6dfb9  # mavericks-shared-cmake
 
       - name: Determine version (from CMake MT2_VERSION — single source of truth)
         id: ver
