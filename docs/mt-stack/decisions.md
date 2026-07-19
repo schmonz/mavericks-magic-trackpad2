@@ -753,3 +753,41 @@ isolated, low priority): the exact gap — device-enable handshake vs. recognize
 teased apart (the descriptor faithfully omits 0x28, as the real MT1 does; the real device streams after
 its enable + in a context the bare vhid lacks). Consequence for the MT2→synthetic A/B: A/B genuine
 against the fabricated-AMD terminal, NOT an input-report variant.
+
+---
+
+### BT reader → VoodooInput satellite (dogfood) — SHIPPED + on-device validated (2026-07-19)
+
+The MT2 **BT** reader now speaks the VoodooInput interface as a genuine satellite instead of owning a
+terminal directly: on interrupt-channel bind it `setProperty("VoodooInputSupported")` + advertises its
+coordinate span (`Logical Max` = `MT2_SPAN_{X,Y}` = 7612 × 5065) + `registerService()`; the mux
+(`com_schmonz_VoodooInput`) attaches as its client. `incomingData` decodes `0x31` → `mt2_frame` →
+`mt2_voodoo_from_frame` → `messageClient(kIOMessageVoodooInputMessage, mux)`. The mux owns the terminal:
+`mt2_frame_from_voodoo` → `mt2_session_frame` (identical `MT2_EVENT_DRIVEN`/`mt2_policy_default`
+conditioning) → its own fabricated AMD. This makes the MT2 driver eat the interface we expose to third
+parties (the sample satellite is retired — the BT reader IS the worked example) and upstreamable.
+
+- **USB is untouched** (genuine terminal; the two-terminal-strategy split is permanent, not tech debt —
+  see the ② closure + `usb-decisions.md`). Only BT is a satellite.
+- **Coordinate round-trip is EXACT** by advertising `Logical Max = span`: the mux's fixed-point rescale
+  becomes `min + (mt2 − min)` — proven by `tests/test_voodoo_translate.c`.
+- **Fidelity envelope, accepted:** the wire (`VoodooInputTransducer`) has no ellipse fields, so
+  `orientation`/`touch_major`/`touch_minor` are dropped and `mt1_encode` falls back to constants. The BT
+  characterization golden moved by exactly ONE byte (`GOLD_BT_2F[11] 0x85→0x81`, one contact's orientation
+  nibble). **On-device: palm rejection is unaffected** — the ellipse loss is perceptually free (pressure +
+  contact-count, which we keep, carry rejection). So no side channel; the loss is deliberate + validated.
+- **Two bugs found + fixed by real hardware that the sample never exposed:**
+  1. **Battery** published on the reader's fabricated-AMD node, which the refactor removed. Repointed to
+     the mux's terminal AMD node via a `gBtMux` bridge (`synthCtx()`), keeping battery on the same mechanism.
+  2. **`mux_post_button_edge` was a no-op stub** — the mux detected the physical-click edge (via
+     `mt2_session_frame`) but dropped the mask, so press-to-click was dead while tap-to-click (Apple-
+     synthesized) worked. Fixed to `mt2_synth_amd_button(synthCtx(), mask)`, mirroring `mux_feed_frame`.
+     Lesson: a stubbed sink handler only surfaces under a client that exercises it — the sample circled a
+     cursor and never clicked.
+- **On-device validated (BT):** cursor, tap-to-click, physical click (1- & 2-finger), 2-finger scroll,
+  4-finger swipe, reconnect (BT bounce → BT=2), palm rejection. Characterization equivalence gate passes
+  (symbol surface unchanged). Commits `1137282`→`dac1984` on `main` (pushed).
+- **KNOWN + expected, next project:** the BT **prefpane shows NoTrackpad** and battery doesn't render —
+  the injected osax keyed on the fabricated AMD in its OLD location (the reader's nub); the terminal moved
+  under the mux nub, so osax detection no longer finds it. This is the exact seam the **prefpane/battery/
+  name-onto-the-mux** project owns; the in-kext battery publish is already repointed to shrink that step.
