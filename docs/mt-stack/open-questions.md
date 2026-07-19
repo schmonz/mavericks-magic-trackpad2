@@ -1499,3 +1499,17 @@ the device back to mouse mode after our initial enable"). We no longer use BNB, 
 constant re-enable may itself be RESETTING the device's just-started stream every second, causing the lag. TEST: send
 0xF1 ONCE (or stop re-enabling after the first SUCCESS handshake) and time the first frame on the repro loop. If faster
 → the retry meant to help was the bug (matches "instant on newer macOS", which does a clean one-shot enable).
+
+**2026-07-19 — ★★ enable-lag RESOLVED: it was a TOUCH-TIMING artifact in the takeover flow, NOT the re-enable spam (my
+hypothesis was WRONG).** Deconfounded test: user moves the trackpad CONTINUOUSLY through the takeover, so the first 0x31
+marks device-ready (not the user's reaction time). Result — BOTH the single-0xF1 experiment AND the production
+per-second-re-enable kext gave `multitouch confirmed (first frame after 1 enables)` ≈ 1s. So: (a) the re-enable spam is
+NOT the cause (both instant); (b) every earlier "~16–39s lag" in the TAKEOVER (A) case was just the gap until the user
+happened to touch — the device was enabled the whole time and streamed on the first touch. **The A takeover is FAST:
+instant basic cursor at login (Apple HID) + multitouch on the first post-login touch (~1 enable). A is a COMPLETE
+solution — nothing to fix here.** The genuinely-slow case remains cold-boot-our-reader-from-scratch (10:32: user touched
+at the login screen, zero 0x31 for ~30s) — but A never uses that path (Apple HID primes the device at the login screen,
+then our reader warm-takes-over fast). Likely why: Apple's IOBluetoothHIDDriver does the full HID setup first; our
+warm-takeover inherits a primed device. The single-0xF1 simplification is OPTIONAL (correct + tidy, both work) — not
+needed. Repro method (durable): unload our kext + bounce (Apple HID basic) → reload + bounce → USER TOUCHES CONTINUOUSLY
+→ read `first frame after N enables` (N≈device-ready ticks; do NOT gate on a "touch now" cue — there's no live signal).
