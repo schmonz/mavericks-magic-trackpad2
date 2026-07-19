@@ -1304,6 +1304,30 @@ adopts the controller entry + link key but does NOT write a plist UHE slot (that
 the `…WasWrittenInHardware` plist bookkeeping is also required — is exactly what the **reboot acid test** (still pending)
 will decide. Current state: MT2 cleanly armed as keyboard-class in the controller, connected, ready for that test.
 
+**2026-07-19 — ★★ REBOOT ACID TEST: FAILED ("zilch" — no MT2 reconnect at the login screen). The runtime `0xFC37`
+write does NOT survive a cold boot; the warm-restart "adopt" was misleading.** Boot log (pid 45, cold boot 08:37):
+`BluetoothHIDManager.m:721 hciControllerOnline; disableHIDAutoConnectOnReset? 0` (auto-connect-on-reset IS enabled),
+then blued re-pages the **Magic Mouse** from its `HIDEmulationMouse` plist slot (`link key found … 34-15-9e-cd-0e-2c` →
+`Create connection failed (0x4)` — mouse was off) — but **ZERO** MT2 HID-emul activity: no `readHIDEmulationDevice:
+04-4b`, no connection attempt. Post-boot a warm `killall blued` no longer reads back the MT2 entry either. **Conclusion:
+our directly-injected controller entry is volatile — a full power cycle wipes the controller's HID-emul table, and only
+entries backed by a blued PLIST `HIDEmulation` slot get re-armed at boot (blued re-writes its plist slots into the
+controller when `hciControllerOnline`).** The MT2 has no plist slot (writing one needs blued's `addDeviceToHIDEmulationMode`
+→ gated by `isConfiguredHIDDevice`, unreachable via manual-start). So the whole `addHIDEmulationDevice`-from-our-layer
+seam, while reachable and correct at runtime, is a DEAD END for login reconnect on its own: it never persists the plist
+slot that survives boot. (Earlier "plist shortcut is DEAD — blued re-derives/drops a hand-edited slot" compounds this.)
+
+**REDIRECT — two live directions:** (A) get the MT2 a DURABLE plist `HIDEmulationKeyboard` slot — either make it
+`isConfiguredHIDDevice` (fake the `configureHIDDevice:` DO call as mouse/keyboard so blued's own machinery writes +
+re-derives the slot), or write the plist slot AND defeat the re-derivation; both fight blued. (B) **[LIKELY SIMPLER,
+mission-aligned] our OWN boot-time reconnect** — a `RunAtLoad` root LaunchDaemon that, once `blued` is up at the login
+screen, does `openConnection` to the MT2 using its stored link key (the exact primitive `tools/mt2_bt_bounce` /
+`mt2_usb_bt_handoff` already use). This sidesteps UHE/blued's plist machinery entirely: host pages the device at boot
+instead of relying on the controller's autonomous store. OPEN for (B): does a login-screen LaunchDaemon `openConnection`
+actually bring the link up pre-login, and — the separate sub-question — does our manual-start kext then DRIVE the cursor
+at the login screen (the link forming ≠ multitouch working). Next session: prototype (B) as a boot LaunchDaemon +
+re-test at login.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
