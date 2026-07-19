@@ -1,4 +1,8 @@
-/* mt2_usb_bt_handoff — no-click USB→BT handoff (the "I unplug the cable and it just keeps working" bit).
+/* mt2_usb_bt_handoff — resident BT connection-keeper for our trackpad: keeps the paired MT2 connected
+ * with no physical tap. Pages it (openConnection) on three triggers: a repeating timer (login-screen
+ * wake at boot + "power it on later and it just connects"), and the USB-removal edge (unplug -> BT).
+ * (Rename to a broader name is a deferred follow-up, gated on the reboot acid test.) Original note:
+ * no-click USB→BT handoff (the "I unplug the cable and it just keeps working" bit).
  *
  * When the MT2 is on USB, cabling drops its Bluetooth link (single-transport device,
  * docs/mt-stack + [[mt2-single-transport-at-a-time]]). Unplug the cable and the BT radio is
@@ -25,23 +29,35 @@
 #include <string.h>
 #include "mt2_presence_observer.h"
 #include "mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
+#include "mt2_reconnect_policy.h"   /* mt2_reconnect_should_page — page iff ours-by-class AND disconnected */
 
-/* Wake the deep-idle BT MT2 the same way mt2_bt_bounce does: a plain openConnection. When the USB
- * cable is pulled the BT link is already down (single-transport device), so this is a pure wake —
- * no closeConnection needed. Skip if somehow already connected (idempotent / spurious-fire safe). */
-static void wake_bt_mt2(void) {
+/* Serial queue for ALL paging. openConnection blocks ~5s on page timeout when the device is off,
+ * so it must never run on the main runloop (which drives the presence observer). Serialized so
+ * overlapping triggers (timer, USB edge) never page concurrently. */
+static dispatch_queue_t reconnect_queue(void) {
+    static dispatch_queue_t q;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ q = dispatch_queue_create("com.schmonz.mt2.reconnect", DISPATCH_QUEUE_SERIAL); });
+    return q;
+}
+
+/* Actuator: page every paired device that is ours-by-class AND not already connected. Idempotent
+ * (skips connected devices -> a quiet no-op when nothing needs waking) and safe on any trigger.
+ * `why` labels the trigger in the log. Generalizes the old wake_bt_mt2. */
+static void reconnect_matched(const char *why) {
     @autoreleasepool {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
-        int n = 0;
         for (IOBluetoothDevice *d in devs) {
-            if (!mt2_cod_is_mt2([d getClassOfDevice])) continue;
-            if ([d isConnected]) { n++; continue; }   /* already up — nothing to wake */
-            IOReturn ro = [d openConnection];          /* synchronous baseband re-establish */
-            NSLog(@"mt2_usb_bt_handoff: USB removed -> openConnection %@ -> 0x%08x", [d addressString], ro);
-            n++;
+            if (!mt2_reconnect_should_page([d getClassOfDevice], [d isConnected])) continue;
+            IOReturn ro = [d openConnection];   /* synchronous baseband re-establish */
+            NSLog(@"mt2_usb_bt_handoff: [%s] openConnection %@ -> 0x%08x", why, [d addressString], ro);
         }
-        if (!n) NSLog(@"mt2_usb_bt_handoff: USB removed but no paired CoD-0x594 MT2 found");
     }
+}
+
+/* Fire the actuator off the main runloop (used by edge/timer triggers). */
+static void reconnect_matched_async(const char *why) {
+    dispatch_async(reconnect_queue(), ^{ reconnect_matched(why); });
 }
 
 /* Post-update/post-reload BOUNCE: a full closeConnection -> openConnection on the MT2, forcing the BT
@@ -76,7 +92,7 @@ static void bounce_bt_mt2(void) {
  * (measured on-device 2026-07-09). ASYMMETRIC BY DESIGN preserved: only USB_REMOVE wakes BT. */
 static void on_presence(presence_action_t action, presence_event_t event, void *ctx) {
     (void)action; (void)ctx;
-    if (event == PRESENCE_EV_USB_REMOVE) wake_bt_mt2();
+    if (event == PRESENCE_EV_USB_REMOVE) reconnect_matched_async("usb-remove");
 }
 
 int main(int argc, const char *argv[]) {
@@ -89,7 +105,7 @@ int main(int argc, const char *argv[]) {
          * cases are skipped/error-return with no loop. */
         for (int i = 1; i < argc; i++) {
             if (argv[i] && strcmp(argv[i], "--wake-once") == 0) {
-                wake_bt_mt2();
+                reconnect_matched("wake-once");
                 return 0;
             }
             /* Post-update: the link is up but the multitouch stream stalled across the kext reload, so a
