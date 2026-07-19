@@ -20,6 +20,7 @@ class com_schmonz_MT2BTReader : public IOService {
     int fInterposeTries;            /* (unused; kept for resetTransportState symmetry) */
     int fReEnableCount;             /* # of 0xF1 re-enables sent before first frame */
     bool fStreaming;                /* true after incomingData delivers the first real multitouch frame */
+    IOService *fMux;                /* the bound VoodooInput mux (found lazily by VOODOO_INPUT_IDENTIFIER) */
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;

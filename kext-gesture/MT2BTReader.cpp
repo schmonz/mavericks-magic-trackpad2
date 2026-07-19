@@ -1,11 +1,13 @@
 /* MT2BTReader — the Bluetooth transport reader for the Magic Trackpad 2.
  *
  * Two halves. PER-TRANSPORT (the ~3%): bind the L2CAP channels, decode each raw MT2 0x31
- * frame (mt2_bt_decode), and declare BT config — BNB props, sensor geometry, the 0xF1
- * enable. SHARED ENGINE (the ~97%) is what it feeds. There is ONE seam: incomingData
- * decodes to a mt2_frame and hands it to gActiveMT2Gesture->submitFrame; the shared
- * session conditions it, mt1_encode's report 0x28, and drives the fabricated AMD directly.
- * No BNBTrackpadDevice is ever started. No decision logic lives in this file.
+ * frame (mt2_bt_decode), and declare BT config — sensor geometry, the 0xF1 enable, battery
+ * poll. SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE — on interrupt
+ * bind it advertises VoodooInputSupported + its coordinate span and registerService()s; the
+ * mux (com_schmonz_VoodooInput) attaches as our client. incomingData decodes to a mt2_frame,
+ * mt2_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
+ * the terminal AMD + conditioning. No BNBTrackpadDevice is ever started; no fabricated AMD
+ * is built here. No decision logic lives in this file.
  *
  * Load-bearing RE prose is in docs/mt-stack/explanation.md; the code keeps one-line pointers.
  */
@@ -34,7 +36,11 @@
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mt2_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
-#include "mt2_synth_amd.h"           /* mt2_synth_amd_build/amd/teardown — multi-instance fabricated AMD */
+#include "mt2_synth_amd.h"           /* mt2_synth_amd_amd — read the mux's terminal AMD node for battery */
+#include "mt2_voodoo_translate.h"     /* mt2_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
+#include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
+#include "VoodooInputMux.h"           /* com_schmonz_VoodooInput::synthCtx() — terminal AMD node for battery */
+#include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
 /* mt2_splice_kext.h -> mt2_splice.h -> vtable_clone.h requires these macros before the include. */
 #define VTC_ALLOC(sz)  IOMalloc(sz)
 #define VTC_FREE(p,sz) IOFree((p), (sz))
@@ -45,22 +51,19 @@
  * slowly; 30 s keeps the prefpane number fresh without churning the control channel. */
 #define MT2_BATTERY_POLL_MS  30000
 
-/* Set by com_schmonz_MT2Gesture::start (same kext). */
-extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
-
 OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 
 /* Field offsets: canonical values + re/ commands live in ../src/mt2_stack.h. These are readable
  * local aliases so the numbers exist in exactly one place (no doc/build drift). */
 #define L2CAP_DELEGATE_CB_OFF       MT2_OFF_L2CAP_DELEGATE_CB     /* L2CAP delegate cb (+8 = target)*/
 
-/* The fabricated AppleMultitouchDevice context for BT.
- * Non-NULL only when the connection is up and the build succeeded.
- * A single global (one device at a time) — cleared on stop after the session deregisters. */
-static mt2_synth_amd_ctx *gBtAmdCtx = 0;
+/* The bound VoodooInput mux (set by the interrupt reader once it locates its attached mux).
+ * The mux owns the terminal fabricated AMD now; the control reader's battery poll publishes
+ * BatteryPercent on the mux's AMD node through here. A single global (one device at a time). */
+static com_schmonz_VoodooInput *gBtMux = 0;
 
 /* The PSM-19 (interrupt) reader instance — the session's active frame source. incomingData
- * feeds decoded frames through gActiveMT2Gesture->submitFrame(gInterruptReader, ...). */
+ * translates decoded frames to VoodooInputEvent and messages the mux. */
 static IOService *gInterruptReader = 0;
 
 /* Control-delegate seam state (battery channel). gCtrlInterposedChannel is the "which channel"
@@ -73,34 +76,6 @@ static uint32_t bt_uptime_ms(void) {
     clock_get_system_microtime(&s, &u);
     return (uint32_t)(s * 1000 + u / 1000);
 }
-
-/* Encode clock for the BT feed: kernel uptime in ms — the SAME clock the sink used before it
- * moved here from MT2Gesture (clock_get_uptime, not clock_get_system_microtime), so the frame
- * timestamps are unchanged by the move. */
-static uint32_t bt_encode_uptime_ms(void) {
-    uint64_t abs_t, ns;
-    clock_get_uptime(&abs_t);
-    absolutetime_to_nanoseconds(abs_t, &ns);
-    return (uint32_t)(ns / 1000000ULL);
-}
-
-/* BT transport sink (registered with the engine at connectionEstablished; calls arrive under
- * the session lock). Delivery target = the fabricated AMD (gBtAmdCtx). NULL-guards inside
- * mt2_synth_amd_feed/button/inject drop deliveries during bring-up / teardown. */
-static void bt_sink_feed_frame(void *ctx, const mt2_frame *frame) {
-    (void)ctx;
-    mt2_synth_amd_feed(gBtAmdCtx, frame, bt_encode_uptime_ms());
-}
-static void bt_sink_post_button_edge(void *ctx, unsigned mask) {
-    (void)ctx;
-    mt2_synth_amd_button(gBtAmdCtx, mask);
-}
-static IOReturn bt_sink_inject(void *ctx, const unsigned char *bytes, unsigned int len) {
-    (void)ctx;
-    return mt2_synth_amd_inject(gBtAmdCtx, bytes, len);
-}
-static const mt2_transport_sink_t kBtSink =
-    { bt_sink_feed_frame, bt_sink_post_button_edge, bt_sink_inject, 0 };
 
 /* Connect-flap measurement: each connection attempt gets an id (bumped on control-channel open); we
  * emit one canonical CONNTRACE line per transition through the SHARED conn_trace_format() (kernel emit
@@ -139,13 +114,14 @@ static void mt2_publish_battery(IOService *node, uint8_t pct) {
 }
 
 /* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), publish the capacity as
- * "BatteryPercent" on the FABRICATED AMD node (the BNB node is gone). mt2_synth_amd_amd() returns NULL
- * until the AMD is built + ready and again once teardown starts, so this self-fences. The pure parse is
- * host-tested (tests/test_battery.c). No-op when the packet isn't 0x90 or no AMD is up. */
+ * "BatteryPercent" on the terminal fabricated AMD node — which the mux now owns (gBtMux->synthCtx()).
+ * mt2_synth_amd_amd() returns NULL until the AMD is built + ready and again once teardown starts, so
+ * this self-fences; gBtMux is NULL until the interrupt reader locates the mux. The pure parse is
+ * host-tested (tests/test_battery.c). No-op when the packet isn't 0x90 or no terminal AMD is up. */
 static void mt2_maybe_publish_battery(const void *data, size_t len) {
     uint8_t pct;
     if (!mt2_parse_battery_report((const uint8_t *)data, len, &pct)) return;
-    AppleMultitouchDevice *amd = mt2_synth_amd_amd(gBtAmdCtx);
+    AppleMultitouchDevice *amd = gBtMux ? mt2_synth_amd_amd(gBtMux->synthCtx()) : 0;
     if (amd) mt2_publish_battery((IOService *)amd, pct);
 }
 
@@ -196,22 +172,22 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     if (psm == 0x13) {   /* interrupt channel = the session's frame source */
         gInterruptReader = self;
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
-        /* Build the SP1-hardened fabricated AMD: we own the interrupt channel's
-         * delegate directly (listenAt below); no BNB is started, no interpose needed. */
-        gBtAmdCtx = mt2_synth_amd_build(gActiveMT2Gesture, MT2_SYNTH_XPORT_BT);
-        if (!gBtAmdCtx) IOLog("MT2BTReader: fabricated AMD build FAILED - no cursor\n");
-        /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> submitFrame.
+        /* Become a VoodooInput satellite. Advertise support + our coordinate span, then
+         * registerService so the mux (com_schmonz_VoodooInput) matches us as its provider and
+         * attaches as our client. incomingData emits VoodooInputEvent to that mux; the mux owns
+         * the terminal AMD + conditioning (identical MT2_EVENT_DRIVEN/mt2_policy_default). */
+        self->setProperty("VoodooInputSupported", kOSBooleanTrue);
+        self->setProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
+        self->setProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
+        /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> messageClient.
          * listenAt is safe here because no BNB races us for this channel (no manual-start). */
         self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
         /* Genuine handshake step 4 (reference.md "BT connect handshake"): WAIT for the interrupt
-         * channel to reach OPEN before arming the session — accept-then-wait, don't race the device. */
+         * channel to reach OPEN before publishing — accept-then-wait, don't race the device. */
         self->fChannel->waitForChannelState(kIOBluetoothL2CAPChannelStateOpen);
-        if (gActiveMT2Gesture) {
-            IOLog("MT2BTReader: DIRECT terminal — fabricated AMD, direct L2CAP listener\n");
-            gActiveMT2Gesture->connectionEstablished(self, MT2_EVENT_DRIVEN,
-                                                     &mt2_policy_default, &kBtSink);
-        } else
-            IOLog("MT2BTReader: ENGINE NOT PUBLISHED at interrupt bind — input will be dead until reconnect (registration race)\n");
+        self->registerService();   /* -> mux attaches async; fMux found lazily in incomingData */
+        IOLog("MT2BTReader: VoodooInput satellite up (LMAX %u x %u)\n",
+              (unsigned)MT2_SPAN_X, (unsigned)MT2_SPAN_Y);
     }
 
     self->fIsControl = (psm == 0x11);
@@ -281,9 +257,27 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
     /* Shared diag: per-frame edge coords (debug.mt2_log>=2). want_first=false: CSM_STEADY above. */
     mt2_diag_frame(MT2_DIAG_BT, &tf, /*want_first=*/false);
 
-    /* Cross the seam: hand the decoded frame to the SHARED session via the fabricated AMD sink. */
-    if (gActiveMT2Gesture && gInterruptReader)
-        gActiveMT2Gesture->submitFrame(target, &tf);   /* target = this reader */
+    /* Cross the seam as a VoodooInput satellite: translate to a wire event and message the mux
+     * (found lazily — it attaches async after registerService; pre-attach frames drop). The mux
+     * owns terminal conditioning + the fabricated AMD; gBtMux bridges the battery poll to it. */
+    if (self) {
+        if (!self->fMux) {
+            OSIterator *it = self->getClientIterator();
+            if (it) {
+                OSObject *o;
+                while ((o = it->getNextObject())) {
+                    IOService *c = OSDynamicCast(IOService, o);
+                    if (c && c->getProperty(VOODOO_INPUT_IDENTIFIER)) { self->fMux = c; break; }
+                }
+                it->release();
+            }
+            if (self->fMux) gBtMux = OSDynamicCast(com_schmonz_VoodooInput, self->fMux);
+        }
+        if (self->fMux) {
+            VoodooInputEvent ev = mt2_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
+            self->messageClient(kIOMessageVoodooInputMessage, self->fMux, &ev, sizeof ev);
+        }
+    }
 }
 
 /* Control-channel accept delegate — INERT. Its sole purpose is to be the listenAt callback that
@@ -322,6 +316,7 @@ void com_schmonz_MT2BTReader::resetTransportState() {
     fInterposeTries = 0;
     fReEnableCount = 0;
     fStreaming = false;
+    fMux = 0;
 }
 
 /* Step: run setupInGate on the channel's command gate. IOBluetoothFamily REQUIREs every
@@ -462,10 +457,10 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
     /* If we're the interrupt reader that armed the session source, clear it so the
      * direct shim stops feeding through a freed instance. */
     if (gInterruptReader == this) gInterruptReader = 0;
-    /* Deregister from the engine: after this returns no session effect can reach our sink.
-       No-op unless we are the active source (the interrupt reader) — the control reader's
-       stop leaves the session alone. */
-    if (gActiveMT2Gesture) gActiveMT2Gesture->connectionClosed(this);
+    /* We are a VoodooInput satellite: as this provider stops, IOKit detaches + stops the mux
+       (our client), which tears down its own terminal AMD. Just drop our borrowed references. */
+    fMux = 0;
+    if (gBtMux) { gBtMux = 0; gLastBattBnb = 0; }  /* forget the mux's battery node */
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */
@@ -489,17 +484,8 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
         if (gate) gate->runAction(&com_schmonz_MT2BTReader::controlRestoreInGate, gCtrlInterposedChannel);
         gCtrlInterposedChannel = 0;
     }
-    /* Tear down the fabricated AMD we built in setupInGate.
-     * NULL gBtAmdCtx first so an in-flight watchdog flush sees no AMD before we quiesce,
-     * then free after the drain. */
-    if (gBtAmdCtx) {
-        mt2_synth_amd_ctx *btAmdToTear = gBtAmdCtx;
-        gBtAmdCtx = 0;
-        gLastBattBnb = 0;  /* forget the torn-down node so a reused address can't false-match */
-        if (gActiveMT2Gesture) gActiveMT2Gesture->quiesceDelivery();
-        mt2_synth_amd_teardown(gActiveMT2Gesture, btAmdToTear);
-        IOLog("MT2BTReader: fabricated AMD torn down\n");
-    }
+    /* No terminal AMD to tear down here anymore — the mux owns it and cleans it up when it
+     * detaches as our client (above). */
     fChannel = 0;
     IOService::stop(provider);
 }
