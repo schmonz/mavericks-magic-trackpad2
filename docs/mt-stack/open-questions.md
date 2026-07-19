@@ -1427,3 +1427,17 @@ logged "USB removed but no paired CoD-0x594 MT2 found" → USB-unplug→BT hando
 `tools/mt2_bt_bounce.m:34`, `tools/mt2_prefpane_refresh.c:1246`. **Fix:** mask — `(cod & 0x1FFF) == 0x594` (or
 compare only the device-class bits) instead of `== 0x594`. Small, low-risk. Passed validation on 2026-07-04
 because the runtime CoD didn't carry the discoverable bit then.
+
+**2026-07-19 — ★ connect/disconnect BEZEL GLYPH trigger CONFIRMED on-device: it fires on APPLE `IOBluetoothHIDDriver`
+attach/detach (ownership transitions), NOT on our reader's own connect/disconnect.** Two A/B triggers with the user
+watching: Case 1 = owned-mode `--disconnect-once`+`--reconnect-once` (our reader stays, `IOBluetoothHIDDriver` = 0
+instances) → NO glyph. Case 2 = `kextunload MT2Gesture`+bounce (Apple HID attaches) → CONNECT glyph; then reload+bounce
+(Apple HID detaches, our reader re-owns) → DISCONNECT/"connection lost" glyph. Explains the long-standing "we can't
+predict when it appears" (mt2-connect-disconnect-bezel-hud): in steady OWNED operation the poster
+(`IOBluetoothHIDDriver::deviceConnectTimerFired` / `sendDeviceDisconnectNotifications`, device-identity-map.md §Bezel HUD)
+is never attached, so the glyph never fires; it only shows when Apple's driver cycles (our load/unload dances). **A
+IMPLICATION:** direction A (Apple HID at login ↔ our reader in-session) makes Apple-HID attach/detach routine, so a
+connect glyph fires at login-screen-appear (MOUSE image — Apple's driver defaults `MouseConnected` for MT2 PID 613), a
+disconnect glyph at login (our reader evicts Apple HID), and again on logout. UX wrinkle to design around (suppress, or
+seed trackpad art onto Apple's `IOBluetoothHIDDriver` instance for our address — harder than the BNB-node seed since we
+don't own that instance).
