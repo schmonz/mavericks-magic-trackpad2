@@ -31,6 +31,9 @@
 #include "mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 #include "mt2_reconnect_policy.h"   /* mt2_reconnect_should_page — page iff ours-by-class AND disconnected */
 
+#define RECONNECT_CADENCE_SEC 15          /* how often the keeper re-attempts while disconnected; tunable */
+static dispatch_source_t g_reconnect_timer;   /* file-static: keep the timer alive for the process lifetime */
+
 /* Serial queue for ALL paging. openConnection blocks ~5s on page timeout when the device is off,
  * so it must never run on the main runloop (which drives the presence observer). Serialized so
  * overlapping triggers (timer, USB edge) never page concurrently. */
@@ -146,7 +149,19 @@ int main(int argc, const char *argv[]) {
             presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
         if (!obs) { NSLog(@"mt2_usb_bt_handoff: presence_observer_create failed"); return 1; }
 
-        NSLog(@"mt2_usb_bt_handoff: armed via shared presence observer (wakes BT on USB removal)");
+        /* Connection-keeper: a repeating timer on the paging queue re-attempts our matched device
+         * whenever it might be reachable — the login-screen wake at boot (first fire ~1s after launch,
+         * retried until the controller is up and the device answers) AND the "power the trackpad on an
+         * hour later and it just connects" case. Idempotent, so it's a quiet no-op while connected. */
+        g_reconnect_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, reconnect_queue());
+        dispatch_source_set_timer(g_reconnect_timer,
+            dispatch_time(DISPATCH_TIME_NOW, (int64_t)NSEC_PER_SEC),          /* first fire ~1s after launch */
+            (uint64_t)RECONNECT_CADENCE_SEC * NSEC_PER_SEC,                   /* then every cadence */
+            (uint64_t)2 * NSEC_PER_SEC);                                      /* leeway */
+        dispatch_source_set_event_handler(g_reconnect_timer, ^{ reconnect_matched("timer"); });
+        dispatch_resume(g_reconnect_timer);
+
+        NSLog(@"mt2_usb_bt_handoff: armed — %ds reconnect keeper + USB-removal wake", RECONNECT_CADENCE_SEC);
         CFRunLoopRun();
     }
     return 0;
