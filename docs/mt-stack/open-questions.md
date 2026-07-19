@@ -1541,3 +1541,13 @@ session-takeover. NEXT: make mt2d-run's session-takeover BOUNCE (or make recover
 reload); re-test at first login with continuous touch. Then A is genuinely complete (login cursor + fast multitouch).
 Why half-open at cold takeover (vs warm): PSM 19 is device-initiated; taking over from Apple HID mid-session, our reader
 wins PSM 17 but the device doesn't re-open PSM 19 for us until a full baseband bounce forces it.
+
+**2026-07-19 — ★★★ FIX VERIFIED ON-DEVICE — A is COMPLETE.** The `mt2d-run` session-takeover bounce (commit 3f828de)
+works at first login: boot 16:33:33 → `16:33:36 login screen → Apple HID basic cursor` → `16:33:46 attempting
+full-gesture` (session load + bounce) → `16:34:12 transport readers bound: BT=2 … full-gesture confirmed healthy` with
+**NO `half-open (BT=1)` and NO `recovery attempt`** (contrast the immediately-prior boot: half-open → 3 failed recoveries
+→ "RECOVERY EXHAUSTED, cursor only"). User confirmed **gestures work** at first login, fast. So the end-to-end first-login
+experience is now: instant basic cursor at the login screen (Apple's IOBluetoothHIDDriver) + fast full multitouch the
+moment you log in (our reader, warm-takeover forced to BT=2 by the bounce). Both transports (BT verified; USB analogous
+via re-enumerate). The long-standing "dead/slow trackpad at first login" is SOLVED. Remaining polish (optional): the
+one-time disconnect glyph on the in-session takeover; the single-0xF1 enable tidy-up (not needed).
