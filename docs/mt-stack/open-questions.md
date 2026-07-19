@@ -1513,3 +1513,16 @@ then our reader warm-takes-over fast). Likely why: Apple's IOBluetoothHIDDriver 
 warm-takeover inherits a primed device. The single-0xF1 simplification is OPTIONAL (correct + tidy, both work) — not
 needed. Repro method (durable): unload our kext + bounce (Apple HID basic) → reload + bounce → USER TOUCHES CONTINUOUSLY
 → read `first frame after N enables` (N≈device-ready ticks; do NOT gate on a "touch now" cue — there's no live signal).
+
+**2026-07-19 — ★ WALK-BACK of the "RESOLVED" claim above: NOT verified for the real FIRST-LOGIN case.** User (correct):
+the enable-lag question is about multitouch at FIRST LOGIN after a fresh boot. My "resolved" evidence was a LOGGED-IN
+repro (unload our kext — which had just been streaming multitouch, so the device was WARM — → Apple HID → reload →
+fast ~1 enable). That is NOT the same as a cold first-login takeover: at first login the device comes up COLD (fresh
+boot, never multitouch this boot), and the only genuinely-slow case we ever measured (10:32) was a cold path. So the
+"takeover is fast" result may be an artifact of my warm repro. **UNRESOLVED: does A's first-login session-takeover bring
+up multitouch fast (~1 enable, on first touch) or slow (~30s)?** DECISIVE TEST (next): reboot → at the login screen get
+the basic cursor → log in → IMMEDIATELY touch the trackpad CONTINUOUSLY → read `first frame after N enables` from
+mt2d.log/system.log (need debug.mt2_log=2 or the unconditional "multitouch confirmed" line). Continuous touch removes
+the reaction-time confound. If N≈1 → A's first-login multitouch is genuinely fast. If N large → the cold takeover has a
+real lag and the dig continues (why cold ≠ warm; likely Apple-priming or a missing HID-setup step our warm repro got
+for free).
