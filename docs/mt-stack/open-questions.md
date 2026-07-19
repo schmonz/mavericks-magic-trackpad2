@@ -1328,6 +1328,42 @@ actually bring the link up pre-login, and — the separate sub-question — does
 at the login screen (the link forming ≠ multitouch working). Next session: prototype (B) as a boot LaunchDaemon +
 re-test at login.
 
+**2026-07-19 — ★★ CURSOR-DEAD-AT-LOGIN root cause is DOWNSTREAM of the BT bind (NOT reconnect, NOT half-open).**
+Login-screen sampler (`/usr/local/sbin/mt2_login_probe`, one-shot boot LaunchDaemon `com.schmonz.mt2loginprobe`):
+`BT` reader count reaches **2 (both L2CAP channels) 13 s after boot and HOLDS for the full 90 s** at the login screen —
+yet the cursor is dead to move/tap/**click** the entire time (user-confirmed "90s, no response to anything"). So the
+connection-keeper daemon + L2CAP bind are fine; the dead cursor is a separate, downstream layer. Rules out slow-bind,
+half-open (BT=1), and channel-level login-gating. LOGGED-IN WORKING baseline trace (`sysctl debug.mt2_log=2`): each touch
+= `MT2: BT edge n=1 x.. y.. ts..` (0x31 report received on PSM 19) → `MT2: feed x.. y.. -> amd 0xffffff80a2d41f00` (fed
+to the genuine AppleMultitouchDevice) → `post_button_edge mask=0x1` on click. **NEXT (reboot, probe now retries
+`debug.mt2_log=2` until the kext loads):** touch at the login screen and read `system.log` for these signatures to pin
+the break — (a) no `BT edge` = device not sending (enable didn't take); (b) `BT edge` but no `feed -> amd` = reader's AMD
+target null pre-session; (c) `BT edge`+`feed -> amd <ptr>` but no cursor = AMD→WindowServer delivery is session-gated.
+Note: first probe run's `debug.mt2_log=1` failed ("invalid") because the kext wasn't loaded yet at 10:25:28 — hence the
+retry-until-loaded fix. Genuine trackpads DO work at the 10.9 login screen, so a faithful AMD-feed should too.
+
+**2026-07-19 — ★★★ ROOT CAUSE + FIX DIRECTION CONFIRMED ON-DEVICE. The MT2 IS usable as a BASIC-HID cursor at the
+login screen — via Apple's own `IOBluetoothHIDDriver`, which OUR reader evicts.** Two on-device tests settled it:
+(1) A diagnostic kext that only SKIPPED `SET_PROTOCOL` did NOT rescue basic HID — the device still sent no `0x02`, only
+`0x90` then `0x31` after 18 enables (~17s). That was a FLAWED test: our reader was still loaded, still evicting Apple's
+HID driver, still driving the connection. (2) The RIGHT test: `kextunload com.schmonz.MT2Gesture` + bounce →
+**`IOBluetoothHIDDriver` attaches (count 1) and the user confirms a working basic cursor + click (no gestures)**.
+So the dead-cursor-at-login is NOT a device limitation and NOT the slow `0xF1` enable per se — it is that our owned
+reader (`MT2BTControl`/`MT2BTInterrupt`, IOProbeScore=100000, no match category) **evicts Apple's `IOBluetoothHIDDriver`
+entirely** (open-questions.md:941), and Apple's driver is exactly what gives basic HID (cursor) at the login screen.
+Our reader replaces it with a multitouch-only path whose enable is slow/unreliable at cold boot → mute pad until session.
+
+**FIX DIRECTION (A), user-endorsed:** let Apple's `IOBluetoothHIDDriver` own the MT2 pre-session (basic cursor at the
+login screen — "necessary and sufficient there"), and load OUR reader only at USER-SESSION start to take over for full
+multitouch. Confirmed cheap + clean: reloading our kext + bounce is a WARM takeover that evicts Apple's HID and reaches
+`BT=2` in ~5s (no cold-boot 17-39s enable delay — that penalty is cold-boot-only). Likely BONUS: Apple's
+`IOBluetoothHIDDriver` "carries the bonded-HID wake/idle machinery" (open-questions.md:941), so letting it drive at the
+login screen may make the MT2 **reconnect natively** there too — potentially retiring the login-screen half of the
+connection-keeper daemon (which still earns its keep for USB→BT handoff + in-session reconnect). OPEN for the design:
+(a) trigger to load our kext at session start + unload at logout (LaunchAgent + logout hook vs relocating mt2d-run's
+boot load); (b) transition hiccup (bounce) on login/logout; (c) verify Apple's HID actually reconnects the MT2 at the
+login screen; (d) does relocating the load reopen the ownership/panic reasons we went owned. NEXT: design A.
+
 **2026-07-19 — (B) primitive VALIDATED post-login (chosen direction; mission fit = "a layer that can drive ANY device",
 not a mouse/keyboard-only UHE hack).** With the MT2 connected, `tools/mt2_bt_bounce 04-4b-ed-ec-02-07` (a non-blued root
 process): `closeConnection -> 0x0`, `openConnection -> 0x0 (CoD 0x594)`, MT2 back to `Connected: Yes`, our reader
