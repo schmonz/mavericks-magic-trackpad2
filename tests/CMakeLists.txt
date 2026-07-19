@@ -29,6 +29,11 @@ add_executable(test_cod_match test_cod_match.c)
 target_include_directories(test_cod_match PRIVATE ${CMAKE_SOURCE_DIR}/tools)
 add_test(NAME test_cod_match COMMAND test_cod_match)
 
+# test_reconnect_policy: the connection-keeper's page decision (idempotency invariant).
+add_executable(test_reconnect_policy test_reconnect_policy.c)
+target_include_directories(test_reconnect_policy PRIVATE ${CMAKE_SOURCE_DIR}/tools)
+add_test(NAME test_reconnect_policy COMMAND test_reconnect_policy)
+
 # Vendored VoodooInput wire ABI (no mt2core; standalone header assertions).
 # The upstream headers are C++ (tag-less struct/enum); compile as C++ without
 # editing the pristine vendored files.
