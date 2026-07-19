@@ -9,9 +9,9 @@
  * now runs through the session.
  *
  * It drives the SAME pure calls the readers use (per docs/mt-stack/reader-seam-map.md):
- *   BT : mt2_bt_decode -> mt2_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN)
- *        -> sink bt_sink_feed_frame (MT2BTReader.cpp; MT2Gesture::sink_feed_frame is now a
- *        dispatch trampoline). No checksum on the BT feed.
+ *   BT : mt2_bt_decode -> mt2_bt_wire_roundtrip (the VoodooInput wire the satellite emits, drops the
+ *        ellipse tail) -> mt2_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN) -> mt1_encode.
+ *        No checksum on the BT feed. The mux owns this terminal on-device (identical policy).
  *   USB: mt2_usb_decode -> mt2_session_frame (policy row mt2_policy_default) -> sink feed = mt1_encode
  *        + Apple checksum, exactly MT2USBReader::mt2_usb_handle_report + its registered kUsbSink.
  *
@@ -29,6 +29,10 @@
 #include "../src/mt2_usb_decode.h"
 #include "../src/mt2_usb_bytes.h"
 #include <string.h>
+
+/* BT now emits through the VoodooInput wire (C++ wire headers), so the round-trip lives behind an
+ * extern "C" shim (tests/char_bt_wire.cpp) — keeps this test pure C, linking mt2core cleanly. */
+void mt2_bt_wire_roundtrip(mt2_frame *f);
 #include <stdio.h>
 
 /* Set to 1, build+run once to DUMP the current bytes, paste into the golden arrays, set back to 0. */
@@ -79,6 +83,10 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
     mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_default, /*now*/1000);
     mt2_frame tf; memset(&tf, 0, sizeof tf);
     if (mt2_bt_decode(raw, rawlen, &tf) != 0) return -1;
+    /* Mirror the satellite path: the BT reader now emits through the VoodooInput wire, which drops
+     * the ellipse tail (orientation/major/minor). Route the decoded frame through the round-trip so
+     * the golden reflects what actually reaches the mux's session on-device. */
+    mt2_bt_wire_roundtrip(&tf);
     mt2_session_frame(&s, 0xB7, &tf, /*now*/1000, &sink);
     memcpy(out, cap.buf, cap.len);
     if (nfeed) *nfeed = cap.nfeed;
@@ -161,12 +169,19 @@ static void check_bytes(const char *tag, const uint8_t *got, int gn,
  * 0x30 MakeTouch | fingerID 2 (index). USB records set t[6] bit7 (size|id<<6) high (0xff vs 0x7f)
  * because the USB-decoded contact ids differ from BT's.
  * USB goldens unchanged across the engine unification: the parallel-run oracle (commit 3) proved the
- * session path byte-identical before the old assembly was deleted. */
+ * session path byte-identical before the old assembly was deleted.
+ * BT golden regenerated 2026-07-19: the BT reader is now a VoodooInput satellite, so its frames route
+ * through the wire (mt2_bt_wire_roundtrip), whose VoodooInputTransducer has no ellipse fields. So
+ * orientation/touch_major/touch_minor are dropped and mt1_encode falls back to constants. On a single
+ * TS_START frame only orientation is live (major/minor are used only on TS_END), so exactly ONE byte
+ * moved: GOLD_BT_2F[11] 0x85->0x81 (finger-1 orientation nibble -> neutral). BT_1F unchanged (its
+ * orientation was already neutral). Deliberate, accepted fidelity envelope; on-device palm-rejection
+ * check gates it. USB (genuine terminal) keeps full ellipse fidelity — its golden is untouched. */
 static const uint8_t GOLD_BT_1F[]  = {
     0x28,0x44,0x44,0x04,0x7f,0x40,0xe8,0x03,0x20,0x20,0x7f,0x81,0x32
 };
 static const uint8_t GOLD_BT_2F[]  = {
-    0x28,0x44,0x44,0x04,0xeb,0xa0,0xe8,0x03,0x20,0x20,0x7f,0x85,0x32,
+    0x28,0x44,0x44,0x04,0xeb,0xa0,0xe8,0x03,0x20,0x20,0x7f,0x81,0x32,
     0xb5,0x7e,0xb9,0x03,0x20,0x20,0x7f,0x82,0x33
 };
 static const uint8_t GOLD_USB_1F[] = {

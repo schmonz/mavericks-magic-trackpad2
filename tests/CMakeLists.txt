@@ -9,9 +9,21 @@ endfunction()
 
 foreach(t test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle
           test_session test_session_characterization test_connect_sm test_presence test_conn_trace test_usb_bytes test_splice test_genuine_host test_coordinator
-          test_battery test_single_load test_reader_characterization test_synth_report test_synth_teardown)
+          test_battery test_single_load test_synth_report test_synth_teardown)
   mt2_ctest(${t})
 endforeach()
+
+# test_reader_characterization also exercises the BT satellite wire round-trip. The test stays pure C
+# (links mt2core cleanly); the round-trip is behind the extern "C" shim char_bt_wire.cpp, which is the
+# only unit that sees the C++ wire headers (+ the translate source it calls).
+add_executable(test_reader_characterization test_reader_characterization.c
+  char_bt_wire.cpp
+  ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+target_link_libraries(test_reader_characterization mt2core)
+target_include_directories(test_reader_characterization PRIVATE
+  ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
+add_test(NAME test_reader_characterization COMMAND test_reader_characterization)
 
 # test_geometry needs the src/ include dir (Makefile: -Isrc).
 add_executable(test_geometry test_geometry.c)
