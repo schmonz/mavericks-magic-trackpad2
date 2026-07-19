@@ -1342,6 +1342,23 @@ screen once the link is up. **BUILD PLAN for (B):** a small root LaunchDaemon �
 with bounded retry/backoff, `RunAtLoad`+`KeepAlive`-off. Install to `/Library/LaunchDaemons`, reboot, watch at login.
 Keep it in the same family as `tools/mt2_usb_bt_handoff` (already a RunAtLoad IOBluetooth daemon).
 
+**2026-07-19 — ★★ (B) BUILT + REBOOT-TESTED: the reconnect layer WORKS pre-login; the remaining gap is
+cursor-drive-at-login (a kext/reader issue, NOT reconnect).** Implemented as a resident connection-keeper in
+`tools/mt2_usb_bt_handoff.m` (idempotent `reconnect_matched()` actuator on a serial queue + a 15s `dispatch_source`
+timer for boot/login wake + periodic-while-disconnected + the existing USB-removal edge; `mt2_reconnect_policy.h`
+predicate + `tests/test_reconnect_policy.c`; `--reconnect-once`/`--disconnect-once` test hooks). Installed + on-device
+validated. **Reboot boot log (decisive):** boot 09:24:37 → daemon armed 09:24:40 (pid 108, early/pre-login) →
+`[timer] openConnection 04-4b… -> 0x00000000` at 09:24:50 (~13s in) → blued `newlyConnectedHIDDevice 04-4b…
+isconfigured:1` at the same instant. So **pre-login openConnection SUCCEEDS and the BT link comes up at the login
+screen** (resolves open unknown #1 = YES). **BUT user report: "zilch at the login screen; cursor worked as soon as I
+logged in."** So the link is up pre-login yet the multitouch cursor does not drive until the user session starts —
+open unknown #2 = the kext/reader does not deliver multitouch at the login screen (same shape as prior "connected but
+cursor dead" notes; possibly the device-initiated PSM 19 interrupt channel / multitouch-enable not established on a bare
+`openConnection`, or event delivery gated on the Aqua/loginwindow session). **NEXT THREAD (separate from this daemon):
+why the cursor is dead at the login screen while the link is up — investigate our reader's bind + multitouch-enable +
+event delivery pre-login vs at session start.** The broader-name rename of the daemon stays deferred until the full
+login-screen experience (cursor too) works. Daemon commits: `9f1a178`→`493e048` on main.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
