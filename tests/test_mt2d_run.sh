@@ -12,7 +12,7 @@ check() {
     desc="$1"; want_mode="$2"; want_state="$3"; init_state="$4"
     sf="$TMP/state"
     if [ "$init_state" = "MISSING" ]; then rm -f "$sf"; else echo "$init_state" > "$sf"; fi
-    out="$(MT2D_STATE_FILE="$sf" MT2D_DRYRUN=1 "$WRAPPER" 2>/dev/null)"
+    out="$(MT2D_STATE_FILE="$sf" MT2D_DRYRUN=1 MT2D_STAT_CONSOLE="echo testuser" "$WRAPPER" 2>/dev/null)"
     got_mode="$(echo "$out" | sed -n 's/^MODE=//p')"
     got_state="$(echo "$out" | sed -n 's/^STATE=//p')"
     if [ "$got_mode" = "$want_mode" ] && [ "$got_state" = "$want_state" ]; then
@@ -26,6 +26,18 @@ check() {
 check "missing state -> full/trying"  full  trying  MISSING
 check "ok          -> full/trying"    full  trying  ok
 check "trying      -> skip/trying"    skip  trying  trying
+
+# Session guard: at the login window /dev/console is owned by root -> skip the load (leave the MT2 to
+# Apple's generic HID); once a real user owns the console -> proceed with the full load. Console owner
+# is mocked via MT2D_STAT_CONSOLE (an echo command), mirroring the other mocks.
+sguard() {
+    desc="$1"; want_mode="$2"; console="$3"
+    out="$(MT2D_STATE_FILE="$TMP/sg" MT2D_DRYRUN=1 MT2D_STAT_CONSOLE="echo $console" "$WRAPPER" 2>/dev/null)"
+    got="$(echo "$out" | sed -n 's/^MODE=//p')"
+    if [ "$got" = "$want_mode" ]; then echo "PASS: $desc"; else echo "FAIL: $desc (mode=$got want $want_mode)"; fail=1; fi
+}
+sguard "console=root (login window) -> skip-nosession" skip-nosession root
+sguard "console=user (logged in)    -> full"           full            testuser
 
 # --reset writes ok regardless of prior state
 sf="$TMP/state"; echo trying > "$sf"
@@ -89,7 +101,7 @@ printf '#!/bin/sh\nexit 1\n' > "$nod/sbin/mt2_reenumerate"; chmod +x "$nod/sbin/
 echo ok > "$nod/state"
 nod_out="$(MT2D_STATE_FILE="$nod/state" MT2D_IOCLASSCOUNT="$nod/ioclasscount" \
     MT2D_KEXTLOAD="$nod/kextload" MT2D_KEXTUNLOAD="$nod/kextunload" MT2D_SBIN="$nod/sbin" \
-    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 "$WRAPPER" 2>&1)"
+    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 MT2D_FORCE_LOAD=1 "$WRAPPER" 2>&1)"
 nod_state="$(cat "$nod/state")"
 if [ "$nod_state" = "ok" ] && ! echo "$nod_out" | grep -q "recovery attempt"; then
     echo "PASS: no-device boot -> ok, no recovery thrash"
