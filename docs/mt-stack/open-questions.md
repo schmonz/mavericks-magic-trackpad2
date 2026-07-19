@@ -1483,3 +1483,19 @@ conclude "device-level / accept it". Corrected dig (next session):
    device-accepts-but-delays.
 3. **Compare to a known-correct enable:** Linux `hid-magicmouse` drives the MT2 (public enable sequence); and our USB
    path works locally — check whether USB multitouch is instant vs BT slow, then diff the two enable paths.
+
+**2026-07-19 — enable-lag dig, sharpened: device ACKs the enable (SUCCESS) but delays streaming; prime suspect = OUR
+re-enable spam.** Built a reliable no-reboot repro: `kextunload MT2Gesture` → `mt2_usb_bt_handoff --bounce-once`
+(confirm `IOBluetoothHIDDriver`=1, Apple-HID basic) → reload our kext → bounce → touch → time to `multitouch confirmed
+(first frame after N enables)`. Instrumented `controlData` (throwaway, reverted) to log control-channel replies:
+**the device answers every one of our control writes (SET_PROTOCOL / SET_IDLE / 0xF1) with `CTRL-IN len=1 [00]` = HIDP
+handshake HANDSHAKE_SUCCESSFUL.** So the enable is NOT ignored/NAKed — the device ACCEPTS it, then simply doesn't
+stream 0x31 for ~N seconds even while touched (`N ≈ elapsed seconds`, since reEnable fires ~1/s). One repro run showed
+a 51-min "gap" that was a RED HERRING (genuine no-touch — 0x31 came the instant a touch arrived, after 1944 idle
+enables); a controlled run WITH the user touching immediately showed a real ~16s dead-to-touch window (first frame after
+16 enables). **PRIME SUSPECT (next experiment): our `interposeTimerFired`/`reEnableInGate` re-sends 0xF1 every ~1s
+"until first frame" — a retry built for the GENUINE-BNB era (reference.md:235: "BNB's interrupt-channel bring-up knocks
+the device back to mouse mode after our initial enable"). We no longer use BNB, so nothing knocks it back — and the
+constant re-enable may itself be RESETTING the device's just-started stream every second, causing the lag. TEST: send
+0xF1 ONCE (or stop re-enabling after the first SUCCESS handshake) and time the first frame on the repro loop. If faster
+→ the retry meant to help was the bug (matches "instant on newer macOS", which does a clean one-shot enable).
