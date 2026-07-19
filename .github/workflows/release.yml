@@ -31,7 +31,7 @@ env:
   # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
   # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
   # deliberately to pick up shared-machinery changes.
-  MSC_REF: ecace6c69ab7cdff3e2feea06155c7efc61ebbf2  # mavericks-shared-cmake
+  MSC_REF: 35428eeff13fa1e66c9aa40ad678cdc512f6dfb9  # mavericks-shared-cmake
 
 jobs:
   build-macos:
