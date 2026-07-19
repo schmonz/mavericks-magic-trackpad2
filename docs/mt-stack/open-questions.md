@@ -1261,6 +1261,35 @@ alternative (make blued configure us by faking the `configureHIDDevice:` DO call
 but reintroduces blued's re-derivation risk. Verified device-free oracle now in place: `sudo touch /var/log/blued.log`
 + `killall blued` gives a full branch trace of any future attempt.
 
+**2026-07-19 — ★★ addHIDEmulationDevice REACHABILITY CONFIRMED from our own (non-blued) process. Spike:
+`tools/spikes/uhe_reach_probe.m`.** `[IOBluetoothHostController defaultController]` returns the concrete
+`BroadcomHostController` (real impl, not the `0xE00002C7` base stub) in ANY IOBluetooth-linked root process; it
+`respondsToSelector:` both `addHIDEmulationDevice:classOfDevice:linkKey:` and `removeHIDEmulationDevice:`. Calling it
+returns `0x0000` and — traced from process launch with `dtrace -c` + `pid$target:IOBluetooth:*BluetoothHCISendRawCommand*`
+— actually SENDS the Broadcom vendor HCI command. Live BT connection undisturbed; precedent that a client process may
+drive controller HCI = `tools/mt2_bt_bounce` (openConnection).
+
+**EXACT SIGNATURE (all three args BY VALUE — disasm of the IMP @ IOBluetooth `0x10002`, matches blued's call site
+`0x32724`):** `-(unsigned short)addHIDEmulationDevice:(BluetoothDeviceAddress /*6 bytes, rdx*/)addr
+classOfDevice:(unsigned int /*3 bytes used, ecx*/)cod linkKey:(BluetoothKey /*16 bytes, r8:r9*/)key`. Passing a
+`device*` or a key `void*` (pointers) sends GARBAGE — the IMP `bcopy`s the register bytes inline. The IMP builds a
+28-byte raw command and calls `_BluetoothHCISendRawCommand` (userland framework fn — a KEXT fbt probe on
+`WriteStoredLinkKey`/`SendRawCommand` does NOT see it; use `pid$target:IOBluetooth:*`). Confirmed-correct 28-byte wire
+payload (tracemem of the command buffer): `37 fc | 19 | <6 addr LE> | <16 linkkey LE> | <3 CoD LE>` — e.g. for the MT2
++ keyboard CoD 0x2540 + key 6eaf4760…: `37fc19 0702eced4b04 45b12b701c23fc4891afcf296047af6e 402500`. opcode 0xFC37 =
+the Broadcom "add HID-emulation device" vendor command. `BluetoothDeviceAddress`={u8 data[6]}, `BluetoothKey`={u8 data[16]},
+both from IOBluetooth headers. Link key is readable from blued's file log at pair (`[LinkKeyNotification] New link key`)
+but NOT from the world-readable plist (root-only daemon store `kDaemonPrefsLinkKeys`).
+
+**STILL OPEN (next milestones, beyond reachability):** (1) does the controller RETAIN the entry + actually autonomously
+LOGIN-reconnect the MT2 after reboot? (the acid test — not yet run); (2) durability vs blued's respawn re-derivation
+(blued reads the HW HID-emul table via `readHIDEmulationDevices` on startup and may evict a slot for a device it doesn't
+consider configured — untested; restarting blued would test it but risks evicting our entry before a reboot test); (3)
+where this call lives in OUR layer (kext vs a small IOBluetooth-linked helper daemon) + on what trigger (pair/connect
+notification), for both BT and later USB; (4) CLEANUP: the spike's early runs sent 2 garbage-address + 1 garbage-key
+0xFC37 commands to the controller before the signature was pinned — may have created junk HID-emul entries; a BT reset
+(or `removeHIDEmulationDevice:` per bad addr, not reproducible) clears them.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
