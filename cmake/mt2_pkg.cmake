@@ -32,6 +32,15 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/mt2d-run        ${PKGROOT}/usr/local/sbin/
   COMMAND chmod +x ${PKGROOT}/usr/local/sbin/mt2d-run
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2d.plist ${PKGROOT}/Library/LaunchDaemons/
+  # Login-screen basic HID: the session-start trigger + the per-user LaunchAgent that touches it. The
+  # mt2d daemon WatchPaths this file; the agent touches it at login so mt2d-run runs post-session (its
+  # /dev/console guard makes the boot RunAtLoad a no-op). File is world-writable so any Aqua session can
+  # fire it (low risk: it only triggers loading OUR own driver).
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/var/mt2d
+  COMMAND ${CMAKE_COMMAND} -E touch ${PKGROOT}/usr/local/var/mt2d/session.trigger
+  COMMAND chmod 666 ${PKGROOT}/usr/local/var/mt2d/session.trigger
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.mt2session.plist ${PKGROOT}/Library/LaunchAgents/
   # Prefpane live-refresh: ship BOTH deliveries; the postinstall picks at install time based on the
   # TARGET machine (the build machine's SIMBL is irrelevant). If the user already has SIMBL, install
   # the SIMBL plugin and let their SIMBLAgent inject it (one less dependency to load); otherwise use
