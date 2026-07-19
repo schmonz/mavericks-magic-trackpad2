@@ -27,7 +27,11 @@ static void mux_feed_frame(void *ctx, const mt2_frame *frame) {
     com_schmonz_VoodooInput *self = (com_schmonz_VoodooInput *)ctx;
     mt2_synth_amd_feed(self->synthCtx(), frame, (uint32_t)uptime_ms());
 }
-static void mux_post_button_edge(void *ctx, unsigned mask) { (void)ctx; (void)mask; }
+static void mux_post_button_edge(void *ctx, unsigned mask) {
+    com_schmonz_VoodooInput *self = (com_schmonz_VoodooInput *)ctx;
+    mt2_synth_amd_button(self->synthCtx(), mask);   /* physical click -> terminal AMD (was a no-op stub:
+        the sample satellite never pressed a button, so this path went untested until the MT2 reader) */
+}
 static void mux_arm_timer(void *ctx, uint32_t ms) { ((com_schmonz_VoodooInput *)ctx)->armIdle(ms); }
 
 void com_schmonz_VoodooInput::armIdle(uint32_t ms) { if (fIdle) fIdle->setTimeoutMS(ms); }
