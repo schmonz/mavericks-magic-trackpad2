@@ -1328,6 +1328,20 @@ actually bring the link up pre-login, and — the separate sub-question — does
 at the login screen (the link forming ≠ multitouch working). Next session: prototype (B) as a boot LaunchDaemon +
 re-test at login.
 
+**2026-07-19 — (B) primitive VALIDATED post-login (chosen direction; mission fit = "a layer that can drive ANY device",
+not a mouse/keyboard-only UHE hack).** With the MT2 connected, `tools/mt2_bt_bounce 04-4b-ed-ec-02-07` (a non-blued root
+process): `closeConnection -> 0x0`, `openConnection -> 0x0 (CoD 0x594)`, MT2 back to `Connected: Yes`, our reader
+`com_schmonz_MT2BTReader` (×4) re-bound, cursor drives. So a userland `openConnection` re-establishes the link on demand
+— the whole of (B). (`BNBTrackpadDevice` shows count 0 in `ioreg -c` even while working — our manual-start doesn't leave
+a persistently-enumerated instance under that class name; not a regression, just a probe caveat.) **REMAINING RISK,
+reboot-only:** (1) does a `RunAtLoad` LaunchDaemon's `openConnection` succeed PRE-login (blued is up early — pid 45 — so
+likely, but loginwindow/BT-stack readiness is untested); (2) does our boot kext + reader DRIVE the cursor at the login
+screen once the link is up. **BUILD PLAN for (B):** a small root LaunchDaemon — reuse the `openConnection` primitive
+(generalized by our device-match predicate `mt2_cod_is_mt2`, not a hardcoded addr, to stay device-agnostic), gated on
+`hciControllerOnline` (poll for `[IOBluetoothHostController defaultController].powerState`/paired-device availability)
+with bounded retry/backoff, `RunAtLoad`+`KeepAlive`-off. Install to `/Library/LaunchDaemons`, reboot, watch at login.
+Keep it in the same family as `tools/mt2_usb_bt_handoff` (already a RunAtLoad IOBluetooth daemon).
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
