@@ -31,7 +31,7 @@ env:
   # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
   # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
   # deliberately to pick up shared-machinery changes.
-  MSC_REF: 066c1f8827fb1be728f70735dbe17ae68e135ea6  # mavericks-shared-cmake
+  MSC_REF: 9cab94f717f0f27ee8fa335217930a3a1f6e547f  # mavericks-shared-cmake
 
 jobs:
   build-macos:
@@ -43,7 +43,7 @@ jobs:
       # in the per-user CMake package registry (no CMAKE_PREFIX_PATH downstream), and the install prefix
       # holds the shared scripts/ used by the SDK-fetch step. @<sha> matches MSC_REF above (cache keys).
       - name: Install mavericks-shared-cmake
-        uses: schmonz/mavericks-shared-cmake/.github/actions/install@066c1f8827fb1be728f70735dbe17ae68e135ea6  # mavericks-shared-cmake
+        uses: schmonz/mavericks-shared-cmake/.github/actions/install@9cab94f717f0f27ee8fa335217930a3a1f6e547f  # mavericks-shared-cmake
 
       - name: Determine version (from CMake MT2_VERSION — single source of truth)
         id: ver
