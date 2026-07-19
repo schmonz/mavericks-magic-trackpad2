@@ -92,9 +92,11 @@ static int responds(id obj, SEL s) {
 static void mt2_launch_updater(void) {
     const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
     if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
+    /* --args --user: this is an EXPLICIT summon, so the updater runs its interactive check and reports
+     * status. Without it the opt-in updater treats the launch as a silent probe and shows nothing. */
     pid_t pid = fork();
-    if (pid == 0) { execl("/usr/bin/open", "open", app, (char *)NULL); _exit(127); }
-    LOG("updater: launched %s (via open)", app);
+    if (pid == 0) { execl("/usr/bin/open", "open", app, "--args", "--user", (char *)NULL); _exit(127); }
+    LOG("updater: launched %s --user (via open)", app);
 }
 
 /* The front window's contentView (any pane, incl. Bluetooth — gPane only tracks Trackpad). */
