@@ -28,6 +28,10 @@ KEXTLOAD="${MT2D_KEXTLOAD:-kextload}"
 KEXTUNLOAD="${MT2D_KEXTUNLOAD:-kextunload}"
 RECONNECT_WAIT="${MT2D_RECONNECT_WAIT:-8}"
 RECOVER_TRIES="${MT2D_RECOVER_TRIES:-3}"
+# Baseband bounce (close->open) that forces a connected BT MT2 to re-open BOTH L2CAP channels so our
+# reader wins them (BT=2). Overridable so the unit test can stub it. Runs at the session-takeover, where
+# our reader otherwise binds half-open (BT=1) evicting Apple's generic HID mid-connection.
+BOUNCE="${MT2D_BOUNCE:-/usr/local/libexec/mt2_usb_bt_handoff --bounce-once}"
 
 log() { echo "[mt2d-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -137,6 +141,14 @@ log "attempting full-gesture mode"
 # Load the one gesture kext (the IOResources-matching one the guard covers). Its
 # BT + USB reader personalities bind the device on their own.
 "$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
+
+# Force a clean BT takeover. At the session-load we evict Apple's generic HID mid-connection, and our
+# reader tends to win only the CONTROL channel (BT=1, half-open — the device-initiated interrupt channel
+# PSM 19 doesn't re-open for us). A baseband bounce (close->open) makes the device re-open BOTH channels
+# so our reader binds both (BT=2). Proven on-device 2026-07-19: recover_full's unload/wait/reload reliably
+# FAILS the cold session-takeover; a plain bounce fixes it. No-op for USB / when no BT MT2 is connected
+# (mt2_usb_bt_handoff self-matches CoD-0x594 paired devices). Non-fatal.
+$BOUNCE >/dev/null 2>&1 || true
 
 # NOTE: kext diagnostics (debug.mt2_log) default OFF; the screensaver-capture boot-enable was removed
 # once that investigation concluded (not our bug). Enable on demand: `sudo sysctl debug.mt2_log=1`

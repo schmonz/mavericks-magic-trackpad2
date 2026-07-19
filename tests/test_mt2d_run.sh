@@ -101,7 +101,7 @@ printf '#!/bin/sh\nexit 1\n' > "$nod/sbin/mt2_reenumerate"; chmod +x "$nod/sbin/
 echo ok > "$nod/state"
 nod_out="$(MT2D_STATE_FILE="$nod/state" MT2D_IOCLASSCOUNT="$nod/ioclasscount" \
     MT2D_KEXTLOAD="$nod/kextload" MT2D_KEXTUNLOAD="$nod/kextunload" MT2D_SBIN="$nod/sbin" \
-    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 MT2D_FORCE_LOAD=1 "$WRAPPER" 2>&1)"
+    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 MT2D_FORCE_LOAD=1 MT2D_BOUNCE=: "$WRAPPER" 2>&1)"
 nod_state="$(cat "$nod/state")"
 if [ "$nod_state" = "ok" ] && ! echo "$nod_out" | grep -q "recovery attempt"; then
     echo "PASS: no-device boot -> ok, no recovery thrash"
