@@ -1441,3 +1441,15 @@ connect glyph fires at login-screen-appear (MOUSE image — Apple's driver defau
 disconnect glyph at login (our reader evicts Apple HID), and again on logout. UX wrinkle to design around (suppress, or
 seed trackpad art onto Apple's `IOBluetoothHIDDriver` instance for our address — harder than the BNB-node seed since we
 don't own that instance).
+
+**2026-07-19 — ★ A IMPLEMENTED + on-device validated (login-screen basic HID via deferred takeover). Commits
+43e35a5→585f60d.** `mt2d-run` gained a `/dev/console`-owner session guard; a per-user Aqua LaunchAgent touches
+`/usr/local/var/mt2d/session.trigger` which the `mt2d` daemon WatchPaths → runs `mt2d-run` at login. On-device reboot:
+`14:44:03` boot run logged "login screen (console=root): leaving the MT2 to Apple's generic HID" → **login screen shows
+an INSTANT basic cursor, NO glyph** (user-confirmed) ✓. At login `14:44:14` the trigger fired mt2d-run → our reader
+bound in ~1s (`MT2BTReader: setup on PSM=19`). So the login-screen goal is ACHIEVED and the takeover PLUMBING is fast.
+**BUT multitouch didn't work until ~30s post-login** — our reader binds instantly but the `0xF1` enable is slow (device
+coming from Apple's basic-HID mode is slow to switch to multitouch). This is the SAME uncracked cold-enable lag
+(direction B), RELOCATED from boot to post-login — NOT a takeover-speed problem (no glyph on takeover either). Accepted
+A as-is (login screen fixed); the enable-lag is now the active dig. Host test: `tests/test_mt2d_run.sh` (session-guard
+cases). Design/plan in `docs/superpowers/` (transient).
