@@ -1526,3 +1526,18 @@ mt2d.log/system.log (need debug.mt2_log=2 or the unconditional "multitouch confi
 the reaction-time confound. If N≈1 → A's first-login multitouch is genuinely fast. If N large → the cold takeover has a
 real lag and the dig continues (why cold ≠ warm; likely Apple-priming or a missing HID-setup step our warm repro got
 for free).
+
+**2026-07-19 — ★★★ THE REAL first-login problem, finally caught on-device: A's session-takeover binds HALF-OPEN (BT=1),
+recover_full FAILS, → basic cursor only, NO multitouch. NOT the enable-lag.** First-login reboot (16:21), user circling
+continuously: login screen → Apple HID basic cursor ✓; login → mt2d-run takeover → `transport readers bound: BT=1` (control
+PSM 17 only, interrupt PSM 19 MISSING = half-open) → `recover_full` attempts 1/3, 2/3, 3/3 ALL FAILED (~28s each, ~90s)
+→ backstop unloads our kext → Apple HID basic cursor, `multitouch confirmed` = 0 the whole time. So the ~30s first-login
+"multitouch lag" the user always felt = the half-open + failed-recovery churn, NOT the 0xF1 enable and NOT touch-timing
+(both earlier hypotheses were on the wrong path; my warm logged-in repro never hit this because the warm device already
+had PSM 19 open). **FIX (proven live in the same session):** a plain `mt2_usb_bt_handoff --bounce-once`
+(closeConnection→openConnection) after loading our kext got BT=2 immediately — i.e. force the device to re-open BOTH
+L2CAP channels, rather than recover_full's "unload → wait 8s → reload (no bounce)" which reliably fails at the cold
+session-takeover. NEXT: make mt2d-run's session-takeover BOUNCE (or make recover_full bounce instead of unload/wait/
+reload); re-test at first login with continuous touch. Then A is genuinely complete (login cursor + fast multitouch).
+Why half-open at cold takeover (vs warm): PSM 19 is device-initiated; taking over from Apple HID mid-session, our reader
+wins PSM 17 but the device doesn't re-open PSM 19 for us until a full baseband bounce forces it.
