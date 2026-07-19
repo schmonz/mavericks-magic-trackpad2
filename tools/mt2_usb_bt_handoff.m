@@ -60,6 +60,20 @@ static void reconnect_matched_async(const char *why) {
     dispatch_async(reconnect_queue(), ^{ reconnect_matched(why); });
 }
 
+/* Test/debug only: drop the link on our matched device(s) WITHOUT re-opening — leaves the device
+ * powered but disconnected, so --reconnect-once and the timer can be exercised deterministically. */
+static void disconnect_matched(const char *why) {
+    @autoreleasepool {
+        NSArray *devs = [IOBluetoothDevice pairedDevices];
+        for (IOBluetoothDevice *d in devs) {
+            if (!mt2_cod_is_mt2([d getClassOfDevice])) continue;
+            if (![d isConnected]) continue;
+            IOReturn rc = [d closeConnection];
+            NSLog(@"mt2_usb_bt_handoff: [%s] closeConnection %@ -> 0x%08x", why, [d addressString], rc);
+        }
+    }
+}
+
 /* Post-update/post-reload BOUNCE: a full closeConnection -> openConnection on the MT2, forcing the BT
  * link to re-open BOTH L2CAP channels (PSM 17 control + 19 interrupt) so our reader re-attaches and
  * re-sends the multitouch enable. Distinct from wake_bt_mt2 (a plain openConnection): after a kext
@@ -112,6 +126,14 @@ int main(int argc, const char *argv[]) {
              * plain wake no-ops. Bounce (close+reopen) to force the re-establish + re-enable. */
             if (argv[i] && strcmp(argv[i], "--bounce-once") == 0) {
                 bounce_bt_mt2();
+                return 0;
+            }
+            if (argv[i] && strcmp(argv[i], "--reconnect-once") == 0) {
+                reconnect_matched("reconnect-once");
+                return 0;
+            }
+            if (argv[i] && strcmp(argv[i], "--disconnect-once") == 0) {
+                disconnect_matched("disconnect-once");
                 return 0;
             }
         }
