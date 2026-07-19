@@ -176,3 +176,30 @@ which is precisely the axis we've committed to re-open, not resolve, when we go 
 - `reference.md` — vtable slots (`0x8b8` handleReport, `0xb28` handleButton), report formats.
 - Memories: [[genuine-vs-owned-device-reeval]], [[mt2-usb-bringup-getreport-panic]],
   [[mt2-genuine-usb-recovery-task]], [[mt2-genuine-usb-catalogue-residue-trap]], [[mt2-supported-os-range]].
+
+---
+
+## U1a — owned-USB co-residence probe (on-device observation, 2026-07-19; zero-risk)
+
+Read-only `kextstat`/`ioclasscount`/`ioreg` on the live 10.9 box (MT2 on BT: `com_schmonz_MT2BTReader`=2,
+one `AppleMultitouchDevice`; USB interface `0x613` present/plugged for power; `com_schmonz_MT2USBReader`=0):
+
+- **Apple's `com.apple.driver.AppleUSBMultitouch (240.10)` IS resident** — loaded, but **refcount 0** and
+  **`AppleUSBMultitouchDriver` = 0 instances**. Loaded-and-idle, bound to nothing. Our running kext
+  (`MT2Gesture 0.4.5`) does NOT list it as an `OSBundleLibrary` dep (dep set `<125 90 37 32 5 4 3 1>`), and
+  the genuine-USB `allocClassWithName` path did not run this session (USB reader never instantiated) — so it
+  is most likely **speculatively loaded by IOKit while probing the MT2's `0x613` USB interface** and left
+  resident (kextd doesn't auto-unload leaf drivers).
+- **Implication for owned-USB:** a kext is loaded ⇒ its metaclasses are registered even at 0 instances. So the
+  `AppleUSBMultitouchDriver` **metaclass IS registered on this box** whenever the MT2 is plugged via USB.
+  A name-wearing reimplementation (`OSDefineMetaClassAndStructors(AppleUSBMultitouchDriver, IOHIDDevice)`)
+  would therefore hit a **live duplicate-name registration** at our kext's load. This is the "resident →
+  must test U1b" branch, NOT the "not resident → unblocked" happy path.
+- **The refcount-0 / 0-instances state is the lever:** because nothing depends on it and nothing is bound,
+  Apple's kext is in principle **unloadable** (`kextunload -b com.apple.driver.AppleUSBMultitouch`). So the
+  refined owned-USB question becomes: can we (a) keep Apple's kext from loading / unload it before ours, and
+  (b) does the name-wearing metaclass then load cleanly? U1b (crash-risk load test) settles the collision.
+
+**Verdict:** owned-USB is NOT trivially unblocked — the collision condition is real and present. But it is
+narrower than "impossible": the colliding kext is idle/unloadable, so a "unload-Apple's-then-load-ours"
+sequence is a candidate mitigation to try under U1b. Genuine-USB remains the shipped, validated default.
