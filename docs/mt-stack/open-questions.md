@@ -1453,3 +1453,17 @@ coming from Apple's basic-HID mode is slow to switch to multitouch). This is the
 (direction B), RELOCATED from boot to post-login — NOT a takeover-speed problem (no glyph on takeover either). Accepted
 A as-is (login screen fixed); the enable-lag is now the active dig. Host test: `tests/test_mt2d_run.sh` (session-guard
 cases). Design/plan in `docs/superpowers/` (transient).
+
+**2026-07-19 — enable-lag dig (started). Ruled out the KB's leading hypothesis; genuine-stack RE started.** The
+standing theory (reference.md:200) was "0xF1 fired before PSM 19 opens → device never opens PSM 19". CONTRADICTED by
+the 14:44 A-takeover log: `MT2BTReader: setup on PSM=19` fired (interrupt channel open) BEFORE the 0xF1 retry loop, and
+the device still ignored ~30s of 0xF1. So PSM-19 ordering is NOT it — the device silently ignores the 0xF1 SET_REPORT
+for 17–39s on a cold connect even with both channels open. Next unanswered Q: does the device ACK/NAK our 0xF1 during
+the dead window (transport) or accept-but-delay (device mode-switch)? — needs an early control-channel (PSM 17) capture.
+Per user, started RE'ing the GENUINE stack we used to manual-start (IOAppleBluetoothHIDDriver::deviceReady @0x18d6 in
+IOBluetoothHIDDriver.kext — BNBTrackpadDevice's superclass). First read: it arms a batteryLevel timer and carries timing
+constants 0xDBBA00 (14,400,000) + 0x36EE80 (3,600,000) — the genuine connect/enable is TIMER-managed on ~14s/~3.6s
+scales, i.e. Apple ALSO works around a slow device enable rather than having an instant path. Supports "enable-lag is
+device-level; A already mitigates it (basic cursor at login while it settles)". NEXT SESSION: finish the genuine enable
+RE (deviceReady @0x18d6 + setProtocol @0x1bfa + the setReport report id/sequence + those timer semantics) and compare to
+our reEnableInGate; decide whether to mirror the genuine timing or accept the lag as device-level.
