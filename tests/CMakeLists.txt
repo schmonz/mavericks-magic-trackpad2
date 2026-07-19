@@ -76,12 +76,6 @@ target_include_directories(test_voodoo_integration PRIVATE
 target_link_libraries(test_voodoo_integration mt2core)
 add_test(NAME test_voodoo_integration COMMAND test_voodoo_integration)
 
-# Pure demo circling-path math for the VoodooInput sample satellite (no mt2core; compiles the
-# example .c directly so the test exercises exactly what the kext will link).
-add_executable(test_vinput_demo_path test_vinput_demo_path.c
-  ${CMAKE_SOURCE_DIR}/examples/VoodooInputSample/vinput_demo_path.c)
-add_test(NAME test_vinput_demo_path COMMAND test_vinput_demo_path)
-
 # Shell + bats suites (run from the source tree).
 add_test(NAME test_mt2d_run COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_mt2d_run.sh)
 add_test(NAME test_conn_trace_parser COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_conn_trace_parser.sh)

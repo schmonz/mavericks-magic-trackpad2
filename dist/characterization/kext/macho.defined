@@ -204,6 +204,7 @@ _mt2_synth_note_set
 _mt2_synth_regs_init
 _mt2_usb_click_report
 _mt2_usb_handle_report
+_mt2_voodoo_from_frame
 _sysctl__debug_mt2_amd_probe
 _sysctl__debug_mt2_batt
 _sysctl__debug_mt2_log
