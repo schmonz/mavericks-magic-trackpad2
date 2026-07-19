@@ -18,6 +18,15 @@ extern "C" {
 #endif
 mt2_frame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
                                 uint32_t logical_max_x, uint32_t logical_max_y);
+
+/* Inverse of mt2_frame_from_voodoo: pack an internal mt2_frame back into a wire VoodooInputEvent
+ * for a satellite to emit. Carries ONLY what VoodooInputTransducer holds (id/x/y/pressure/width +
+ * the frame button); the "beyond VoodooInput" tail (state/touch_major/touch_minor/orientation) is
+ * NOT wire-representable and is dropped. With logical_max == the axis span (MT2_SPAN_*), the
+ * round-trip mt2_frame_from_voodoo(mt2_voodoo_from_frame(f)) is exact on the carried fields.
+ * logical_max_{x,y}==0 => identity (two's-complement passthrough), mirroring the forward fn. */
+VoodooInputEvent mt2_voodoo_from_frame(const mt2_frame *f,
+                                       uint32_t logical_max_x, uint32_t logical_max_y);
 #ifdef __cplusplus
 }
 #endif
