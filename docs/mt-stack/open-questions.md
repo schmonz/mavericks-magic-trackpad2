@@ -1290,6 +1290,20 @@ notification), for both BT and later USB; (4) CLEANUP: the spike's early runs se
 0xFC37 commands to the controller before the signature was pinned — may have created junk HID-emul entries; a BT reset
 (or `removeHIDEmulationDevice:` per bad addr, not reproducible) clears them.
 
+**2026-07-19 — cleanup + clean re-arm DONE; the write PERSISTS and blued ADOPTS it (durability = positive).** On the
+next `killall blued`, blued's startup does `EventNotifications.m:1183 readHIDEmulationDevice: 04-4b-ed-ec-02-07` →
+`BluetoothHIDManager.m:893 addDeviceFromController - adding: 04-4b-ed-ec-02-07` → `link key found … 6e af 47 60`. So the
+`0xFC37` write is retained in controller NVRAM and blued **adopts** our entry (does NOT evict it — resolves open
+durability Q#2 favorably). The feared garbage-address junk never materialized: blued read back ONLY the MT2 from the HW
+table (the malformed early writes left no persistent entry). `removeHIDEmulationDevice:` = vendor opcode **`0xFC39`**
+(9-byte cmd: `39 fc 06 <6 addr LE>`); `addHIDEmulationDevice:` = **`0xFC37`**. Did a clean remove→re-add of the MT2
+(keyboard CoD 0x2540 + correct key), verified by blued read-back (link keys present for both Magic Mouse + MT2). NOTE:
+the plist `DaemonControllersConfigurationKey` still shows ONLY `HIDEmulationMouse` (no keyboard slot for the MT2) — blued
+adopts the controller entry + link key but does NOT write a plist UHE slot (that's the separate `addDeviceToHIDEmulationMode`/
+`isConfiguredHIDDevice` path). Whether the controller-level entry alone drives autonomous **login reconnect** — or whether
+the `…WasWrittenInHardware` plist bookkeeping is also required — is exactly what the **reboot acid test** (still pending)
+will decide. Current state: MT2 cleanly armed as keyboard-class in the controller, connected, ready for that test.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
