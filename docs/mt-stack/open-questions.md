@@ -1216,6 +1216,51 @@ BT bypasses the normal LinkKeyNotification). blued's branch NSLogs to ASL (`"maj
 which branch fires** — that tells us whether the seam is "flip trackpad→keyboard slot" or "the call never happens for us."
 Only then write the interposer.
 
+**2026-07-18 — ★★ ON-DEVICE ORACLE RUN (blued file log) — the real barrier is `isConfiguredHIDDevice`, UPSTREAM of the
+class branch. `addDeviceToHIDEmulationMode` NEVER RUNS for the MT2. Supersedes BOTH the class-gate claim AND the
+"flip to keyboard slot" seam above.** Method: `sudo touch /var/log/blued.log` + `killall blued` (writability is
+cached per-path per-process, so a restart is required to re-enable file logging), then a FRESH Remove+re-pair of the
+MT2. The log is decisive:
+- Pairing works end-to-end: `[LinkKeyNotification] New link key <04-4b-ed-ec-02-07>` saved to `kDaemonPrefsLinkKeys`,
+  `deviceClassMinor = 37` (0x25 trackpad), `isPaired = 1`. So link-key creation is NOT the problem.
+- BUT `BluetoothHIDManager.m:816 newlyConnectedHIDDevice - 04-4b… isconfigured: 0` → `:821 device IS NOT a configured
+  device; saving it.` The MT2 is **not a "configured HID device."**
+- The `LinkKeyNotification → addDeviceToHIDEmulationMode` caller (blued `~0xa190`) gates on `isConfiguredHIDDevice:`
+  (`testb %al; je skip`). isConfigured=0 ⇒ **the whole UHE registration is skipped**; `addDeviceToHIDEmulationMode`,
+  every `HIDEmulation*` line, and the mouse/trackpad/keyboard slot branch NEVER execute (grep of the post-pair log
+  confirms zero occurrences). Durable proof: the config plist still has ONLY `HIDEmulationMouse = 34-15-9e-cd-0e-2c`
+  (Magic Mouse); the MT2 gets no slot of ANY class. **So the earlier disasm branch analysis (mouse vs trackpad vs
+  keyboard slot) is downstream of a gate we never reach — "wear a keyboard CoD" does NOT help by itself.**
+
+**What "configured" means + WHY the MT2 fails it (mechanism, disasm + live-ioreg confirmed):** `isConfiguredHIDDevice:`
+(blued `0x100030457`) is a pure `containsObject:` membership test against the `configuredDevices` set. The set's WRITER
+is `configureHIDDevice:` (`0x100004efc`) — a **Distributed-Objects server method** a *client* calls into blued
+(unwraps `isProxy`/`isKindOfClass`, then `newlyConnectedHIDDevice:` to register / `removeDevice:` to unregister). The
+normal caller is the standard BT-HID driver stack (`IOBluetoothHIDDriver`) when a HID device attaches. **Our MT2
+manual-starts `BNBTrackpadDevice` and has NO such driver instance** — LIVE ioreg (MT2 shows `Connected: Yes`):
+`IOBluetoothHIDDriver`, `AppleBluetoothHIDDriver`, `BNBTrackpadDevice`, `AppleBluetoothMultitouch` all **count=0**. So
+nobody calls `configureHIDDevice:` for the MT2 → it never joins `configuredDevices` → UHE is skipped. **The BT-reconnect
+barrier is a direct consequence of our manual-start architecture.**
+
+**Barrier 2 still stands even if we fix "configured":** the 2026-07-15 note below records that when
+`IOBluetoothHIDDriver` WAS loaded and the plist DID hold `HIDEmulationTrackpad` for the MT2, it STILL didn't reconnect
+at the login screen — because a Trackpad slot has no `…WasWrittenInHardware` HW-reconnect path (only Mouse/Keyboard do).
+So login-reconnect fundamentally requires the MT2's link key to land in the **Mouse or Keyboard hardware slot**, not the
+trackpad slot. Two barriers stacked: (1) not configured → no UHE at all; (2) trackpad slot ≠ HW-reconnect slot.
+
+**REVISED SEAM (both barriers at once): bypass blued — have OUR LAYER call
+`-[BroadcomHostController addHIDEmulationDevice:classOfDevice:linkKey:]` directly** with a **keyboard/mouse CoD** + the
+MT2's link key (readable: it's in `kDaemonPrefsLinkKeys`/`GetLinkKeyForAddress`, e.g. `6eaf4760 29cfaf91 48fc231c
+702bb145`), skipping BOTH the `configureHIDDevice:` gate AND blued's class-based slot selection. This writes the
+controller's autonomous-reconnect HW slot ourselves (`BluetoothHCIWriteStoredLinkKey` under the hood). OPEN before
+building: (a) does blued's UHE re-derivation on respawn EVICT a slot we wrote for a non-configured device? (the HW
+`WriteStoredLinkKey` may survive independently of the plist slot — verify); (b) confirm `addHIDEmulationDevice` is
+reachable from our layer (it's an `IOBluetoothHostController` category impl on `BroadcomHostController`, in-process to
+blued/IOBluetooth — may need a small helper linking IOBluetooth, or a DYLD interpose in blued that ADDS the call). The
+alternative (make blued configure us by faking the `configureHIDDevice:` DO call as a mouse/keyboard) also solves both
+but reintroduces blued's re-derivation risk. Verified device-free oracle now in place: `sudo touch /var/log/blued.log`
++ `killall blued` gives a full branch trace of any future attempt.
+
 ## BT trackpad never forms a link at the login screen — link-layer, upstream of synthetic-BT (2026-07-15)
 
 **Observed:** after reboot, clicking the BT trackpad at the login screen did nothing; user logged in via
