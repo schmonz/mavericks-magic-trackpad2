@@ -37,9 +37,8 @@ set(OSAX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_prefpane)
 add_library(VoodooInputMavericksPane_simbl MODULE ${OSAX_DIR}/voodooinputmavericks_prefpane_refresh.c ${OSAX_DIR}/mavericks_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c ${CMAKE_SOURCE_DIR}/src/mavericks_single_load.c)
 target_include_directories(VoodooInputMavericksPane_simbl PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(VoodooInputMavericksPane_simbl PRIVATE MAVERICKS_VERSION_STR="${MAVERICKS_VERSION}")
-# Distinct output dir: VoodooInputMavericksPane (osax) also emits an unprefixed/unsuffixed
-# "VoodooInputMavericksPane" in tools/ -- same path => a parallel-build race where one target's
-# POST_BUILD bundle never gets assembled. Give SIMBL its own dir so the paths differ.
+# Own output subdir: the bundle binary is unprefixed/unsuffixed "VoodooInputMavericksPane"; keep it
+# under simbl/ so the raw MODULE output never collides with the assembled .bundle path.
 set_target_properties(VoodooInputMavericksPane_simbl PROPERTIES PREFIX "" SUFFIX "" OUTPUT_NAME VoodooInputMavericksPane
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/simbl)
 target_link_libraries(VoodooInputMavericksPane_simbl "-framework IOKit" "-framework CoreFoundation" "-framework Carbon" objc)

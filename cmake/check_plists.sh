@@ -4,7 +4,7 @@
 #
 # Two invariants:
 #   (1) Every shipped Info.plist that exists must pass `plutil -lint`. A malformed plist
-#       means the osax/SIMBL/kext/updater bundle won't load (or will load with a nil
+#       means the SIMBL/kext/updater bundle won't load (or will load with a nil
 #       Info dictionary) on the target machine.
 #   (2) If the updater app is present, its Info.plist MUST carry a non-empty SUFeedURL
 #       (else Sparkle can't find the appcast -> no updates) AND a non-empty SUPublicEDKey
@@ -18,7 +18,6 @@ set -eu
 BUILD=$1
 
 PLISTS="
-$BUILD/VoodooInputMavericksPane.osax/Contents/Info.plist
 $BUILD/VoodooInputMavericksPane.bundle/Contents/Info.plist
 $BUILD/VoodooInputMavericks.kext/Contents/Info.plist
 $BUILD/MavericksTrackpad2Updater.app/Contents/Info.plist

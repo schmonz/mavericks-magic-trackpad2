@@ -35,40 +35,24 @@ chmod +x /usr/local/libexec/mt2_usb_bt_handoff 2>/dev/null || true
 launchctl unload "$HANDOFF" 2>/dev/null || true
 launchctl load -w "$HANDOFF" 2>/dev/null || true
 
-# Prefpane live-refresh delivery. Two mutually-exclusive routes; pick by whether the TARGET already
-# has SIMBL (reuse the user's SIMBLAgent -> one less thing for us to load), else our standalone osax
-# + launch-watcher. Exactly one is activated so the payload never double-loads (double-swizzle).
-# Best-effort throughout; never fail the install on the prefpane feature.
-AGENT=/Library/LaunchAgents/com.schmonz.voodooinputmavericks.panewatch.plist
+# Prefpane live-refresh: shipped ONLY as a SIMBL plugin (we no longer carry a standalone osax loader).
+# Drop the bundle into the system SIMBL Plugins dir; a present SIMBLAgent injects it into System
+# Preferences. The trackpad itself works without SIMBL — only the Trackpad pane (settings/battery/rename)
+# needs it — so if SIMBL is absent we install the plugin anyway and point the user at the Mavericks SIMBL
+# build. Best-effort; never fail the install on the prefpane feature.
 SIMBL_AGENT="/Library/Application Support/SIMBL/SIMBLAgent.app"
 SIMBL_PLUGINS="/Library/Application Support/SIMBL/Plugins"
 STAGED_BUNDLE=/usr/local/share/voodooinputmavericks/VoodooInputMavericksPane.bundle
-chmod +x /usr/local/libexec/voodooinputmavericks_pane_watch 2>/dev/null || true
 CONSOLE_USER=$(stat -f%Su /dev/console 2>/dev/null)
-
-if [ -d "$SIMBL_AGENT" ] || [ -d "$SIMBL_PLUGINS" ]; then
-    # SIMBL route: install our plugin bundle into the user's SIMBL Plugins dir; their SIMBLAgent
-    # injects it at System Preferences launch. Do NOT load our watcher (would double-inject the same
-    # payload). The staged osax on disk stays inert (nothing sends it the load event).
-    mkdir -p "$SIMBL_PLUGINS"
-    rm -rf "$SIMBL_PLUGINS/VoodooInputMavericksPane.bundle"
-    cp -R "$STAGED_BUNDLE" "$SIMBL_PLUGINS/" 2>/dev/null || true
-    if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-        sudo -u "$CONSOLE_USER" launchctl unload "$AGENT" 2>/dev/null || true
-    fi
-    echo "MT2: prefpane payload installed as a SIMBL plugin (reusing your SIMBL)."
+mkdir -p "$SIMBL_PLUGINS"
+rm -rf "$SIMBL_PLUGINS/VoodooInputMavericksPane.bundle"
+cp -R "$STAGED_BUNDLE" "$SIMBL_PLUGINS/" 2>/dev/null || true
+if [ ! -d "$SIMBL_AGENT" ]; then
+    echo "VoodooInputMavericks: the trackpad works now. For the Trackpad preference pane (settings, battery,"
+    echo "rename), install SIMBL, then relaunch System Preferences:"
+    echo "  https://mavericksforever.com/downloads/SIMBL.pkg"
 else
-    # Standalone route: the osax (already staged to /Library/ScriptingAdditions) + our per-user
-    # launch-watcher LaunchAgent. Auto-loads at next login; also load into the current GUI session so
-    # the feature works without a logout. We do NOT touch SIMBL.
-    # Force an OpenScripting additions rescan so our just-installed handler is registered before the
-    # next System Preferences launch (else the osax won't load until a later launch).
-    osascript -e "return 1" >/dev/null 2>&1 || true
-    if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-        sudo -u "$CONSOLE_USER" launchctl unload "$AGENT" 2>/dev/null || true
-        sudo -u "$CONSOLE_USER" launchctl load -w "$AGENT" 2>/dev/null || true
-    fi
-    echo "MT2: prefpane payload installed as a standalone osax + watcher (no SIMBL found)."
+    echo "VoodooInputMavericks: prefpane companion installed as a SIMBL plugin."
 fi
 
 # Scheduled background update check (per-user LaunchAgent). Independent of the prefpane route above.

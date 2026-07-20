@@ -41,26 +41,18 @@ add_custom_target(pkg
   COMMAND chmod 666 ${PKGROOT}/usr/local/var/voodooinputmavericks/session.trigger
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.session.plist ${PKGROOT}/Library/LaunchAgents/
-  # Prefpane live-refresh: ship BOTH deliveries; the postinstall picks at install time based on the
-  # TARGET machine (the build machine's SIMBL is irrelevant). If the user already has SIMBL, install
-  # the SIMBL plugin and let their SIMBLAgent inject it (one less dependency to load); otherwise use
-  # our standalone GC-neutral osax + the per-user launch-watcher LaunchAgent. Both are staged; only
-  # one is activated (never both -> no double-swizzle).
-  COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/ScriptingAdditions
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/VoodooInputMavericksPane.osax ${PKGROOT}/Library/ScriptingAdditions/VoodooInputMavericksPane.osax
+  # Prefpane live-refresh: shipped ONLY as a SIMBL plugin (staged below). The postinstall installs it into
+  # the SIMBL Plugins dir; if the target has no SIMBL it points the user at mavericksforever.com/SIMBL.pkg.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/libexec
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/voodooinputmavericks_pane_watch ${PKGROOT}/usr/local/libexec/
   # USB->BT handoff daemon (wakes BT on cable unplug, no click): its watcher binary + a root LaunchDaemon.
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_usb_bt_handoff ${PKGROOT}/usr/local/libexec/
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.usbbthandoff.plist ${PKGROOT}/Library/LaunchDaemons/
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.panewatch.plist ${PKGROOT}/Library/LaunchAgents/
   # Scheduled background update check: per-user LaunchAgent that runs the updater in --background mode
   # (daily + at login). Only useful when the updater app is staged (Sparkle build), but the plist is a
   # static file with no build dependency, so always ship it; the postinstall loads it best-effort.
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.updatecheck.plist ${PKGROOT}/Library/LaunchAgents/
-  # Stage the SIMBL plugin bundle in a holding area; postinstall copies it into the SIMBL Plugins
-  # dir only if SIMBL is present on the target.
+  # Stage the SIMBL plugin bundle in a holding area; postinstall installs it into the SIMBL Plugins dir.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/share/voodooinputmavericks
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/VoodooInputMavericksPane.bundle ${PKGROOT}/usr/local/share/voodooinputmavericks/VoodooInputMavericksPane.bundle
   # Build the flat component, then wrap it with productbuild --distribution so the
@@ -81,7 +73,7 @@ add_custom_target(pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --resources ${CMAKE_SOURCE_DIR}/dist/resources
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
-  DEPENDS kext mt2_reenumerate VoodooInputMavericksPane VoodooInputMavericksPane_simbl voodooinputmavericks_pane_watch mt2_usb_bt_handoff ${_UPD_PKG_DEP}
+  DEPENDS kext mt2_reenumerate VoodooInputMavericksPane_simbl mt2_usb_bt_handoff ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
 
 # Dev "install exactly what a user gets": build the release .pkg and install it locally through the SAME
