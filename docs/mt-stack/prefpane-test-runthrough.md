@@ -147,3 +147,64 @@ recompute; the post-fix matrix above passes every row.
 *process* persists, so IOKit notification ports persist; clean reset = full Cmd-Q. (C2) which transport the
 device is on at process-launch decides whether the USB observer ever registered (root of the bug). (C3)
 having both transports physically present at once changes behavior (USB cabled underneath while on BT).
+
+---
+
+# Satellite/Voodoo validation pass (2026-07-20) — pane FORCE + battery + naming
+
+**Context.** We returned to full-synthetic: a fabricated `AppleMultitouchDevice` under the VoodooInput mux, no
+genuine Apple driver. Apple's `-[Trackpad loadMainView]` detect is CLASS-based (`BNBTrackpadDevice`/
+`AppleUSBMultitouchDriver`) so it never sees our synthetic AMD → the pane showed NoTrackpad. The osax now
+**forces** the trackpad view by swizzling `-[Trackpad _controlerForNIBName:]` to substitute
+`"MTTrackpadController"` when our reader is present (`feat(osax): force the trackpad pane view…`). This pass
+re-validates the whole matrix under that force. **The device-truth oracle CHANGED** — `BNBTrackpadDevice`/
+`AppleUSBMultitouchDriver` no longer exist; truth = OUR reader classes + the fabricated AMD.
+
+## Updated oracle (run per step; mark `LB=$(wc -l < /var/log/system.log)` BEFORE the physical action)
+```sh
+tools/re ioreg-class com_schmonz_MT2BTReader com_schmonz_MT2USBReader   # 1 = that transport bound (= truth)
+tools/re ioreg-class AppleMultitouchDevice                             # our fabricated AMD (1 = present)
+sudo sed -n "$((LB+1)),\$p" /var/log/system.log | grep -aE "MT2PaneRefresh|MT2Presence"
+```
+### New markers (satellite era)
+- `reconcile bt=0 usb=1 -> action` / `device change: USB+/BT+` — presence observer saw the transport.
+- `perform: ON_USB` / `perform: ON_BT` / `perform: ABSENT (NoTrackpad)` — the SM render action.
+- `controlerForNIB: device present -> forcing MTTrackpadController` — **the new force**. Expect it EXACTLY when a
+  device is present and the pane would otherwise pick NoTrackpad. It must NOT appear when no device is present.
+
+## A. Pane-view matrix (the force)
+| Start / action | device truth | expected pane | validated |
+|----------------|--------------|---------------|-----------|
+| USB present, fresh open | USB reader=1, AMD=1 | MTTrackpad view (Point&Click / Scroll&Zoom / More Gestures / About), demo video, battery "100% charged"; interactive | ✅ 2026-07-20 live |
+| BT present, fresh open | BT reader=1, AMD=1 | MTTrackpad view; battery = live % | ⬜ needs device |
+| present → **power OFF** | reader=0, AMD gone | HOLD ~1.3s (view kept) → **NoTrackpad** | ⬜ force MUST decline once `gObs==NONE` |
+| **USB → BT** (unplug USB) | USB=0 then BT=1 | ONE coalesced redraw, stays MTTrackpad, content flips to BT | ⬜ promptness + correctness |
+| **BT → USB** (cable USB) | BT=0 then USB=1 | ONE coalesced redraw, stays MTTrackpad, USB content | ⬜ |
+| **genuinely no device** (none paired/plugged) | reader=0, AMD=0 | **NoTrackpad** (force declines — no `controlerForNIB` marker) | ⬜ **THE key regression guard** |
+
+Correctness note: the observer sets `o->state` BEFORE the callback, so `perform(ABSENT)` runs with `gObs==NONE`
+→ the force declines → NoTrackpad. The rows above verify that holds live, not just in theory.
+
+## B. Battery
+- USB: "battery level 100% (charged)" — charging inferred from `PRESENCE_USB`. ✅ 2026-07-20 live.
+- BT: `BatteryPercent` off the mux's AMD node (kext `GET_REPORT 0x90` → `gBtMux->synthCtx()`). ⬜ needs device;
+  confirm a number renders and the battery row shows.
+- ⚠️ **always-100 caveat is PRE-Voodoo** (`battery-reporting.md`). If BT reads 100 at a known-drained level,
+  that's the OLD unresolved field question, NOT a Voodoo regression — don't re-chase it here.
+
+## C. Naming (BT only — USB `MaxFeatureReportSize==1`, no room; USB showing no name report is EXPECTED)
+The write (`mt2_name_write_onboard`) is `IOHIDManager` → `SET_REPORT(Feature, 0x55)` straight to the physical BT
+MT2 — pipeline-independent (never touched our AMD). **The at-risk precondition:** the satellite BT path excludes
+Apple's `IOBluetoothHIDDriver`, which historically exposed the BT MT2 as the `IOHIDDevice` the write needs.
+1. **Visibility first** (on BT): `tools/re mt2-name` → should list the MT2 + its `0x55` name. **Empty/absent =
+   the risk is real** (no BT HID node under the satellite → the write can't find a target).
+2. **Rename**: BT pane → right-click the MT2 → Rename → a new name. Expect a `name-mirror: SET_REPORT 0x55`
+   SUCCESS line (not `error 0x…`).
+3. **Persistence**: `tools/re mt2-name` shows the new name; ideally power-cycle / re-pair to confirm it FOLLOWED
+   the device (the whole point of the on-device name).
+- **FAIL mode + fix:** if `IOHIDManagerCopyDevices` returns nothing (no BT HID node), the `0x55` write silently
+  no-ops → rename doesn't follow the device. Fix would be to expose the MT2 as an `IOHIDDevice` again, or route
+  the `0x55` write through our BT reader's control channel instead of `IOHIDManager`.
+
+**Backup pointer reminder:** powering the MT2 off (rows in A) while it's the only pointer strands the session —
+keep a mouse handy. This whole pass is userspace-only (osax + reads); no kext load, no panic risk.
