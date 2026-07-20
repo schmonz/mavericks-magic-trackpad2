@@ -4,8 +4,8 @@
 #include "mavericks_session.h"       // mavericks_session_t
 #include "MavericksAMDTerminal.h"     // mavericks_amd_terminal_ctx (opaque) + feed/button/inject helpers
 class IOWorkLoop; class IOTimerEventSource;
-class com_schmonz_VoodooInput : public IOService {
-    OSDeclareDefaultStructors(com_schmonz_VoodooInput)
+class com_schmonz_MavericksVoodooInput : public IOService {
+    OSDeclareDefaultStructors(com_schmonz_MavericksVoodooInput)
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;

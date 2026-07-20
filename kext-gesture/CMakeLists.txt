@@ -6,7 +6,7 @@
 set(KEXT_LOCAL_CPP
   MT2Gesture.cpp MT2GestureUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mt2_log.cpp mt2_diag.cpp mavericks_splice_kext.cpp
-  VoodooInputMux.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mt2_amd_probe.cpp)
+  MavericksVoodooInput.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mt2_amd_probe.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
@@ -39,12 +39,12 @@ target_include_directories(mt2gesture_kext PRIVATE
 set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-x;c++")
 
 # KERNEL=1: MT2USBReader needs the kernel-only USB control API; conn_trace needs
-# libkern's snprintf (the kernel has no <stdio.h>). VoodooInputMux + the voodoo
+# libkern's snprintf (the kernel has no <stdio.h>). MavericksVoodooInput + the voodoo
 # translator need the KERNEL branch of voodoo_wire.h (real kernel OSTypes, not the
 # host shim). All gate behavior on #if KERNEL.
 set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/conn_trace.c
-  VoodooInputMux.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
+  MavericksVoodooInput.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
 # Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel

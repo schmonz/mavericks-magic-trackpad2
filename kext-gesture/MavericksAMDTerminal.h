@@ -19,7 +19,7 @@ void                   mavericks_amd_terminal_teardown(IOService *nub, mavericks
 
 /* The fabricated-AMD "terminal" feed half (build+teardown are above). Each resolves the AMD via
  * mavericks_amd_terminal_amd(ctx) (NULL until built / during teardown -> self-fencing no-op). One home for the
- * mavericks_amd_construct_report -> handleTouchFrame logic that MT2BTReader/MT2USBReader/VoodooInputMux all used to copy.
+ * mavericks_amd_construct_report -> handleTouchFrame logic that MT2BTReader/MT2USBReader/MavericksVoodooInput all used to copy.
  * timestamp: caller-supplied frame clock (BT: uptime ns->ms; USB: system_microtime 22-bit ms);
  * keeping it as a parameter preserves byte-identical timestamps across transports. */
 void     mavericks_amd_terminal_feed(mavericks_amd_terminal_ctx *ctx, const MavericksTouchFrame *frame, uint32_t timestamp);

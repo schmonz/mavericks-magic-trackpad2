@@ -189,11 +189,11 @@
             <key>CFBundleIdentifier</key>
             <string>com.schmonz.MT2Gesture</string>
             <key>IOClass</key>
-            <string>com_schmonz_VoodooInput</string>
+            <string>com_schmonz_MavericksVoodooInput</string>
             <key>IOProviderClass</key>
             <string>IOService</string>
             <key>IOMatchCategory</key>
-            <string>com_schmonz_VoodooInput</string>
+            <string>com_schmonz_MavericksVoodooInput</string>
             <key>IOPropertyMatch</key>
             <dict>
                 <key>VoodooInputSupported</key>

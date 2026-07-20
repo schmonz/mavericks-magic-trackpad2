@@ -13,7 +13,7 @@
  * debug.mt2_log sysctl.
  *
  * The synthetic terminal (beginSyntheticTerminal / kSynthSink) was removed in Task 3: it now
- * lives per-mux in VoodooInputMux, where each satellite owns its own fabricated AMD + HIDShell.
+ * lives per-mux in MavericksVoodooInput, where each satellite owns its own fabricated AMD + HIDShell.
  */
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
@@ -170,7 +170,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     /* For the MT2: the genuine BNB (BT) / genuine AppleUSBMultitouchDriver (USB) spawn and drive the
      * real AppleMultitouchDevice that is the input source and the prefpane target; this nub creates
      * no device for that path — the session's effects reach it through the active reader's registered
-     * transport sink. VoodooInput satellites own their own fabricated AMD per-mux (VoodooInputMux). */
+     * transport sink. VoodooInput satellites own their own fabricated AMD per-mux (MavericksVoodooInput). */
 
     /* Publish LAST: readers may call connectionEstablished the moment this is visible, so every
      * engine invariant (session fields, lock, timer, sink slots) must already hold. */

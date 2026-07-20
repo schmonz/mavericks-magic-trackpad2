@@ -4,7 +4,7 @@
  * interrupt-IN pipe, send the MT2 0x02 USB multitouch-enable, and async-read frames.
  * SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE, symmetric with
  * MT2BTReader — on bring-up it advertises VoodooInputSupported + its coordinate span +
- * Transport=USB and registerService()s; the mux (com_schmonz_VoodooInput) attaches as our
+ * Transport=USB and registerService()s; the mux (com_schmonz_MavericksVoodooInput) attaches as our
  * client. readComplete decodes each raw MT2 0x02 report (mt2_usb_decode -> MavericksTouchFrame),
  * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No AppleUSBMultitouchDriver is ever hosted; no fabricated

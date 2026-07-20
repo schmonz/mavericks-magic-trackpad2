@@ -4,7 +4,7 @@
  * frame (mt2_bt_decode), and declare BT config — sensor geometry, the 0xF1 enable, battery
  * poll. SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE — on interrupt
  * bind it advertises VoodooInputSupported + its coordinate span and registerService()s; the
- * mux (com_schmonz_VoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
+ * mux (com_schmonz_MavericksVoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
  * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No BNBTrackpadDevice is ever started; no fabricated AMD
  * is built here. No decision logic lives in this file.
@@ -39,7 +39,7 @@
 #include "MavericksAMDTerminal.h"           /* mavericks_amd_terminal_amd — read the mux's terminal AMD node for battery */
 #include "mavericks_voodoo_translate.h"     /* mavericks_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
-#include "VoodooInputMux.h"           /* com_schmonz_VoodooInput::synthCtx() — terminal AMD node for battery */
+#include "MavericksVoodooInput.h"           /* com_schmonz_MavericksVoodooInput::synthCtx() — terminal AMD node for battery */
 #include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
 /* mavericks_splice_kext.h -> mavericks_splice.h -> vtable_clone.h requires these macros before the include. */
 #define VTC_ALLOC(sz)  IOMalloc(sz)
@@ -60,7 +60,7 @@ OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 /* The bound VoodooInput mux (set by the interrupt reader once it locates its attached mux).
  * The mux owns the terminal fabricated AMD now; the control reader's battery poll publishes
  * BatteryPercent on the mux's AMD node through here. A single global (one device at a time). */
-static com_schmonz_VoodooInput *gBtMux = 0;
+static com_schmonz_MavericksVoodooInput *gBtMux = 0;
 
 /* The PSM-19 (interrupt) reader instance — the session's active frame source. incomingData
  * translates decoded frames to VoodooInputEvent and messages the mux. */
@@ -173,7 +173,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         gInterruptReader = self;
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
         /* Become a VoodooInput satellite. Advertise support + our coordinate span, then
-         * registerService so the mux (com_schmonz_VoodooInput) matches us as its provider and
+         * registerService so the mux (com_schmonz_MavericksVoodooInput) matches us as its provider and
          * attaches as our client. incomingData emits VoodooInputEvent to that mux; the mux owns
          * the terminal AMD + conditioning (identical MT2_EVENT_DRIVEN/mt2_policy_default). */
         self->setProperty("VoodooInputSupported", kOSBooleanTrue);
@@ -272,7 +272,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
                 }
                 it->release();
             }
-            if (self->fMux) gBtMux = OSDynamicCast(com_schmonz_VoodooInput, self->fMux);
+            if (self->fMux) gBtMux = OSDynamicCast(com_schmonz_MavericksVoodooInput, self->fMux);
         }
         if (self->fMux) {
             VoodooInputEvent ev = mavericks_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
