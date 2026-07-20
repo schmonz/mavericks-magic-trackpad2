@@ -22,6 +22,7 @@ class com_schmonz_MT2USBReader : public IOService {
     IOBufferMemoryDescriptor *fBuf;
     UInt32          fMaxPacket;
     bool            fStopping;
+    IOService      *fMux;          /* bound VoodooInput mux (found lazily by VOODOO_INPUT_IDENTIFIER) */
     void armRead(void);
     static void readComplete(void *target, void *param, IOReturn status, UInt32 remaining);
     void releaseInterface(void);   /* abort pipe + close interface; idempotent */

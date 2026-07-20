@@ -2,11 +2,13 @@
  *
  * Two halves. PER-TRANSPORT (the ~3%): match interface 1 of the cabled MT2, open the
  * interrupt-IN pipe, send the MT2 0x02 USB multitouch-enable, and async-read frames.
- * SHARED ENGINE (the ~97%) is what it feeds. There is ONE seam: readComplete decodes
- * each raw MT2 0x02 report (mt2_usb_decode -> mt2_frame) and hands it to the shared
- * session engine (policy row mt2_policy_default) whose registered kUsbSink re-encodes
- * and drives the fabricated AMD directly. No AppleUSBMultitouchDriver is ever started.
- * No decision logic lives in this file.
+ * SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE, symmetric with
+ * MT2BTReader — on bring-up it advertises VoodooInputSupported + its coordinate span +
+ * Transport=USB and registerService()s; the mux (com_schmonz_VoodooInput) attaches as our
+ * client. readComplete decodes each raw MT2 0x02 report (mt2_usb_decode -> mt2_frame),
+ * mt2_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
+ * the terminal AMD + conditioning. No AppleUSBMultitouchDriver is ever hosted; no fabricated
+ * AMD is built here. No decision logic lives in this file.
  *
  * Load-bearing RE prose is in docs/mt-stack/explanation.md "MT2USBReader bring-up";
  * the code keeps one-line pointers.
@@ -21,8 +23,9 @@
 #include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
 #include "mt2_usb_decode.h"            /* mt2_usb_decode -> mt2_frame (the decode seam) */
-#include "mt1_encode.h"
-#include "MT2Gesture.h"                /* engine: connectionEstablished/submitFrame + sink type */
+#include "mt2_voodoo_translate.h"      /* mt2_voodoo_from_frame (satellite emit) */
+#include "voodoo_wire.h"               /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
+#include "../src/mt2_coord_range.h"    /* MT2_SPAN_X / MT2_SPAN_Y */
 #include "mt2_synth_amd.h"           /* mt2_synth_amd_build/amd/teardown — fabricated AMD */
 #include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
@@ -32,55 +35,8 @@
  * see explanation.md "MT2USBReader bring-up". 50ms measured sufficient; don't delete it. */
 #define MT2_USB_ENABLE_SETTLE_MS     50
 
-/* Set by com_schmonz_MT2Gesture::start (same kext). */
-extern com_schmonz_MT2Gesture *gActiveMT2Gesture;
-
-/* The reader instance = the session's source token (registered at connectionEstablished).
- * Single device -> one global, like gUsbAmdCtx. */
+/* The reader instance (single device -> one global). Set/cleared across start/stop. */
 static IOService *gUsbReader = 0;
-
-/* The fabricated AppleMultitouchDevice context for USB.
- * Non-NULL only when the connection is up and the build succeeded.
- * A single global (one device at a time) — cleared on stop after the session deregisters. */
-static mt2_synth_amd_ctx *gUsbAmdCtx = 0;
-
-static uint32_t usb_ts_22bit(void) {
-    clock_sec_t s; clock_usec_t u;
-    clock_get_system_microtime(&s, &u);
-    return (uint32_t)(((uint64_t)s * 1000 + u / 1000) & 0x3FFFFF);   /* monotonic ms, 22-bit */
-}
-
-/* USB fabricated-AMD sink (mirrors SP2's kBtSink).
- * Delivery target = the fabricated AMD (gUsbAmdCtx). NULL-guards drop deliveries during bring-up.
- * Calls arrive under the session lock. */
-static void *usb_sink_amd(void) { return (void *)mt2_synth_amd_amd(gUsbAmdCtx); }
-static void usb_sink_feed_frame(void *ctx, const mt2_frame *frame) {
-    (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)usb_sink_amd();
-    if (!amd) return;
-    if (frame->contact_count > 0)
-        MT2_DLOG(2, "feed x=%d y=%d -> usbAMD", frame->transducers[0].currentCoordinates.x,
-                 frame->transducers[0].currentCoordinates.y);
-    uint8_t mt1[256];
-    int n = mt1_encode(frame, mt1, sizeof(mt1), usb_ts_22bit());
-    if (n <= 0) return;
-    amd->handleTouchFrame(mt1, (unsigned int)n);
-}
-static void usb_sink_post_button_edge(void *ctx, unsigned mask) {
-    (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)usb_sink_amd();
-    if (!amd) return;
-    MT2_DLOG(2, "post_button_edge mask=0x%x -> usbAMD", mask);
-    amd->handlePointerEventFromDevice(0, 0, mask, 0);
-}
-static IOReturn usb_sink_inject(void *ctx, const unsigned char *bytes, unsigned int len) {
-    (void)ctx;
-    AppleMultitouchDevice *amd = (AppleMultitouchDevice *)usb_sink_amd();
-    if (!amd) return kIOReturnNotReady;
-    return amd->handleTouchFrame((unsigned char *)bytes, len);
-}
-static const mt2_transport_sink_t kUsbSink =
-    { usb_sink_feed_frame, usb_sink_post_button_edge, usb_sink_inject, 0 };
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2USBReader, IOService)
 
@@ -124,16 +80,17 @@ bool com_schmonz_MT2USBReader::start(IOService *provider) {
     if (!fBuf) { IOLog("MT2USBReader: buffer alloc failed\n"); fIntf->close(this); return false; }
 
     gUsbReader = this;
-    gUsbAmdCtx = mt2_synth_amd_build(gActiveMT2Gesture, MT2_SYNTH_XPORT_USB);
-    if (!gUsbAmdCtx) IOLog("MT2USBReader: fabricated AMD build FAILED - no cursor\n");
+    fMux = 0;
+    /* Become a VoodooInput satellite (mirrors MT2BTReader): advertise support + coordinate span +
+     * our transport, then registerService so the mux attaches as our client. readComplete emits
+     * VoodooInputEvent to it; the mux owns the terminal AMD + conditioning. */
+    setProperty("VoodooInputSupported", kOSBooleanTrue);
+    setProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
+    setProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
+    setProperty("MT2 Transport", "USB");   /* mux builds a USB-transport fabricated AMD (Task 3) */
 
-    if (gActiveMT2Gesture)
-        gActiveMT2Gesture->connectionEstablished(this, MT2_STREAMING, &mt2_policy_default, &kUsbSink);
-    else
-        IOLog("MT2USBReader: ENGINE NOT PUBLISHED at bring-up — input will be dead until replug\n");
-
-    IOLog("MT2USBReader: interface open, multitouch enabled, reading (mps=%u)\n",
-          (unsigned)fMaxPacket);
+    IOLog("MT2USBReader: VoodooInput satellite up (LMAX %u x %u)\n",
+          (unsigned)MT2_SPAN_X, (unsigned)MT2_SPAN_Y);
     registerService();
     armRead();
     return true;
@@ -160,8 +117,25 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
             if (n > sizeof(buf)) n = sizeof(buf);
             self->fBuf->readBytes(0, buf, n);
             mt2_frame tf;
-            if (mt2_usb_decode(buf, n, &tf) == 0 && gActiveMT2Gesture)
-                gActiveMT2Gesture->submitFrame(self, &tf);   /* self = this reader */
+            if (mt2_usb_decode(buf, n, &tf) == 0) {
+                /* Emit to the mux (found lazily — attaches async after registerService; pre-attach
+                 * frames drop). The mux owns terminal conditioning + the fabricated AMD. */
+                if (!self->fMux) {
+                    OSIterator *it = self->getClientIterator();
+                    if (it) {
+                        OSObject *o;
+                        while ((o = it->getNextObject())) {
+                            IOService *c = OSDynamicCast(IOService, o);
+                            if (c && c->getProperty(VOODOO_INPUT_IDENTIFIER)) { self->fMux = c; break; }
+                        }
+                        it->release();
+                    }
+                }
+                if (self->fMux) {
+                    VoodooInputEvent ev = mt2_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
+                    self->messageClient(kIOMessageVoodooInputMessage, self->fMux, &ev, sizeof ev);
+                }
+            }
         }
         self->armRead();
     } else if (status != kIOReturnAborted) {
@@ -183,9 +157,9 @@ void com_schmonz_MT2USBReader::releaseInterface(void) {
      * Safe to call even if fPipe is already NULL (first guard). */
     if (fPipe) { fPipe->Abort(); fPipe = 0; }
 
-    /* Deregister from the engine: after connectionClosed returns, no session effect can reach
-     * kUsbSink. */
-    if (gActiveMT2Gesture) gActiveMT2Gesture->connectionClosed(this);
+    /* We are a VoodooInput satellite: as this provider stops, IOKit detaches + stops the mux
+     * (our client), which tears down its own terminal AMD. Just drop our borrowed reference. */
+    fMux = 0;
     gUsbReader = 0;
 
     if (fIntf) {
@@ -203,16 +177,8 @@ bool com_schmonz_MT2USBReader::willTerminate(IOService *provider, IOOptionBits o
 void com_schmonz_MT2USBReader::stop(IOService *provider) {
     releaseInterface();                          /* no-op if willTerminate already did it */
 
-    /* Tear down the fabricated AMD. NULL gUsbAmdCtx first so an in-flight delivery sees no AMD
-     * before we quiesce, then free after the drain. Mirrors SP2 stop(). */
-    if (gUsbAmdCtx) {
-        mt2_synth_amd_ctx *usbAmdToTear = gUsbAmdCtx;
-        gUsbAmdCtx = 0;
-        if (gActiveMT2Gesture) gActiveMT2Gesture->quiesceDelivery();
-        mt2_synth_amd_teardown(gActiveMT2Gesture, usbAmdToTear);
-        IOLog("MT2USBReader: fabricated AMD torn down\n");
-    }
-
+    /* No terminal AMD to tear down here — the mux owns it and cleans up when it detaches as our
+     * client (above). */
     if (fBuf) { fBuf->release(); fBuf = 0; }
     IOLog("MT2USBReader: stopped\n");
     IOService::stop(provider);
