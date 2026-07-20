@@ -386,6 +386,24 @@ device property can differ between the two.
   `AppleUSBMultitouchHIDEventDriver` (3 instances on the physical USB HID interfaces) fighting our reader;
   separate issue from the gesture-open gate.
 
+**2026-07-20 (cont.) — RE'd the hotplug match dict (device-free; MultitouchSupport
+`_mt_DeviceRegisterForHotplugNotifications` @ 0x23a1).** It builds `{ "IOPropertyMatch": { "Multitouch ID": V } }`
+and registers TWO `IOServiceAddMatchingNotification`s (`"IOServiceFirstMatch"` → `_mt_HotPlugMatchingDeviceAdded`,
+`"IOServiceTerminate"` → `_mt_HotPlugMatchingDeviceRemoved`). There is **NO `IOServiceMatching(class)` and NO
+Transport / Built-In / MTHIDDevice filter** — the sole criterion is an exact `Multitouch ID == V`, and V is
+passed per-device (arg struct `+0x18` → `CFNumberCreate`). So this is a PER-DEVICE re-appearance watcher keyed
+to a Multitouch ID captured when the device was first seen; it is NOT the initial discovery/open.
+- ⇒ (1) triple-confirms transport/props do not gate the match (no such filter exists in the dict);
+- ⇒ (2) NEW lever: re-open via this watcher depends on the device keeping the SAME `Multitouch ID`. Our
+  synthetic AMD's is pointer-derived (USB boot `0x400000009B15FE00`, BT `0x400000009E9CA800`) → different every
+  build, so a rebuilt AMD would not match a prior watcher. (Matters for reconnect/re-appearance, NOT the
+  first-open gate.)
+- The INITIAL `IOServiceOpen` of the gesture UserClient is driven by the CONSUMER's (WindowServer/SkyLight)
+  enumeration policy (`MTDeviceCreateList` + `MTDeviceStart`), which is NOT in MultitouchSupport — a large RE.
+  The cheap discriminator for "does a post-login USB appearance get opened" is a live replug measuring the
+  `AppleMultitouchDeviceUserClient` count transition (0→1?), which the earlier confounded "no cursor
+  mid-session" tests never isolated.
+
 **RE GOTCHA — the running build ≠ the on-disk file (resolved).** `validateChecksum`'s path-binary branch is
 ABSENT from the on-disk `/S/L/E/AppleUSBMultitouch` (240.10, Jan-11) but PRESENT in the booted build. Proof:
 the reject string at file off `0x9376` is referenced by ZERO instructions in the on-disk binary, but the
