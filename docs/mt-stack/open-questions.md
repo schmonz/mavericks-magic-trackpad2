@@ -465,6 +465,20 @@ blunt (momentary all-HID hiccup) and will bite someday; mapped what a gentle re-
       gap) → the gentle fix needs the large hidd-enumeration RE. (c) stays 0 AND `Multitouch ID` CHANGED →
   confirms the "new id defeats the watcher" model → gentle fix = make the id stable across re-announce (drive
   the LocationID/Transport inputs), then re-announce. Until run, `killall hidd` stays.
+- **RAN IT 2026-07-20 (satellite kext driving USB on-device) — OUTCOME (c), decisive.** Gestures open
+  (`AppleMultitouchDeviceUserClient=1`, `Multitouch ID=288230379292079872`). Fired a bare
+  `sudo mt2_reenumerate` (no hidd kick, wrapper NOT invoked). Result: UserClient **1→0 and STAYS 0** across
+  13s of polling — a bare re-announce does NOT reopen the gesture client. AND the `Multitouch ID` CHANGED to
+  `288230378902902528` — **same physical USB port, recreated AMD → new id.** `killall hidd` afterward → back
+  to 1 (kick still the only thing that opens it). ⇒ The cheap "swap killall→reenumerate" path is FALSIFIED.
+  The id's high 32 bits are constant (`0x04000000`), the **low 32 bits vary per AMD instantiation** — so the
+  id is instance-derived, NOT port/LocationID-stable, so the per-device watcher can never match a re-announced
+  synthetic AMD. ⇒ The gentle path now REQUIRES making the id deterministic, which means controlling Apple's
+  `_cacheDeviceProperties` derivation (the low-32 input is instance state, not LocationID as hoped) OR solving
+  hidd first-discovery (the large RE). Both are real efforts; **`killall hidd` stays as the mechanism**, now
+  with the reenumerate shortcut ruled out and understood. NOTE: also confirms our wrapper's `kextunload` of a
+  BUSY (device-driving) VoodooInputMavericks FAILS silently — the reload is a no-op; only `mt2_reenumerate`
+  (or a real idle unload) actually recreates the AMD.
 
 **RE GOTCHA — the running build ≠ the on-disk file (resolved).** `validateChecksum`'s path-binary branch is
 ABSENT from the on-disk `/S/L/E/AppleUSBMultitouch` (240.10, Jan-11) but PRESENT in the booted build. Proof:
