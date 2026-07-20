@@ -362,6 +362,30 @@ clients are supposed to attach, to find why none did:
   `registerUserClient`→`addFramesClient`→`configureDataMode`→streaming, and see if cursor/pane come alive.
   If that works, the fix is making our service auto-discovered (publish the missing props / fire the hotplug).
 
+**2026-07-20 — SATELLITE ERA: unknown (b) RESOLVED; the gate is the appearance-PATH, not device props.**
+Booted the VoodooInput-satellite kext as the boot kext for BOTH transports (same `mt2_synth_amd` fabricated
+AMD builds the terminal under the mux, transport dodged to Bluetooth). Clean boot, USB cabled: cursor +
+physical click + 2-finger right-click WORK (via `AppleMultitouchHIDEventDriver`, which binds our AMD), but
+scroll / swipe / tap-to-click are DEAD — `AppleMultitouchDeviceUserClient` count = **0**. Unplug → BT (same
+kext, same synthetic AMD): gestures work, `AppleMultitouchDeviceUserClient` = **1**. The two AMD nodes are
+byte-identical in ioreg — `Transport="Bluetooth"`, `MT Built-In=Yes`, `Family ID=129`, geometry,
+`MTHIDDevice`/`HIDServiceSupport`/`HIDDefaultBehavior` — ALL set by our code (`mt2_synth_amd.cpp`), so no
+device property can differ between the two.
+- ⇒ **Unknown (b) is RESOLVED: the consumer's device criteria/props are SUFFICIENT** — proven because the
+  IDENTICAL node gets its UserClient opened on BT. The gate is unknown (a)/(c): WindowServer's
+  MultitouchSupport `_mt_HotPlugMatchingDeviceAdded` open FIRES for the BT appearance but NOT the USB one.
+- **Why:** the USB device is present at the LOGIN SCREEN (kext loads at boot, before login). BT re-announces
+  itself POST-login via the EXISTING session-takeover bounce (`3f828de` "mt2d-run bounces at session-takeover";
+  KB "CURSOR-DEAD-AT-LOGIN root cause is DOWNSTREAM of the BT bind"). **USB has NO equivalent post-login
+  re-announce**, so WindowServer's per-session consumer never sees a fresh hotplug for it.
+- **REMEDY (hypothesis):** make the USB AMD re-appear as a post-login hotplug — mirror the BT login-bounce.
+  Primitive already exists: `tools/mt2_reenumerate`. **Cheap confirmation before coding:** replug USB while
+  logged in (fresh post-login appearance) → if UserClient→1 + gestures go live, implement the USB login
+  re-announce in the same `mt2d-run` session-takeover step that already bounces BT.
+- Distinct from the transient "cursor stalls after a while" on USB — that is the co-resident Apple
+  `AppleUSBMultitouchHIDEventDriver` (3 instances on the physical USB HID interfaces) fighting our reader;
+  separate issue from the gesture-open gate.
+
 **RE GOTCHA — the running build ≠ the on-disk file (resolved).** `validateChecksum`'s path-binary branch is
 ABSENT from the on-disk `/S/L/E/AppleUSBMultitouch` (240.10, Jan-11) but PRESENT in the booted build. Proof:
 the reject string at file off `0x9376` is referenced by ZERO instructions in the on-disk binary, but the
