@@ -16,6 +16,7 @@
 #   vtable   slot offset <-> method               mt-contacts   stream recognizer contacts
 #   strings  printable strings                     mt-devices    MultitouchSupport device list
 #                                                    mt2-name      READ on-device HID DeviceName reports
+#                                                    deployed      what MT2 driver is loaded+driving vs tree
 #   consts   dump a Mach-O section
 #   hex      hex+ASCII dump of a file
 #   bcmp     compare a byte window of two files
@@ -599,6 +600,43 @@ sub_mt2_name() {  # READ-ONLY: dump on-device HID DeviceName Feature reports (bu
   "$bin" "$@"
 }
 
+sub_deployed() {  # what MT2 driver is ACTUALLY loaded + driving right now, and does it match the tree build?
+  root=$(cd "$(dirname "$0")/.." && pwd)
+  # The kernel's own live class-instance census (IOKitDiagnostics "Classes"): compact "Name"=N pairs,
+  # whitespace-proof and authoritative — the RIGHT oracle. (A hand-rolled `ioreg | grep 'Name <class'`
+  # tree grep is fragile: ioreg prints TWO spaces before <class, and stub !registered nodes miscount.)
+  census=$(ioreg -l -w0 2>/dev/null | grep -oE '"[A-Za-z0-9_]+"=[0-9]+')
+  cnt() { v=$(printf '%s\n' "$census" | grep -E "\"$1\"=" | head -1 | cut -d= -f2); echo "${v:-0}"; }
+
+  echo "== LOADED MT2 KEXT (kextstat) =="
+  kextstat 2>/dev/null | grep -iE 'VoodooInputMavericks|MT2Gesture' | awk '{printf "  %s %s\n",$6,$7}'
+  kextstat 2>/dev/null | grep -qiE 'VoodooInputMavericks|MT2Gesture' || echo "  (no MT2 kext loaded)"
+
+  echo "== DEPLOYED-ON-DISK vs CURRENT TREE BUILD =="
+  dep=/usr/local/lib/voodooinputmavericks/VoodooInputMavericks.kext/Contents/MacOS/VoodooInputMavericks
+  tree=$root/build-native/VoodooInputMavericks.kext/Contents/MacOS/VoodooInputMavericks
+  if [ -f "$dep" ] && [ -f "$tree" ]; then
+    if cmp -s "$dep" "$tree"; then echo "  MATCH: deployed kext == current tree build"
+    else echo "  *** DIFFERS: deployed kext != tree build (rebuild + install-pkg to sync) ***"; fi
+  else
+    [ -f "$dep" ]  || echo "  (nothing deployed at $dep)"
+    [ -f "$tree" ] || echo "  (no tree build; run: cmake --build build-native --target kext)"
+  fi
+
+  echo "== SATELLITE DRIVING? (live instance count) =="
+  for c in com_schmonz_MT2USBReader com_schmonz_MT2BTReader com_schmonz_MavericksVoodooInput com_schmonz_MavericksHIDShell; do
+    printf "  %-34s %s\n" "$c" "$(cnt "$c")"
+  done
+  printf "  %-34s %s   <- 1 = scroll/swipe/tap LIVE\n" "AppleMultitouchDeviceUserClient" "$(cnt AppleMultitouchDeviceUserClient)"
+
+  echo "== APPLE GENUINE CO-RESIDENT =="
+  printf "  %-34s %s   <- want 0 (satellite owns multitouch)\n" "AppleUSBMultitouchUserClient" "$(cnt AppleUSBMultitouchUserClient)"
+  printf "  %-34s %s   <- event drivers on the other USB ifaces (\"cursor stalls\" suspect)\n" "AppleUSBMultitouchHIDEventDriver" "$(cnt AppleUSBMultitouchHIDEventDriver)"
+
+  echo "== BOOT OWNER (LaunchDaemons) =="
+  ls /Library/LaunchDaemons/ 2>/dev/null | grep -iE 'schmonz.*(mt2|voodoo)' | sed 's/^/  /' || echo "  (none)"
+}
+
 sub_mt_devices() {  # list MultitouchSupport devices (builds tools/multitouch_transport)
   root=$(cd "$(dirname "$0")/.." && pwd); bin=$root/tools/multitouch_transport
   [ -x "$bin" ] || clang -o "$bin" "$root/tools/multitouch_transport.c" \
@@ -696,6 +734,7 @@ case "$cmd" in
   kexts)         sub_kexts "$@" ;;
   mt-contacts)   sub_mt_contacts "$@" ;;
   mt-devices)    sub_mt_devices "$@" ;;
+  deployed)      sub_deployed "$@" ;;
   mt2-name)      sub_mt2_name "$@" ;;
   help|-h|--help|"") usage 0 ;;
   *) echo "$me: unknown subcommand '$cmd'  (try '$me help')" >&2; exit 2 ;;
