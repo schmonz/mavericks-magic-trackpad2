@@ -53,8 +53,8 @@
 #include <IOKit/hid/IOHIDDevice.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <ApplicationServices/ApplicationServices.h>
-#include "mt2_presence.h"
-#include "mt2_presence_observer.h"
+#include "mavericks_presence.h"
+#include "mavericks_presence_observer.h"
 #include "mt2_single_load.h"
 #include "../mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
@@ -73,7 +73,7 @@
  * ============================================================================================ */
 
 static id          gPane = NULL;          /* the live Trackpad pane instance (captured on didSelect) */
-static mt2_presence_observer_t *gObs = NULL;  /* the shared presence observer; owns the SM + IOKit edges */
+static mavericks_presence_observer_t *gObs = NULL;  /* the shared presence observer; owns the SM + IOKit edges */
 
 static int responds(id obj, SEL s) {
     return obj && ((signed char (*)(id, SEL, SEL))objc_msgSend)(
@@ -505,7 +505,7 @@ static void perform(presence_action_t a) {
 
 /* The pane's presence-transition callback: render each SM action against the live pane. The presence
  * SM, the IOKit edges, and the removal-window HOLD timer now live in the shared presence observer
- * (src/mt2_presence_observer.h); this callback is all that stays pane-specific. */
+ * (src/mavericks_presence_observer.h); this callback is all that stays pane-specific. */
 static void on_presence(presence_action_t a, presence_event_t e, void *ctx) { (void)e; (void)ctx; perform(a); }
 
 /* ============================================================================================

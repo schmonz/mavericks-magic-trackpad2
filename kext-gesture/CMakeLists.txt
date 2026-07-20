@@ -11,8 +11,8 @@ set(KEXT_LOCAL_CPP
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
   mt2_bt_decode mt1_encode mt2_usb_decode mt2_decode mavericks_pipeline mavericks_lifecycle
-  mavericks_session mt2_geometry mt2_usb_bytes mt2_connect_sm conn_trace
-  genuine_host mt2_coordinator mt2_battery mavericks_splice mt2_synth_report mt2_synth_teardown)
+  mavericks_session mt2_geometry mt2_usb_bytes mavericks_connect_sm conn_trace
+  genuine_host mavericks_coordinator mt2_battery mavericks_splice mt2_synth_report mt2_synth_teardown)
 set(KEXT_SHARED_SRCS "")
 foreach(c ${KEXT_SHARED_NAMES})
   list(APPEND KEXT_SHARED_SRCS ${CMAKE_SOURCE_DIR}/src/${c}.c)

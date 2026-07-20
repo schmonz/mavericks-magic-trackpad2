@@ -1,4 +1,4 @@
-#include "../src/mt2_connect_sm.h"
+#include "../src/mavericks_connect_sm.h"
 #include "test.h"
 
 static void run_tests(void) {

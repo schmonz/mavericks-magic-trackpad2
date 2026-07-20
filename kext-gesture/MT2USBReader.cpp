@@ -27,7 +27,7 @@
 #include "voodoo_wire.h"               /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
 #include "../src/mt2_coord_range.h"    /* MT2_SPAN_X / MT2_SPAN_Y */
 #include "mt2_synth_amd.h"           /* mt2_synth_amd_build/amd/teardown — fabricated AMD */
-#include "../src/mt2_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
+#include "../src/mavericks_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "mt2_log.h"                   /* MT2_DLOG (runtime debug.mt2_log) */
 

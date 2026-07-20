@@ -1,7 +1,7 @@
 #ifndef CONN_TRACE_H
 #define CONN_TRACE_H
 #include <stddef.h>
-#include "mt2_connect_sm.h"
+#include "mavericks_connect_sm.h"
 
 typedef struct {
     unsigned ts_ms;

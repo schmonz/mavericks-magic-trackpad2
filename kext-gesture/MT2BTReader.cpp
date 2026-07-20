@@ -35,7 +35,7 @@
 #include "mt2_diag.h"          /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mavericks_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
-#include "../src/mt2_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
+#include "../src/mavericks_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 #include "mt2_synth_amd.h"           /* mt2_synth_amd_amd — read the mux's terminal AMD node for battery */
 #include "mt2_voodoo_translate.h"     /* mt2_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */

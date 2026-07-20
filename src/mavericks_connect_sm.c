@@ -1,4 +1,4 @@
-#include "mt2_connect_sm.h"
+#include "mavericks_connect_sm.h"
 
 csm_result_t csm_step(csm_state_t state, csm_event_t event) {
     csm_result_t r; r.next = state; r.action = CSM_ACT_NONE;

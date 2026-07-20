@@ -1,20 +1,20 @@
-/* IOKit adapter for mt2_presence — see mt2_presence_observer.h. Lifted verbatim from the prefpane
+/* IOKit adapter for mavericks_presence — see mavericks_presence_observer.h. Lifted verbatim from the prefpane
  * osax's former inline sm_event/sm_reconcile/dev_changed/arm_observer so the pane and the USB->BT
- * handoff can share one presence observer. Pure decision logic stays in mt2_presence (host-tested);
+ * handoff can share one presence observer. Pure decision logic stays in mavericks_presence (host-tested);
  * this file is the IOKit-bound half (no host test — validated on-device via the transport matrix). */
 #include <stdlib.h>
 #include <syslog.h>
 #include <dispatch/dispatch.h>
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
-#include "mt2_presence_observer.h"
+#include "mavericks_presence_observer.h"
 
 #define LOG(...) syslog(LOG_NOTICE, "[MT2Presence] " __VA_ARGS__)
 
 /* Per-notification refcon: which observer + which SM event this edge maps to (+ a log tag). */
-typedef struct { struct mt2_presence_observer *o; presence_event_t ev; const char *tag; } obs_cbctx_t;
+typedef struct { struct mavericks_presence_observer *o; presence_event_t ev; const char *tag; } obs_cbctx_t;
 
-struct mt2_presence_observer {
+struct mavericks_presence_observer {
     presence_state_t state;   /* the SM state; the observer's only decision state */
     int gen;                  /* serializes the pending HOLD timer (supersession) */
     int removal_ms;           /* the removal-window (coalescing) duration */
@@ -45,7 +45,7 @@ static void drain(io_iterator_t it) {
  * duplicate/stale edge) must NOT bump gen: doing so would cancel a live HOLD timer without
  * rescheduling, stranding the SM in PRESENCE_HOLD (reconcile won't resolve HOLD->NONE by design). So
  * only HOLD arms, and only a real resolution supersedes. */
-static void obs_sm_event(mt2_presence_observer_t *o, presence_event_t e) {
+static void obs_sm_event(mavericks_presence_observer_t *o, presence_event_t e) {
     presence_result_t r = presence_step(o->state, e);
     o->state = r.next;
     o->cb(r.action, e, o->ctx);
@@ -71,9 +71,9 @@ static void obs_dev_changed(void *ref, io_iterator_t it) {
     obs_sm_event(c->o, c->ev);
 }
 
-mt2_presence_observer_t *presence_observer_create(void *runloop, int removal_ms,
+mavericks_presence_observer_t *presence_observer_create(void *runloop, int removal_ms,
                                                   presence_on_transition_t cb, void *ctx) {
-    mt2_presence_observer_t *o = calloc(1, sizeof(*o));
+    mavericks_presence_observer_t *o = calloc(1, sizeof(*o));
     if (!o) return NULL;
     o->state = PRESENCE_NONE;
     o->removal_ms = removal_ms;
@@ -113,7 +113,7 @@ mt2_presence_observer_t *presence_observer_create(void *runloop, int removal_ms,
  * HOLD-timer block's captured `o` never dangles. If a caller ever destroys an observer, it MUST do so
  * only when no removal-window timer is pending (else the in-flight dispatch_after block touches freed
  * memory) — bump o->gen won't help since the block reads o itself. Quiesce, then destroy. */
-void presence_observer_destroy(mt2_presence_observer_t *o) {
+void presence_observer_destroy(mavericks_presence_observer_t *o) {
     if (!o) return;
     if (o->notify) {
         CFRunLoopRemoveSource(o->runloop, IONotificationPortGetRunLoopSource(o->notify),
@@ -124,12 +124,12 @@ void presence_observer_destroy(mt2_presence_observer_t *o) {
     free(o);
 }
 
-presence_state_t presence_observer_state(const mt2_presence_observer_t *o) {
+presence_state_t presence_observer_state(const mavericks_presence_observer_t *o) {
     return o ? o->state : PRESENCE_NONE;
 }
 
 /* Reconcile against device truth (poll): self-heal for missed/manually-started edges. */
-void presence_observer_reconcile(mt2_presence_observer_t *o) {
+void presence_observer_reconcile(mavericks_presence_observer_t *o) {
     if (!o) return;
     int bt  = service_present("com_schmonz_MT2BTReader");    /* our fabricated-AMD readers = the transport */
     int usb = service_present("com_schmonz_MT2USBReader");   /* signal now (BNB/AppleUSBMultitouch are gone) */

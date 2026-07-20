@@ -21,11 +21,11 @@ foreach(t mt2_bt_bounce)
 endforeach()
 
 # mt2_usb_bt_handoff — the no-click USB->BT handoff daemon. Same ObjC/IOBluetooth base as bt_bounce,
-# now driven by the shared presence observer (mt2_presence_observer + the pure mt2_presence SM) so it
+# now driven by the shared presence observer (mavericks_presence_observer + the pure mavericks_presence SM) so it
 # watches the same canonical USB/BT services as the prefpane.
 add_executable(mt2_usb_bt_handoff mt2_usb_bt_handoff.m
-  ${CMAKE_CURRENT_SOURCE_DIR}/mt2_prefpane_refresh/mt2_presence_observer.c
-  ${CMAKE_SOURCE_DIR}/src/mt2_presence.c)
+  ${CMAKE_CURRENT_SOURCE_DIR}/mt2_prefpane_refresh/mavericks_presence_observer.c
+  ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c)
 target_compile_options(mt2_usb_bt_handoff PRIVATE -fobjc-arc)
 target_include_directories(mt2_usb_bt_handoff PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(mt2_usb_bt_handoff
@@ -43,7 +43,7 @@ mavericks_compat_guard(mt2_pane_watch)
 # The prefpane-refresh osax: a pure-C GC-neutral payload injected into System
 # Preferences. MODULE = -bundle; objc is used via the runtime only (no GC image info).
 set(OSAX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/mt2_prefpane_refresh)
-add_library(MT2PaneRefresh MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${OSAX_DIR}/mt2_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mt2_presence.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
+add_library(MT2PaneRefresh MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${OSAX_DIR}/mavericks_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
 target_include_directories(MT2PaneRefresh PRIVATE ${CMAKE_SOURCE_DIR}/src)
 # The About tab's version label reads this at compile time (kept in lock-step with MT2_VERSION).
 target_compile_definitions(MT2PaneRefresh PRIVATE MT2_VERSION_STR="${MT2_VERSION}")
@@ -58,7 +58,7 @@ add_custom_command(TARGET MT2PaneRefresh POST_BUILD
   COMMENT "Assembling MT2PaneRefresh.osax")
 
 # Same payload as a DYLD_INSERT_LIBRARIES dylib (a loader we control at launch).
-add_library(MT2PaneRefresh_dylib SHARED ${OSAX_DIR}/mt2_prefpane_refresh.c ${OSAX_DIR}/mt2_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mt2_presence.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
+add_library(MT2PaneRefresh_dylib SHARED ${OSAX_DIR}/mt2_prefpane_refresh.c ${OSAX_DIR}/mavericks_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
 target_include_directories(MT2PaneRefresh_dylib PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(MT2PaneRefresh_dylib PRIVATE MT2_VERSION_STR="${MT2_VERSION}")
 set_target_properties(MT2PaneRefresh_dylib PROPERTIES
@@ -68,7 +68,7 @@ target_link_libraries(MT2PaneRefresh_dylib "-framework IOKit" "-framework CoreFo
 
 # Same payload packaged as a SIMBL plugin bundle (SIMBLAgent injects it at launch —
 # the current working loader). Same -bundle binary, SIMBL-Info.plist, .bundle dir.
-add_library(MT2PaneRefresh_simbl MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${OSAX_DIR}/mt2_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mt2_presence.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
+add_library(MT2PaneRefresh_simbl MODULE ${OSAX_DIR}/mt2_prefpane_refresh.c ${OSAX_DIR}/mavericks_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c ${CMAKE_SOURCE_DIR}/src/mt2_single_load.c)
 target_include_directories(MT2PaneRefresh_simbl PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(MT2PaneRefresh_simbl PRIVATE MT2_VERSION_STR="${MT2_VERSION}")
 # Distinct output dir: MT2PaneRefresh (osax) also emits an unprefixed/unsuffixed

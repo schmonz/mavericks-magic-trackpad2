@@ -10,7 +10,7 @@
  * 2026-07-04: a host `-[IOBluetoothDevice openConnection]` wakes that deep-idle radio with ZERO
  * physical action — the same primitive tools/mt2_bt_bounce uses for the reload case.
  *
- * This daemon closes the gap: it arms the shared presence observer (src/mt2_presence_observer.h — the
+ * This daemon closes the gap: it arms the shared presence observer (src/mavericks_presence_observer.h — the
  * same one the prefpane uses) and, on the USB-removal edge (cable pulled), calls `openConnection` on
  * the paired CoD-0x594 MT2. No tap. Runs as a root LaunchDaemon so it works regardless of GUI session
  * (dist/com.schmonz.mt2usbbthandoff.plist). The observer watches the canonical AppleUSBMultitouchDriver
@@ -27,7 +27,7 @@
 #import <IOBluetooth/IOBluetooth.h>
 #import <IOKit/IOKitLib.h>
 #include <string.h>
-#include "mt2_presence_observer.h"
+#include "mavericks_presence_observer.h"
 #include "mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 #include "mt2_reconnect_policy.h"   /* mt2_reconnect_should_page — page iff ours-by-class AND disconnected */
 
@@ -145,7 +145,7 @@ int main(int argc, const char *argv[]) {
          * and reports each transition; we act only on the USB_REMOVE edge (see on_presence). The
          * observer drains its initial iterators without firing, so no spurious wake at startup just
          * because USB happens to be plugged in now. */
-        mt2_presence_observer_t *obs =
+        mavericks_presence_observer_t *obs =
             presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
         if (!obs) { NSLog(@"mt2_usb_bt_handoff: presence_observer_create failed"); return 1; }
 

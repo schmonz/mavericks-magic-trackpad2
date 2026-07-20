@@ -1,4 +1,4 @@
-#include "mt2_presence.h"
+#include "mavericks_presence.h"
 
 presence_result_t presence_step(presence_state_t state, presence_event_t event) {
     presence_result_t r = { state, PRESENCE_ACT_NONE };
