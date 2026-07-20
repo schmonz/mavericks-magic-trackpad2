@@ -807,3 +807,19 @@ parties (the sample satellite is retired — the BT reader IS the worked example
      publishing whatever its `_ioServiceObserver:deviceConnected:` matches — OR force the trackpad controller
      directly. Needs RE of `Trackpad.prefPane`'s detection. This is downstream-cosmetic ONLY (upstream
      VoodooInput does no prefpane work — it relies on native MT2 recognition on 10.11+).
+
+  **2026-07-20 detect RE (KB-first, then otool on the current `Trackpad` binary; extends the 0f68531
+  loadMainView RE).** `-[Trackpad loadMainView]` runs its detect inline: several `IOServiceGetMatchingService`
+  (single) probes for the trackpad CLASSES `BNBTrackpadDevice` / `AppleUSBMultitouchDriver` (+ the
+  `com.apple.AppleMultitouchTrackpad` marker), plus one `IOServiceGetMatchingServices` iterator it classifies
+  by `HIDPointerAccelerationType` (Mouse/Trackpad) + `VendorID`. Results land in ivars `mFoundMouse` /
+  `mFoundBTTrackpad` / `mMagicTrackpadFound`; the nib pick (`_controlerForNIBName:` @0x266b → NoTrackpad vs
+  trackpad) keys on them. Our node is class `AppleMultitouchDevice` → matches NONE of the trackpad-class
+  probes → all-false → NoTrackpad. **The trackpad detect is CLASS-based, not property-based**, so there is no
+  cheap "publish a property on our AMD" fix — native detection needs a real `BNBTrackpadDevice`/
+  `AppleUSBMultitouchDriver`-lineage node, which is the EXPENSIVE owned-device path (bare subclass panics,
+  §"② subclass-the-class"; needs full `IOHIDDevice` reimpl). ⇒ For a downstream-cosmetic pane the fix belongs
+  in the OSAX: swizzle `_controlerForNIBName:` to remap "NoTrackpad" → the trackpad nib when our reader is
+  present (or force `MTTrackpadController` directly). RISK to handle: `MTTrackpadController` with no real
+  matching device may deref device props — the osax already has `find_mt_controller` + drives
+  `_magicTrackpadAction`, but must synthesize `(self,arg)` since Apple never fires `deviceConnected`.
