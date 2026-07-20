@@ -13,7 +13,7 @@
  * Concurrency: the MT2 drives ONE transport at a time (cabling USB drops BT — docs/mt-stack
  * "single transport at a time"), and the two transports key DISTINCT state slots, so no arbitration is
  * needed; each reader's shim is already serialized on its own workloop. */
-#include "mt2_frame.h"
+#include "mavericks_frame.h"
 #include <stdint.h>
 
 typedef enum { MT2_DIAG_BT = 0, MT2_DIAG_USB = 1, MT2_DIAG_NXPORT } mt2_diag_xport_t;
@@ -35,6 +35,6 @@ void mt2_diag_raw(mt2_diag_xport_t x, uint8_t report_id);
 /* After a frame decodes: the once-per-stream "first frame streamed end-to-end" marker (level 1; pass
  * want_first=false where the reader already has a functional first-frame signal — BT's CSM_STEADY),
  * and always the per-frame edge coords (level 2 — the frame-by-frame capture for a short-window bug). */
-void mt2_diag_frame(mt2_diag_xport_t x, const mt2_frame *frame, bool want_first);
+void mt2_diag_frame(mt2_diag_xport_t x, const MavericksTouchFrame *frame, bool want_first);
 
 #endif /* MT2_DIAG_H */

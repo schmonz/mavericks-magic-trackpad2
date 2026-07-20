@@ -13,7 +13,7 @@ static const uint8_t FRAME_2F[] = {
 };
 
 static void run_tests(void) {
-    mt2_frame f = {0};
+    MavericksTouchFrame f = {0};
     int rc = mt2_usb_decode(FRAME_1F, sizeof(FRAME_1F), &f);
     CHECK_EQ(rc, 0);
     CHECK_EQ(f.contact_count, 1);
@@ -28,7 +28,7 @@ static void run_tests(void) {
     CHECK(f.transducers[0].currentCoordinates.y > -2478 && f.transducers[0].currentCoordinates.y < 2587);
 
     /* Two-finger frame: two distinct contacts. */
-    mt2_frame f2 = {0};
+    MavericksTouchFrame f2 = {0};
     CHECK_EQ(mt2_usb_decode(FRAME_2F, sizeof(FRAME_2F), &f2), 0);
     CHECK_EQ(f2.contact_count, 2);
     CHECK(f2.transducers[0].id != f2.transducers[1].id);

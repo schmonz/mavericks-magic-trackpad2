@@ -2,7 +2,7 @@
 #define MT2_PIPELINE_H
 /* Pure conditioning primitives for the pipeline's CONDITION stage. See the
    Translate/Condition/Inject banner atop mt2_session.c for the whole picture. */
-#include "mt2_frame.h"
+#include "mavericks_frame.h"
 #include <stdint.h>
 
 typedef enum {
@@ -15,7 +15,7 @@ int mt2_settle_passed(uint32_t now_ms, uint32_t settle_until_ms);
 
 /* Drop lifted contacts (keep only size > 0) by compacting them out in place;
    contact_count := number of real contacts kept. EVENT_DRIVEN only. From MT2BTReader. */
-void mt2_drop_lifted(mt2_frame *frame);
+void mt2_drop_lifted(MavericksTouchFrame *frame);
 
 /* Button edge: returns 1 when the device's physical-button bit CHANGED since
    *last_button, writing a faithful mapping of that real hardware button + finger
@@ -33,11 +33,11 @@ int mt2_button_edge(unsigned button, int nfingers, unsigned *last_button,
                               screensaver bug was proven external. Gate seam retained at zero. */
 
 typedef struct {
-    mt2_frame held;  /* last real contact, replayed at zero velocity */
+    MavericksTouchFrame held;  /* last real contact, replayed at zero velocity */
     int step;            /* 0,1 = held replays; 2 = lift; >=3 = done */
 } mt2_decel_t;
 
-void mt2_decel_arm(mt2_decel_t *d, const mt2_frame *held);
-void mt2_decel_step(mt2_decel_t *d, mt2_frame *out,
+void mt2_decel_arm(mt2_decel_t *d, const MavericksTouchFrame *held);
+void mt2_decel_step(mt2_decel_t *d, MavericksTouchFrame *out,
                     int *out_has_frame, uint32_t *out_rearm_ms);
 #endif

@@ -5,7 +5,7 @@
  * SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE, symmetric with
  * MT2BTReader — on bring-up it advertises VoodooInputSupported + its coordinate span +
  * Transport=USB and registerService()s; the mux (com_schmonz_VoodooInput) attaches as our
- * client. readComplete decodes each raw MT2 0x02 report (mt2_usb_decode -> mt2_frame),
+ * client. readComplete decodes each raw MT2 0x02 report (mt2_usb_decode -> MavericksTouchFrame),
  * mt2_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No AppleUSBMultitouchDriver is ever hosted; no fabricated
  * AMD is built here. No decision logic lives in this file.
@@ -22,7 +22,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
-#include "mt2_usb_decode.h"            /* mt2_usb_decode -> mt2_frame (the decode seam) */
+#include "mt2_usb_decode.h"            /* mt2_usb_decode -> MavericksTouchFrame (the decode seam) */
 #include "mt2_voodoo_translate.h"      /* mt2_voodoo_from_frame (satellite emit) */
 #include "voodoo_wire.h"               /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
 #include "../src/mt2_coord_range.h"    /* MT2_SPAN_X / MT2_SPAN_Y */
@@ -122,7 +122,7 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
             uint8_t buf[256];
             if (n > sizeof(buf)) n = sizeof(buf);
             self->fBuf->readBytes(0, buf, n);
-            mt2_frame tf;
+            MavericksTouchFrame tf;
             if (mt2_usb_decode(buf, n, &tf) == 0) {
                 /* Emit to the mux (found lazily — attaches async after registerService; pre-attach
                  * frames drop). The mux owns terminal conditioning + the fabricated AMD. */

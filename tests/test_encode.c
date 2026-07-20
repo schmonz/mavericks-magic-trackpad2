@@ -12,7 +12,7 @@ static void mt1_decode_record(const uint8_t *t, int *id, int *x, int *y, int *st
 }
 
 static void run_tests(void) {
-    mt2_frame f = {0};
+    MavericksTouchFrame f = {0};
     f.isPhysicalButtonDown = 1;
     f.contact_count = 1;
     f.transducers[0].id = 9;
@@ -82,7 +82,7 @@ static void run_tests(void) {
     CHECK(y > -2456 && y < 2565);
 
     /* No-touch frame still yields a valid header-only report. */
-    mt2_frame e = {0};
+    MavericksTouchFrame e = {0};
     int m = mt1_encode(&e, buf, sizeof(buf), 0);
     CHECK_EQ(m, 4);
     CHECK_EQ(buf[0], 0x28);

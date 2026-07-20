@@ -36,7 +36,7 @@ static int scale(int v, int inMin, int inMax, int outMin, int outMax) {
     return (int)s;
 }
 
-int mt1_encode(const mt2_frame *frame, uint8_t *buf, size_t cap, uint32_t timestamp) {
+int mt1_encode(const MavericksTouchFrame *frame, uint8_t *buf, size_t cap, uint32_t timestamp) {
     if (!frame || !buf) return -1;
     int nt = frame->contact_count;
     if (nt < 0) nt = 0;
@@ -62,7 +62,7 @@ int mt1_encode(const mt2_frame *frame, uint8_t *buf, size_t cap, uint32_t timest
     buf[3] = (uint8_t)((ts >> 14) & 0xff);
 
     for (int i = 0; i < nt; i++) {
-        const mt2_contact *in = &frame->transducers[i];
+        const MavericksTouchContact *in = &frame->transducers[i];
         uint8_t *t = buf + MT1_HEADER + i * MT1_RECSZ;
 
         int x1 = scale(in->currentCoordinates.x, MT2_MIN_X, MT2_MAX_X, MT1_MIN_X, MT1_MAX_X);

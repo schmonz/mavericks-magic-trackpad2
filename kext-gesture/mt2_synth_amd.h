@@ -3,7 +3,7 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOTypes.h>
 #include "amd_shim.h"           // AppleMultitouchDevice, AMDDeviceReportStruct
-#include "../src/mt2_frame.h"   // mt2_frame
+#include "../src/mavericks_frame.h"   // MavericksTouchFrame
 
 /* One independent fabricated AppleMultitouchDevice (+ its MT2HIDShell + echo-register state),
  * built under `nub` and adopted by hidd. Multiple instances coexist (each mux owns one). Opaque. */
@@ -22,7 +22,7 @@ void                   mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx 
  * mt1_encode -> handleTouchFrame logic that MT2BTReader/MT2USBReader/VoodooInputMux all used to copy.
  * timestamp: caller-supplied frame clock (BT: uptime ns->ms; USB: system_microtime 22-bit ms);
  * keeping it as a parameter preserves byte-identical timestamps across transports. */
-void     mt2_synth_amd_feed(mt2_synth_amd_ctx *ctx, const mt2_frame *frame, uint32_t timestamp);
+void     mt2_synth_amd_feed(mt2_synth_amd_ctx *ctx, const MavericksTouchFrame *frame, uint32_t timestamp);
 void     mt2_synth_amd_button(mt2_synth_amd_ctx *ctx, unsigned mask);
 IOReturn mt2_synth_amd_inject(mt2_synth_amd_ctx *ctx, const unsigned char *bytes, unsigned int len);
 #endif

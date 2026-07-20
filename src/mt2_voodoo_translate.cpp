@@ -10,19 +10,19 @@ static int32_t rescale(uint32_t v, uint32_t lmax, int32_t omin, int32_t omax) {
     return omin + (int32_t)(((int64_t)v * (omax - omin)) / (int64_t)lmax);
 }
 
-mt2_frame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
+MavericksTouchFrame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
                                 uint32_t logical_max_x, uint32_t logical_max_y) {
-    mt2_frame f;
+    MavericksTouchFrame f;
     memset(&f, 0, sizeof(f));
     int n = (int)wire->contact_count;   /* UInt8, so 0..255 — no lower-bound guard needed */
     if (n > VOODOO_INPUT_MAX_TRANSDUCERS) n = VOODOO_INPUT_MAX_TRANSDUCERS; /* wire bound (10) */
-    if (n > MT2_MAX_CONTACTS) n = MT2_MAX_CONTACTS;                         /* internal bound (16) */
+    if (n > MAVERICKS_MAX_CONTACTS) n = MAVERICKS_MAX_CONTACTS;                         /* internal bound (16) */
     f.contact_count = (uint32_t)n;
 
     unsigned button = 0;
     for (int i = 0; i < n; i++) {
         const VoodooInputTransducer *t = &wire->transducers[i];
-        mt2_contact *c = &f.transducers[i];
+        MavericksTouchContact *c = &f.transducers[i];
         c->id = t->secondaryId;
         c->currentCoordinates.x = rescale(t->currentCoordinates.x, logical_max_x, MT2_MIN_X, MT2_MAX_X);
         c->currentCoordinates.y = rescale(t->currentCoordinates.y, logical_max_y, MT2_MIN_Y, MT2_MAX_Y);
@@ -43,7 +43,7 @@ static uint32_t inv_rescale(int32_t v, uint32_t lmax, int32_t omin, int32_t omax
     return (uint32_t)(((int64_t)(v - omin) * lmax) / (int64_t)(omax - omin));
 }
 
-VoodooInputEvent mt2_voodoo_from_frame(const mt2_frame *f,
+VoodooInputEvent mt2_voodoo_from_frame(const MavericksTouchFrame *f,
                                        uint32_t logical_max_x, uint32_t logical_max_y) {
     VoodooInputEvent w;
     memset(&w, 0, sizeof(w));
@@ -52,7 +52,7 @@ VoodooInputEvent mt2_voodoo_from_frame(const mt2_frame *f,
     if (n < 0) n = 0;
     w.contact_count = (UInt8)n;
     for (int i = 0; i < n; i++) {
-        const mt2_contact *c = &f->transducers[i];
+        const MavericksTouchContact *c = &f->transducers[i];
         VoodooInputTransducer *t = &w.transducers[i];
         t->secondaryId = c->id;
         t->isTransducerActive = true;                         /* an emitted contact is active */

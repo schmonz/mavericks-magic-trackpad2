@@ -6,8 +6,8 @@ extern "C" {
 }
 #include "mt2_voodoo_translate.h"
 
-typedef struct { mt2_frame frames[64]; int n; } rec_t;
-static void rec_feed(void *ctx, const mt2_frame *f) {
+typedef struct { MavericksTouchFrame frames[64]; int n; } rec_t;
+static void rec_feed(void *ctx, const MavericksTouchFrame *f) {
     rec_t *r = (rec_t *)ctx; if (r->n < 64) r->frames[r->n++] = *f;
 }
 static void rec_btn(void *ctx, unsigned m)   { (void)ctx; (void)m; }
@@ -31,7 +31,7 @@ static void run_tests(void) {
     w.transducers[0].currentCoordinates.y = 500;
     w.transducers[0].currentCoordinates.pressure = 40;
 
-    mt2_frame f = mt2_frame_from_voodoo(&w, 1000, 1000);
+    MavericksTouchFrame f = mt2_frame_from_voodoo(&w, 1000, 1000);
     mt2_session_frame(&s, 1, &f, 10, &sink);
 
     CHECK_EQ(rec.n, 1);   /* exactly one frame: single-contact first touch, no empty/pump frames */

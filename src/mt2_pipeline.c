@@ -3,7 +3,7 @@ int mt2_settle_passed(uint32_t now_ms, uint32_t settle_until_ms) {
     return now_ms >= settle_until_ms ? 1 : 0;
 }
 
-void mt2_drop_lifted(mt2_frame *frame) {
+void mt2_drop_lifted(MavericksTouchFrame *frame) {
     int kept = 0;
     for (int i = 0; i < (int)frame->contact_count; i++) {
         if (frame->transducers[i].currentCoordinates.pressure > 0) {
@@ -23,11 +23,11 @@ int mt2_button_edge(unsigned button, int nfingers, unsigned *last_button,
     return 1;
 }
 
-void mt2_decel_arm(mt2_decel_t *d, const mt2_frame *held) {
+void mt2_decel_arm(mt2_decel_t *d, const MavericksTouchFrame *held) {
     d->held = *held;
     d->step = 0;
 }
-void mt2_decel_step(mt2_decel_t *d, mt2_frame *out,
+void mt2_decel_step(mt2_decel_t *d, MavericksTouchFrame *out,
                     int *out_has_frame, uint32_t *out_rearm_ms) {
     if (d->step < 2) {
         *out = d->held;

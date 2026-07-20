@@ -1,8 +1,8 @@
-#include "../src/mt2_frame.h"
+#include "../src/mavericks_frame.h"
 #include "test.h"
 
 static void run_tests(void) {
-    mt2_frame f = {0};
+    MavericksTouchFrame f = {0};
     f.contact_count = 1;
     f.transducers[0].id = 3;
     f.transducers[0].state = TS_TOUCHING;

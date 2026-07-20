@@ -2,16 +2,16 @@
 #define MT2_SESSION_H
 #include "mt2_pipeline.h"
 #include "mt2_lifecycle.h"
-#include "mt2_frame.h"
+#include "mavericks_frame.h"
 #include <stdint.h>
 
 /* Effects seam: the session never touches IOKit/clock. The shell implements these
-   to drive IOKit; tests implement them to record. feed_frame gets a mt2_frame
+   to drive IOKit; tests implement them to record. feed_frame gets a MavericksTouchFrame
    (the shell encodes + feeds). CONTRACT: all three callbacks must be non-NULL —
    the session calls them on hot paths with no NULL checks. */
 typedef struct {
     void (*post_button_edge)(void *ctx, unsigned mask);
-    void (*feed_frame)(void *ctx, const mt2_frame *frame);
+    void (*feed_frame)(void *ctx, const MavericksTouchFrame *frame);
     void (*arm_timer)(void *ctx, uint32_t ms);
     void *ctx;
 } mt2_session_sink_t;
@@ -51,7 +51,7 @@ void mt2_session_connect(mt2_session_t *s, uintptr_t source,
                          mt2_transport_mode_t mode,
                          const mt2_session_policy_t *policy, uint32_t now_ms);
 void mt2_session_frame(mt2_session_t *s, uintptr_t source,
-                       const mt2_frame *tf, uint32_t now_ms,
+                       const MavericksTouchFrame *tf, uint32_t now_ms,
                        const mt2_session_sink_t *sink);
 void mt2_session_timer(mt2_session_t *s, const mt2_session_sink_t *sink);
 #endif

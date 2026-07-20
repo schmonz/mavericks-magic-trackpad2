@@ -45,7 +45,7 @@ void mt2_diag_raw(mt2_diag_xport_t x, uint8_t id) {
     gDiag[x].last_ms = now;
 }
 
-void mt2_diag_frame(mt2_diag_xport_t x, const mt2_frame *frame, bool want_first) {
+void mt2_diag_frame(mt2_diag_xport_t x, const MavericksTouchFrame *frame, bool want_first) {
     if ((unsigned)x >= MT2_DIAG_NXPORT || !frame) return;
     const char *name = kDiagName[x];
     if (want_first && !gDiag[x].first_logged) { gDiag[x].first_logged = true;

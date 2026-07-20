@@ -4,7 +4,7 @@
 #include <string.h>
 
 static void run_tests(void) {
-    mt2_frame f;
+    MavericksTouchFrame f;
     VoodooInputEvent w; memset(&w, 0, sizeof(w));
     w.contact_count = 1;
     w.transducers[0].secondaryId = 7;
@@ -45,7 +45,7 @@ static void run_tests(void) {
 
     /* --- inverse translator + round-trip identity (the fidelity gate) --- */
     {
-        mt2_frame src; memset(&src, 0, sizeof src);
+        MavericksTouchFrame src; memset(&src, 0, sizeof src);
         src.contact_count = 2;
         src.isPhysicalButtonDown = 1;
         /* contact 0: interior point + real (to-be-dropped) ellipse tail */
@@ -65,7 +65,7 @@ static void run_tests(void) {
         src.transducers[1].currentCoordinates.pressure = 255;
 
         VoodooInputEvent w2 = mt2_voodoo_from_frame(&src, MT2_SPAN_X, MT2_SPAN_Y);
-        mt2_frame rt = mt2_frame_from_voodoo(&w2, MT2_SPAN_X, MT2_SPAN_Y);
+        MavericksTouchFrame rt = mt2_frame_from_voodoo(&w2, MT2_SPAN_X, MT2_SPAN_Y);
 
         CHECK_EQ(rt.contact_count, 2);
         CHECK_EQ(rt.isPhysicalButtonDown, 1);

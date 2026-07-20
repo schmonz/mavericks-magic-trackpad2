@@ -415,7 +415,7 @@ void mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx) {
 
 /* ---- fabricated-AMD terminal feed (one implementation; three consumers) --------------------- */
 
-void mt2_synth_amd_feed(mt2_synth_amd_ctx *ctx, const mt2_frame *frame, uint32_t timestamp) {
+void mt2_synth_amd_feed(mt2_synth_amd_ctx *ctx, const MavericksTouchFrame *frame, uint32_t timestamp) {
     AppleMultitouchDevice *amd = mt2_synth_amd_amd(ctx);
     if (!amd) return;
     /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point. */

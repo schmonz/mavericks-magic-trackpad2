@@ -33,7 +33,7 @@
 
 /* BT now emits through the VoodooInput wire (C++ wire headers), so the round-trip lives behind an
  * extern "C" shim (tests/char_bt_wire.cpp) — keeps this test pure C, linking mt2core cleanly. */
-void mt2_bt_wire_roundtrip(mt2_frame *f);
+void mt2_bt_wire_roundtrip(MavericksTouchFrame *f);
 #include <stdio.h>
 
 /* Set to 1, build+run once to DUMP the current bytes, paste into the golden arrays, set back to 0. */
@@ -69,7 +69,7 @@ static const uint8_t USB_2F[] = {
 typedef struct { uint8_t buf[64]; int len; int nfeed; } bt_cap_t;
 static void bt_click(void *c, unsigned m){ (void)c; (void)m; }
 static void bt_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
-static void bt_feed (void *c, const mt2_frame *f){
+static void bt_feed (void *c, const MavericksTouchFrame *f){
     bt_cap_t *cap = (bt_cap_t *)c;
     int n = mt1_encode(f, cap->buf, sizeof cap->buf, BT_TS);   /* mirrors MT2Gesture.cpp:61 */
     if (n > 0) { cap->len = n; }
@@ -82,7 +82,7 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
     bt_cap_t cap; memset(&cap, 0, sizeof cap);
     mt2_session_sink_t sink = { bt_click, bt_feed, bt_arm, &cap };
     mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_default, /*now*/1000);
-    mt2_frame tf; memset(&tf, 0, sizeof tf);
+    MavericksTouchFrame tf; memset(&tf, 0, sizeof tf);
     if (mt2_bt_decode(raw, rawlen, &tf) != 0) return -1;
     /* Mirror the satellite path: the BT reader now emits through the VoodooInput wire, which drops
      * the ellipse tail (orientation/major/minor). Route the decoded frame through the round-trip so
@@ -98,7 +98,7 @@ static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfe
 typedef struct { uint8_t buf[64]; int len; uint32_t ts; } usb_cap_t;
 static void usb_click(void *c, unsigned m){ (void)c; (void)m; }
 static void usb_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
-static void usb_feed (void *c, const mt2_frame *f){
+static void usb_feed (void *c, const MavericksTouchFrame *f){
     usb_cap_t *cap = (usb_cap_t *)c;
     int n = mt1_encode(f, cap->buf, sizeof cap->buf, cap->ts);   /* fabricated-AMD feed: no Apple checksum */
     if (n > 0) cap->len = n;
@@ -110,7 +110,7 @@ static int usb_pipeline_session(mt2_session_t *s, const uint8_t *raw, size_t raw
                                 uint32_t ts, uint8_t *out) {
     usb_cap_t cap; memset(&cap, 0, sizeof cap); cap.ts = ts;
     mt2_session_sink_t sink = { usb_click, usb_feed, usb_arm, &cap };
-    mt2_frame frame;
+    MavericksTouchFrame frame;
     if (mt2_usb_decode(raw, rawlen, &frame) != 0) return -1;
     mt2_bt_wire_roundtrip(&frame);   /* USB now emits through the VoodooInput wire too (drops ellipse tail) */
     mt2_session_frame(s, 0x5B, &frame, /*now*/1000, &sink);

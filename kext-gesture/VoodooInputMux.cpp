@@ -24,7 +24,7 @@ static uint32_t read_u32_prop(IOService *p, const char *key, uint32_t dflt) {
 }
 
 /* Sink trampolines: dispatch each session effect to the mux's own synthetic AMD. */
-static void mux_feed_frame(void *ctx, const mt2_frame *frame) {
+static void mux_feed_frame(void *ctx, const MavericksTouchFrame *frame) {
     com_schmonz_VoodooInput *self = (com_schmonz_VoodooInput *)ctx;
     mt2_synth_amd_feed(self->synthCtx(), frame, (uint32_t)uptime_ms());
 }
@@ -91,7 +91,7 @@ void com_schmonz_VoodooInput::stop(IOService *provider) {
 IOReturn com_schmonz_VoodooInput::message(UInt32 type, IOService *provider, void *argument) {
     if (type == kIOMessageVoodooInputMessage && provider == fProvider && argument) {
         const VoodooInputEvent *w = (const VoodooInputEvent *)argument;
-        mt2_frame f = mt2_frame_from_voodoo(w, fLogicalMaxX, fLogicalMaxY);
+        MavericksTouchFrame f = mt2_frame_from_voodoo(w, fLogicalMaxX, fLogicalMaxY);
         mt2_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, this };
         if (fLock) IOLockLock(fLock);
         mt2_session_frame(&fSession, (uintptr_t)this, &f, (uint32_t)uptime_ms(), &sink);

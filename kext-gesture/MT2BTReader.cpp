@@ -4,7 +4,7 @@
  * frame (mt2_bt_decode), and declare BT config — sensor geometry, the 0xF1 enable, battery
  * poll. SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE — on interrupt
  * bind it advertises VoodooInputSupported + its coordinate span and registerService()s; the
- * mux (com_schmonz_VoodooInput) attaches as our client. incomingData decodes to a mt2_frame,
+ * mux (com_schmonz_VoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
  * mt2_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No BNBTrackpadDevice is ever started; no fabricated AMD
  * is built here. No decision logic lives in this file.
@@ -239,7 +239,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
     /* Shared diag: distinct report id (once) + resume-after-gap. Mirrors bt_interpose_shim. */
     if (rlen > 0) mt2_diag_raw(MT2_DIAG_BT, report[0]);
 
-    mt2_frame tf;
+    MavericksTouchFrame tf;
     int drc = mt2_bt_decode(report, rlen, &tf);
     { static bool once = false; if (!once) { once = true;
         IOLog("MT2BTReader: [diag] first incomingData hit len=%u b0=0x%02x decode=%d\n",

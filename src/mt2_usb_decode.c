@@ -6,6 +6,6 @@
 #define MT2_USB_REPORT_ID 0x02
 #define MT2_USB_HEADER    12
 
-int mt2_usb_decode(const uint8_t *report, size_t len, mt2_frame *frame) {
+int mt2_usb_decode(const uint8_t *report, size_t len, MavericksTouchFrame *frame) {
     return mt2_decode(report, len, MT2_USB_REPORT_ID, MT2_USB_HEADER, frame);
 }
