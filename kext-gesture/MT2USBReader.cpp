@@ -6,7 +6,7 @@
  * MT2BTReader — on bring-up it advertises VoodooInputSupported + its coordinate span +
  * Transport=USB and registerService()s; the mux (com_schmonz_VoodooInput) attaches as our
  * client. readComplete decodes each raw MT2 0x02 report (mt2_usb_decode -> MavericksTouchFrame),
- * mt2_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
+ * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No AppleUSBMultitouchDriver is ever hosted; no fabricated
  * AMD is built here. No decision logic lives in this file.
  *
@@ -23,10 +23,10 @@
 #include <kern/clock.h>                /* clock_get_system_microtime */
 #include "MT2USBReader.h"
 #include "mt2_usb_decode.h"            /* mt2_usb_decode -> MavericksTouchFrame (the decode seam) */
-#include "mt2_voodoo_translate.h"      /* mt2_voodoo_from_frame (satellite emit) */
+#include "mavericks_voodoo_translate.h"      /* mavericks_voodoo_from_frame (satellite emit) */
 #include "voodoo_wire.h"               /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
 #include "../src/mt2_coord_range.h"    /* MT2_SPAN_X / MT2_SPAN_Y */
-#include "mt2_synth_amd.h"           /* mt2_synth_amd_build/amd/teardown — fabricated AMD */
+#include "MavericksAMDTerminal.h"           /* mavericks_amd_terminal_build/amd/teardown — fabricated AMD */
 #include "../src/mavericks_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
 #include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "mt2_log.h"                   /* MT2_DLOG (runtime debug.mt2_log) */
@@ -138,7 +138,7 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
                     }
                 }
                 if (self->fMux) {
-                    VoodooInputEvent ev = mt2_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
+                    VoodooInputEvent ev = mavericks_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
                     self->messageClient(kIOMessageVoodooInputMessage, self->fMux, &ev, sizeof ev);
                 }
             }

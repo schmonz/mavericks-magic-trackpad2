@@ -1,4 +1,4 @@
-/* synth_tap - drive our REAL pipeline (mavericks_session -> lifecycle -> mt1_encode) with a
+/* synth_tap - drive our REAL pipeline (mavericks_session -> lifecycle -> mavericks_amd_construct_report) with a
  * synthetic single-finger TAP and inject each encoded frame into the kext, so we can
  * test tap-to-click with no physical finger. A tap = one stationary contact present for
  * a few frames (well under the recognizer's 250ms duration gate), then a lift frame that
@@ -15,7 +15,7 @@
  * Run as root with the kext loaded. Pair with click_monitor (does a click commit?) and/or
  * mt_contacts (what does the recognizer receive?). */
 #include "../src/mavericks_session.h"
-#include "../src/mt1_encode.h"
+#include "../src/mavericks_amd_terminal_encode.h"
 #include <IOKit/IOKitLib.h>
 #include <mach/mach_time.h>
 #include <stdio.h>
@@ -42,12 +42,12 @@ static void sink_feed(void *ctx, const touch_frame_t *f) {
     /* DIAGNOSTIC: SYNTH_CONST_TS=<ms> makes every frame carry the SAME encoded device
      * timestamp, decoupling the recognizer's clock from real injection time. If the
      * recognizer's measured tap duration collapses to ~0, it derives time from OUR
-     * device timestamp (fix in mt1_encode); if it stays large, it uses wall-clock. */
+     * device timestamp (fix in mavericks_amd_construct_report); if it stays large, it uses wall-clock. */
     const char *cts = getenv("SYNTH_CONST_TS");
     const char *tdiv = getenv("SYNTH_TS_DIV");   /* calibrate the ts scale: ts = elapsed_ms / DIV */
     uint32_t base = cts ? (uint32_t)atoi(cts) : elapsed_ms();
     uint32_t ts = tdiv ? base / (uint32_t)atoi(tdiv) : base;
-    int n = mt1_encode(f, out, sizeof(out), ts);
+    int n = mavericks_amd_construct_report(f, out, sizeof(out), ts);
     if (n > 0) {
         kern_return_t kr = IOConnectCallStructMethod(g_conn, 0, out, (size_t)n, NULL, NULL);
         int st = (f->ntouches > 0) ? f->touches[0].state : -1;
@@ -68,7 +68,7 @@ static void sink_arm(void *ctx, uint32_t ms) { (void)ctx; (void)ms; }
 static void inject_pump(uint32_t ts) {
     touch_frame_t e; memset(&e, 0, sizeof e); e.ntouches = 0;
     uint8_t out[256];
-    int n = mt1_encode(&e, out, sizeof(out), ts);
+    int n = mavericks_amd_construct_report(&e, out, sizeof(out), ts);
     if (n > 0) IOConnectCallStructMethod(g_conn, 0, out, (size_t)n, NULL, NULL);
 }
 

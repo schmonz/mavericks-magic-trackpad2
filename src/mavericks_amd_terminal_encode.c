@@ -1,4 +1,4 @@
-#include "mt1_encode.h"
+#include "mavericks_amd_terminal_encode.h"
 #include "mt2_coord_range.h"
 
 /* MT1 coordinate ranges (from Linux hid-magicmouse.c); MT2 input ranges are the shared
@@ -36,7 +36,7 @@ static int scale(int v, int inMin, int inMax, int outMin, int outMax) {
     return (int)s;
 }
 
-int mt1_encode(const MavericksTouchFrame *frame, uint8_t *buf, size_t cap, uint32_t timestamp) {
+int mavericks_amd_construct_report(const MavericksTouchFrame *frame, uint8_t *buf, size_t cap, uint32_t timestamp) {
     if (!frame || !buf) return -1;
     int nt = frame->contact_count;
     if (nt < 0) nt = 0;

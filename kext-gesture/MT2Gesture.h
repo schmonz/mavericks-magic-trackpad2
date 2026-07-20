@@ -14,7 +14,7 @@ class IOWorkLoop;
 
 /* Per-transport delivery, registered by the active reader at connectionEstablished().
  *   feed_frame:       encode + deliver one session-conditioned frame to Apple's genuine consumer
- *                     (BT: mt1_encode -> handleTouchFrame; USB: mt1_encode + checksum -> handleReport).
+ *                     (BT: mavericks_amd_construct_report -> handleTouchFrame; USB: mavericks_amd_construct_report + checksum -> handleReport).
  *   post_button_edge: forward a change in the device's REAL physical button as Apple's click mask
  *                     (0 release / 0x1 primary / 0x2 secondary) — a hardware button, not a synth click.
  *   inject_encoded:   DEBUG seam — deliver already-encoded 0x28 bytes (the user client's feedFrame);

@@ -5,7 +5,7 @@
 #include <kern/clock.h>
 #include "mt2_log.h"              // MT2_DLOG
 #include "voodoo_wire.h"           // wire VoodooInputEvent + kIOMessage* + key macros
-#include "mt2_voodoo_translate.h"  // mt2_frame_from_voodoo (extern "C")
+#include "mavericks_voodoo_translate.h"  // mavericks_frame_from_voodoo (extern "C")
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 
@@ -26,11 +26,11 @@ static uint32_t read_u32_prop(IOService *p, const char *key, uint32_t dflt) {
 /* Sink trampolines: dispatch each session effect to the mux's own synthetic AMD. */
 static void mux_feed_frame(void *ctx, const MavericksTouchFrame *frame) {
     com_schmonz_VoodooInput *self = (com_schmonz_VoodooInput *)ctx;
-    mt2_synth_amd_feed(self->synthCtx(), frame, (uint32_t)uptime_ms());
+    mavericks_amd_terminal_feed(self->synthCtx(), frame, (uint32_t)uptime_ms());
 }
 static void mux_post_button_edge(void *ctx, unsigned mask) {
     com_schmonz_VoodooInput *self = (com_schmonz_VoodooInput *)ctx;
-    mt2_synth_amd_button(self->synthCtx(), mask);   /* physical click -> terminal AMD (was a no-op stub:
+    mavericks_amd_terminal_button(self->synthCtx(), mask);   /* physical click -> terminal AMD (was a no-op stub:
         the sample satellite never pressed a button, so this path went untested until the MT2 reader) */
 }
 static void mux_arm_timer(void *ctx, uint32_t ms) { ((com_schmonz_VoodooInput *)ctx)->armIdle(ms); }
@@ -58,10 +58,10 @@ bool com_schmonz_VoodooInput::start(IOService *provider) {
     fSynth = 0; fWL = 0; fIdle = 0; fLock = IOLockAlloc();
     /* Build the fabricated AMD with the satellite's advertised transport (BT default when unset,
      * e.g. an external VoodooInput satellite that reports none). */
-    mt2_synth_transport_t xport = MT2_SYNTH_XPORT_BT;
+    mavericks_amd_terminal_transport_t xport = MAVERICKS_AMD_TERMINAL_XPORT_BT;
     OSString *tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
-    if (tp && tp->isEqualTo("USB")) xport = MT2_SYNTH_XPORT_USB;
-    fSynth = mt2_synth_amd_build(this, xport);   /* under the mux nub itself; fail-soft */
+    if (tp && tp->isEqualTo("USB")) xport = MAVERICKS_AMD_TERMINAL_XPORT_USB;
+    fSynth = mavericks_amd_terminal_build(this, xport);   /* under the mux nub itself; fail-soft */
     if (!fSynth) IOLog("VoodooInputMux: WARNING synthetic AMD build failed; no cursor\n");
     fWL = IOWorkLoop::workLoop();
     fIdle = fWL ? IOTimerEventSource::timerEventSource(this, &idleTick) : 0;
@@ -83,7 +83,7 @@ void com_schmonz_VoodooInput::stop(IOService *provider) {
     if (fLock) { IOLockLock(fLock); IOLockUnlock(fLock); }
     if (fIdle) { fIdle->cancelTimeout(); if (fWL) fWL->removeEventSource(fIdle); fIdle->release(); fIdle = 0; }
     if (fWL) { fWL->release(); fWL = 0; }
-    mt2_synth_amd_teardown(this, fSynth); fSynth = 0;
+    mavericks_amd_terminal_teardown(this, fSynth); fSynth = 0;
     if (fLock) { IOLockFree(fLock); fLock = 0; }
     IOService::stop(provider);
 }
@@ -91,7 +91,7 @@ void com_schmonz_VoodooInput::stop(IOService *provider) {
 IOReturn com_schmonz_VoodooInput::message(UInt32 type, IOService *provider, void *argument) {
     if (type == kIOMessageVoodooInputMessage && provider == fProvider && argument) {
         const VoodooInputEvent *w = (const VoodooInputEvent *)argument;
-        MavericksTouchFrame f = mt2_frame_from_voodoo(w, fLogicalMaxX, fLogicalMaxY);
+        MavericksTouchFrame f = mavericks_frame_from_voodoo(w, fLogicalMaxX, fLogicalMaxY);
         mavericks_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, this };
         if (fLock) IOLockLock(fLock);
         mavericks_session_frame(&fSession, (uintptr_t)this, &f, (uint32_t)uptime_ms(), &sink);

@@ -6,7 +6,7 @@
  * The driver does three jobs; only ONE of them lives here:
  *   TRANSLATE  faithfully reframe the MT2's native frames into the report
  *              Apple's genuine driver expects (mt2_decode -> mavericks_session ->
- *              mt1_encode / mt2_usb_bytes). We change FORMAT, never meaning.
+ *              mavericks_amd_construct_report / mt2_usb_bytes). We change FORMAT, never meaning.
  *   CONDITION  the only thing we SHAPE: settle gate, contact lifecycle
  *              (MakeTouch/BreakTouch), liftoff shaping, silence watchdog.
  *              This file. We shape the frame STREAM so Apple's recognizer can

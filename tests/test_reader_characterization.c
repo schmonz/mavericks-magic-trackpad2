@@ -10,10 +10,10 @@
  *
  * It drives the SAME pure calls the readers use (per docs/mt-stack/reader-seam-map.md):
  *   BT : mt2_bt_decode -> mt2_bt_wire_roundtrip (the VoodooInput wire the satellite emits, drops the
- *        ellipse tail) -> mavericks_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN) -> mt1_encode.
+ *        ellipse tail) -> mavericks_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN) -> mavericks_amd_construct_report.
  *        No checksum on the BT feed. The mux owns this terminal on-device (identical policy).
  *   USB: mt2_usb_decode -> mt2_bt_wire_roundtrip (same VoodooInput wire) -> mavericks_session_frame
- *        (policy row mt2_policy_default) -> mt1_encode. USB is now the synthetic satellite path
+ *        (policy row mt2_policy_default) -> mavericks_amd_construct_report. USB is now the synthetic satellite path
  *        (fabricated AMD, NO Apple checksum), symmetric with BT — not the retired genuine kUsbSink.
  *
  * Real captured raw frames are reused from the existing decode tests:
@@ -26,7 +26,7 @@
 #include "test.h"
 #include "../src/mt2_bt_decode.h"
 #include "../src/mavericks_session.h"
-#include "../src/mt1_encode.h"
+#include "../src/mavericks_amd_terminal_encode.h"
 #include "../src/mt2_usb_decode.h"
 #include "../src/mt2_usb_bytes.h"
 #include <string.h>
@@ -65,13 +65,13 @@ static const uint8_t USB_2F[] = {
 #define BT_TS  0x11111u
 #define USB_TS 0x22222u
 
-/* ---- BT sink: capture the mt1_encode output MT2Gesture::sink_feed_frame would feed ------------- */
+/* ---- BT sink: capture the mavericks_amd_construct_report output MT2Gesture::sink_feed_frame would feed ------------- */
 typedef struct { uint8_t buf[64]; int len; int nfeed; } bt_cap_t;
 static void bt_click(void *c, unsigned m){ (void)c; (void)m; }
 static void bt_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
 static void bt_feed (void *c, const MavericksTouchFrame *f){
     bt_cap_t *cap = (bt_cap_t *)c;
-    int n = mt1_encode(f, cap->buf, sizeof cap->buf, BT_TS);   /* mirrors MT2Gesture.cpp:61 */
+    int n = mavericks_amd_construct_report(f, cap->buf, sizeof cap->buf, BT_TS);   /* mirrors MT2Gesture.cpp:61 */
     if (n > 0) { cap->len = n; }
     cap->nfeed++;
 }
@@ -100,7 +100,7 @@ static void usb_click(void *c, unsigned m){ (void)c; (void)m; }
 static void usb_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
 static void usb_feed (void *c, const MavericksTouchFrame *f){
     usb_cap_t *cap = (usb_cap_t *)c;
-    int n = mt1_encode(f, cap->buf, sizeof cap->buf, cap->ts);   /* fabricated-AMD feed: no Apple checksum */
+    int n = mavericks_amd_construct_report(f, cap->buf, sizeof cap->buf, cap->ts);   /* fabricated-AMD feed: no Apple checksum */
     if (n > 0) cap->len = n;
 }
 
@@ -171,7 +171,7 @@ static void check_bytes(const char *tag, const uint8_t *got, int gn,
  * session path byte-identical before the old assembly was deleted.
  * BT golden regenerated 2026-07-19: the BT reader is now a VoodooInput satellite, so its frames route
  * through the wire (mt2_bt_wire_roundtrip), whose VoodooInputTransducer has no ellipse fields. So
- * orientation/touch_major/touch_minor are dropped and mt1_encode falls back to constants. On a single
+ * orientation/touch_major/touch_minor are dropped and mavericks_amd_construct_report falls back to constants. On a single
  * TS_START frame only orientation is live (major/minor are used only on TS_END), so exactly ONE byte
  * moved: GOLD_BT_2F[11] 0x85->0x81 (finger-1 orientation nibble -> neutral). BT_1F unchanged (its
  * orientation was already neutral). Deliberate, accepted fidelity envelope; on-device palm-rejection
@@ -184,8 +184,8 @@ static const uint8_t GOLD_BT_2F[]  = {
     0xb5,0x7e,0xb9,0x03,0x20,0x20,0x7f,0x82,0x33
 };
 /* USB goldens regenerated 2026-07-19 for the synthetic-satellite unification: USB now emits through
- * the VoodooInput wire into a fabricated AMD (mt1_encode, NO Apple report checksum) — exactly BT's
- * path — NOT the retired genuine kUsbSink (mt1_encode + Apple checksum + chain). So each golden is
+ * the VoodooInput wire into a fabricated AMD (mavericks_amd_construct_report, NO Apple report checksum) — exactly BT's
+ * path — NOT the retired genuine kUsbSink (mavericks_amd_construct_report + Apple checksum + chain). So each golden is
  * SHORTER by the 2-byte checksum AND reflects the dropped ellipse tail (orient/major/minor -> const).
  * Captured from the running build. */
 static const uint8_t GOLD_USB_1F[] = {

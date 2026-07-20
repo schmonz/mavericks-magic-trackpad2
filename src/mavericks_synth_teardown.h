@@ -1,5 +1,5 @@
-#ifndef MT2_SYNTH_TEARDOWN_H
-#define MT2_SYNTH_TEARDOWN_H
+#ifndef MAVERICKS_SYNTH_TEARDOWN_H
+#define MAVERICKS_SYNTH_TEARDOWN_H
 /* Pure teardown-ORDER contract for a fabricated AppleMultitouchDevice. The kext fills these ops
  * with real IOKit calls; host tests fill them with recorders. The ONE invariant this enforces:
  * clear the feed fence FIRST, release the workloop LAST (VoodooInput SimulatorDevice ordering).
@@ -11,7 +11,7 @@ typedef struct {
     void (*release_amd)(void *ctx);   /* 4: drop our AMD ref                                   */
     void (*release_wl)(void *ctx);    /* 5: release the retained workloop LAST                 */
     void *ctx;
-} mt2_synth_teardown_ops_t;
+} mavericks_synth_teardown_ops_t;
 
-void mt2_synth_teardown_run(const mt2_synth_teardown_ops_t *ops);
+void mavericks_synth_teardown_run(const mavericks_synth_teardown_ops_t *ops);
 #endif

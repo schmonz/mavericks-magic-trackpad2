@@ -1,5 +1,5 @@
 #include "test.h"
-#include "../src/mt2_synth_teardown.h"
+#include "../src/mavericks_synth_teardown.h"
 #include <string.h>
 
 static char g_log[64];
@@ -12,15 +12,15 @@ static void op_release_wl(void *x){ (void)x; rec('W'); }    /* workloop LAST */
 
 static void test_order(void) {
     g_log[0] = 0;
-    mt2_synth_teardown_ops_t ops = { op_clear_ready, op_term_shell, op_term_amd, op_release_amd, op_release_wl, (void*)1 };
-    mt2_synth_teardown_run(&ops);
+    mavericks_synth_teardown_ops_t ops = { op_clear_ready, op_term_shell, op_term_amd, op_release_amd, op_release_wl, (void*)1 };
+    mavericks_synth_teardown_run(&ops);
     CHECK(strcmp(g_log, "RSTAW") == 0);   /* ready-first ... workloop-last, exactly */
 }
 
 static void test_optional_ops(void) {   /* a NULL op is skipped, not a crash */
     g_log[0] = 0;
-    mt2_synth_teardown_ops_t ops = { op_clear_ready, 0 /*no shell*/, op_term_amd, op_release_amd, op_release_wl, (void*)1 };
-    mt2_synth_teardown_run(&ops);
+    mavericks_synth_teardown_ops_t ops = { op_clear_ready, 0 /*no shell*/, op_term_amd, op_release_amd, op_release_wl, (void*)1 };
+    mavericks_synth_teardown_run(&ops);
     CHECK(strcmp(g_log, "RTAW") == 0);
 }
 

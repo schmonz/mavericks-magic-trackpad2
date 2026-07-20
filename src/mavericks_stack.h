@@ -83,7 +83,7 @@
 
 /* ---- report ids ------------------------------------------------------------------------------ */
 #define MT2_REPORT_ID_MT2                0x31   /* MT2 multitouch report (see src/mt2_decode.c)    */
-#define MT2_REPORT_ID_MT1                0x28   /* MT1 multitouch report (see src/mt1_encode.c)    */
+#define MT2_REPORT_ID_MT1                0x28   /* MT1 multitouch report (see src/mavericks_amd_terminal_encode.c)    */
 /* geometry D-report ids answered from src/mt2_geometry.c: 0xd1 0xd3 0xd0 0xa1 0xd9 0x7f           */
 
 /* ---- multitouch property seeds --------------------------------------------------------------- *

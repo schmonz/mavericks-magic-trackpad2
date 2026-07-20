@@ -10,7 +10,7 @@
 /* Full device-unit span per axis. A VoodooInput satellite that advertises these as its
  * Logical Max makes the mux's fixed-point rescale an EXACT inverse of the emit rescale
  * (wire = mt2 - min; mux: min + wire). One source of truth for the BT satellite's advertised
- * dimensions AND mt2_voodoo_from_frame's output scaling. */
+ * dimensions AND mavericks_voodoo_from_frame's output scaling. */
 #define MT2_SPAN_X (MT2_MAX_X - MT2_MIN_X)   /* 7612 */
 #define MT2_SPAN_Y (MT2_MAX_Y - MT2_MIN_Y)   /* 5065 */
 #endif

@@ -1,5 +1,5 @@
-#ifndef MT1_ENCODE_H
-#define MT1_ENCODE_H
+#ifndef MAVERICKS_AMD_TERMINAL_ENCODE_H
+#define MAVERICKS_AMD_TERMINAL_ENCODE_H
 #include "mavericks_frame.h"
 
 /* Encode the neutral frame as a Magic Trackpad 1 multitouch input report
@@ -13,6 +13,6 @@
  * yields "timestamp invalid" and no gestures). Pass elapsed milliseconds.
  *
  * Returns the report length, or -1 if it won't fit. */
-int mt1_encode(const MavericksTouchFrame *frame, uint8_t *buf, size_t cap, uint32_t timestamp);
+int mavericks_amd_construct_report(const MavericksTouchFrame *frame, uint8_t *buf, size_t cap, uint32_t timestamp);
 
 #endif

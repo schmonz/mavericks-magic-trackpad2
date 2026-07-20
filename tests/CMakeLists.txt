@@ -18,7 +18,7 @@ endforeach()
 # only unit that sees the C++ wire headers (+ the translate source it calls).
 add_executable(test_reader_characterization test_reader_characterization.c
   char_bt_wire.cpp
-  ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+  ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp)
 target_link_libraries(test_reader_characterization mt2core)
 target_include_directories(test_reader_characterization PRIVATE
   ${CMAKE_SOURCE_DIR}/src
@@ -58,7 +58,7 @@ add_test(NAME test_voodoo_wire COMMAND test_voodoo_wire)
 
 # VoodooInput translation seam. Compiled as C++ (wire headers are C++-only); no mt2core deps.
 add_executable(test_voodoo_translate test_voodoo_translate.c
-  ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+  ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp)
 set_source_files_properties(test_voodoo_translate.c PROPERTIES LANGUAGE CXX)
 target_include_directories(test_voodoo_translate PRIVATE
   ${CMAKE_SOURCE_DIR}/src
@@ -68,7 +68,7 @@ add_test(NAME test_voodoo_translate COMMAND test_voodoo_translate)
 # VoodooInput integration proof: standard-fields event -> engine -> MakeTouch-first MT1.
 # C++ (wire headers) linking C mt2core (headers wrapped extern "C" in the test).
 add_executable(test_voodoo_integration test_voodoo_integration.c
-  ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+  ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp)
 set_source_files_properties(test_voodoo_integration.c PROPERTIES LANGUAGE CXX)
 target_include_directories(test_voodoo_integration PRIVATE
   ${CMAKE_SOURCE_DIR}/src

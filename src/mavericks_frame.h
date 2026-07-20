@@ -4,11 +4,11 @@
 #include <stddef.h>
 
 /* The decoded contact-set both transport readers reduce to, and the shared engine
- * (lifecycle + mt1_encode) consumes. Shaped after acidanthera's VoodooInput contact
+ * (lifecycle + mavericks_amd_construct_report) consumes. Shaped after acidanthera's VoodooInput contact
  * interface (VoodooInputMessage.h) with our own field-for-field types, so the seam
  * speaks a standard multitouch-event vocabulary.
  *
- * Fields VoodooInput does not have but mt1_encode requires (the MTTouchState lifecycle
+ * Fields VoodooInput does not have but mavericks_amd_construct_report requires (the MTTouchState lifecycle
  * plus MT2 ellipse geometry) live in the clearly marked "beyond VoodooInput" block;
  * do NOT drop them. Fields VoodooInput has but nothing here reads yet are defined for
  * interface fidelity and left zero-initialized. Full field mapping + rationale:
@@ -36,7 +36,7 @@ typedef struct {
     MavericksTouchCoord currentCoordinates;
     MavericksTouchCoord previousCoordinates;   /* unread today, zero-initialized */
 
-    /* --- beyond VoodooInput: consumed by mt1_encode, do NOT drop --- */
+    /* --- beyond VoodooInput: consumed by mavericks_amd_construct_report, do NOT drop --- */
     touch_state_t state;
     int touch_major, touch_minor;
     int orientation;

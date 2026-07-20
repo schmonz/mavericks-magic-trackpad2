@@ -1,22 +1,22 @@
 /*
- * mt2_synth_amd — fabricated AppleMultitouchDevice build/teardown.
+ * mavericks_amd_terminal — fabricated AppleMultitouchDevice build/teardown.
  *
  * Recovered from 2c900e9^:kext-gesture/MT2Gesture.cpp (the AMD construction that
  * shipped pre-2026-06-24 synthetic-removal). Refactored into standalone build/teardown
  * functions taking the provider nub; get/set stubs now thin glue over the host-tested
- * mt2_synth_report instead of the old inline g_reg[] echo + mt2_fill_geometry_report.
+ * mavericks_synth_report instead of the old inline g_reg[] echo + mt2_fill_geometry_report.
  * All RE'd constants, property keys/values, plugin UUID/path, and dict shapes are
  * preserved verbatim from the old source.
  *
  * 2026-07-13: converted from module-static g_regs/g_shell to a per-build heap context
- * (mt2_synth_amd_ctx) so N independent fabricated AMDs can coexist. Each mux instance
+ * (mavericks_amd_terminal_ctx) so N independent fabricated AMDs can coexist. Each mux instance
  * will own one ctx. Report stubs read regs from the ctx registered as their target.
  */
-#include "mt2_synth_amd.h"
-#include "../src/mt2_synth_teardown.h"
-#include "mt1_encode.h"
+#include "MavericksAMDTerminal.h"
+#include "../src/mavericks_synth_teardown.h"
+#include "mavericks_amd_terminal_encode.h"
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
-#include "MT2HIDShell.h"
+#include "MavericksHIDShell.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
 #include <IOKit/IOWorkLoop.h>
@@ -27,16 +27,16 @@
 #include <libkern/c++/OSBoolean.h>
 #include <libkern/c++/OSMetaClass.h>
 extern "C" {
-#include "mt2_synth_report.h"
+#include "mavericks_synth_report.h"
 }
 /* mavericks_stack.h: MT2_PROP_EXTRACT_BUTTON — must precede start() */
 #include "../src/mavericks_stack.h"
 
 /* ---- per-build context (replaces module-static g_regs / g_shell) ----------------------------- */
 
-struct mt2_synth_amd_ctx {
-    mt2_synth_regs_t          regs;
-    com_schmonz_MT2HIDShell  *shell;
+struct mavericks_amd_terminal_ctx {
+    mavericks_synth_regs_t          regs;
+    com_schmonz_MavericksHIDShell  *shell;
     AppleMultitouchDevice    *amd;
     bool                      ready;  /* feed fence: amd() returns NULL until built, and again once teardown starts */
     IOWorkLoop               *wl;     /* retained AMD workloop; released LAST (VoodooInput invariant) */
@@ -51,53 +51,53 @@ struct mt2_synth_amd_ctx {
  * enableStub: hidd calls this to enable/disable multitouch delivery. Log and return OK. */
 static int enableStub(bool enable, void *t) {
     (void)t;
-    IOLog("mt2_synth_amd: ENABLE-MT enable=%d\n", (int)enable);
+    IOLog("mavericks_amd_terminal: ENABLE-MT enable=%d\n", (int)enable);
     return 0;
 }
 
-/* getReportStub: routes through mt2_synth_answer_report (host-tested). For reports
+/* getReportStub: routes through mavericks_synth_answer_report (host-tested). For reports
  * that must be skipped (0xDB Multitouch ID), return kIOReturnUnsupported so hidd
  * moves on cleanly. Reads regs from ctx registered as the target. */
 static int getReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
     (void)id;
-    mt2_synth_amd_ctx *c = (mt2_synth_amd_ctx *)t;
+    mavericks_amd_terminal_ctx *c = (mavericks_amd_terminal_ctx *)t;
     unsigned char *b = (unsigned char *)r;
     unsigned char rid = b[0];
     unsigned char *o = b + 1;                       /* response data buffer */
     unsigned int *lenp = (unsigned int *)(b + 0x204);
     unsigned int n = 0;
-    mt2_synth_rc_t rc = mt2_synth_answer_report(&c->regs, rid, o, &n);
-    if (rc == MT2_SYNTH_SKIP) {
-        IOLog("mt2_synth_amd: GET-REPORT id=0x%02x -> SKIP (kIOReturnUnsupported)\n",
+    mavericks_synth_rc_t rc = mavericks_synth_answer_report(&c->regs, rid, o, &n);
+    if (rc == MAVERICKS_SYNTH_SKIP) {
+        IOLog("mavericks_amd_terminal: GET-REPORT id=0x%02x -> SKIP (kIOReturnUnsupported)\n",
               (unsigned)rid);
         return (int)0xe00002c7;                     /* kIOReturnUnsupported */
     }
     *lenp = n;
-    IOLog("mt2_synth_amd: GET-REPORT id=0x%02x -> %u bytes\n", (unsigned)rid, n);
+    IOLog("mavericks_amd_terminal: GET-REPORT id=0x%02x -> %u bytes\n", (unsigned)rid, n);
     return 0;
 }
 
 /* setReportStub: remember the 1-byte value hidd SETs per reportID so a later GET
  * echoes it back (hidd SETs 0xC8/0xDC/0xDD then GETs them and may disable gestures
- * if the GET fails). Routes through mt2_synth_note_set (host-tested). Reads regs
+ * if the GET fails). Routes through mavericks_synth_note_set (host-tested). Reads regs
  * from ctx registered as the target. */
 static int setReportStub(AMDDeviceReportStruct *r, unsigned char id, void *t) {
     (void)id;
-    mt2_synth_amd_ctx *c = (mt2_synth_amd_ctx *)t;
+    mavericks_amd_terminal_ctx *c = (mavericks_amd_terminal_ctx *)t;
     unsigned char *b = (unsigned char *)r;
-    mt2_synth_note_set(&c->regs, b[0], b[1]);
-    IOLog("mt2_synth_amd: SET-REPORT typeArg=%u reportID=0x%02x len=%u b1=0x%02x\n",
+    mavericks_synth_note_set(&c->regs, b[0], b[1]);
+    IOLog("mavericks_amd_terminal: SET-REPORT typeArg=%u reportID=0x%02x len=%u b1=0x%02x\n",
           (unsigned)id, (unsigned)b[0], *(unsigned int *)(b + 0x204), (unsigned)b[1]);
     return 0;
 }
 
-/* ---- MT2HIDShell property dict (BT Magic Trackpad identity; mirrors old makeHidProps) ------- */
+/* ---- MavericksHIDShell property dict (BT Magic Trackpad identity; mirrors old makeHidProps) ------- */
 
-static const char *xport_str(mt2_synth_transport_t xport) {
-    return (xport == MT2_SYNTH_XPORT_USB) ? "USB" : "Bluetooth";
+static const char *xport_str(mavericks_amd_terminal_transport_t xport) {
+    return (xport == MAVERICKS_AMD_TERMINAL_XPORT_USB) ? "USB" : "Bluetooth";
 }
 
-static OSDictionary *makeHidProps(mt2_synth_transport_t xport) {
+static OSDictionary *makeHidProps(mavericks_amd_terminal_transport_t xport) {
     OSDictionary *p = OSDictionary::withCapacity(8);
     if (!p) return 0;
     struct { const char *k; unsigned v; } nums[] = {
@@ -119,19 +119,19 @@ static OSDictionary *makeHidProps(mt2_synth_transport_t xport) {
 
 /* ---- public API ------------------------------------------------------------------------------ */
 
-mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t transport) {
+mavericks_amd_terminal_ctx *mavericks_amd_terminal_build(IOService *nub, mavericks_amd_terminal_transport_t transport) {
     /* 0. Allocate the per-build context. */
-    mt2_synth_amd_ctx *ctx = IONew(mt2_synth_amd_ctx, 1);
+    mavericks_amd_terminal_ctx *ctx = IONew(mavericks_amd_terminal_ctx, 1);
     if (!ctx) {
-        IOLog("mt2_synth_amd: context alloc failed\n");
+        IOLog("mavericks_amd_terminal: context alloc failed\n");
         return 0;
     }
     bzero(ctx, sizeof *ctx);
 
     /* 1. Zero the echo-register table. */
-    mt2_synth_regs_init(&ctx->regs);
+    mavericks_synth_regs_init(&ctx->regs);
 
-    /* 2. Attach + start the MT2HIDShell under nub so Apple's
+    /* 2. Attach + start the MavericksHIDShell under nub so Apple's
      *    AppleMultitouchHIDEventDriver can match it and produce an IOHIDEventService
      *    in our subtree. AppleMultitouchDevice::start (non-fake) wires its actuation
      *    wrapper to event drivers found in the provider subtree — the shell must be
@@ -139,20 +139,20 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t tra
      *    continues (the AMD may still start in lenient mode). */
     ctx->shell = 0;
     {
-        com_schmonz_MT2HIDShell *hid = new com_schmonz_MT2HIDShell;
+        com_schmonz_MavericksHIDShell *hid = new com_schmonz_MavericksHIDShell;
         OSDictionary *hp = makeHidProps(transport);
         if (hid && hp && hid->init(hp)) {
             if (hid->attach(nub) && hid->start(nub)) {
                 ctx->shell = hid;
-                IOLog("mt2_synth_amd: MT1 HID shell started under nub\n");
+                IOLog("mavericks_amd_terminal: MT1 HID shell started under nub\n");
             } else {
-                IOLog("mt2_synth_amd: MT1 HID shell attach/start FAILED\n");
+                IOLog("mavericks_amd_terminal: MT1 HID shell attach/start FAILED\n");
                 hid->detach(nub);
                 hid->release();
                 hid = 0;
             }
         } else {
-            IOLog("mt2_synth_amd: MT1 HID shell init/alloc FAILED\n");
+            IOLog("mavericks_amd_terminal: MT1 HID shell init/alloc FAILED\n");
             if (hid) hid->release();
         }
         if (hp) hp->release();
@@ -161,17 +161,17 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t tra
     /* 3. Allocate the real AppleMultitouchDevice via the IOKit class registry. */
     OSObject *o = OSMetaClass::allocClassWithName("AppleMultitouchDevice");
     if (!o) {
-        IOLog("mt2_synth_amd: allocClassWithName(AppleMultitouchDevice) NULL\n");
+        IOLog("mavericks_amd_terminal: allocClassWithName(AppleMultitouchDevice) NULL\n");
         if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
-        IODelete(ctx, mt2_synth_amd_ctx, 1);
+        IODelete(ctx, mavericks_amd_terminal_ctx, 1);
         return 0;
     }
     IOService *dev = OSDynamicCast(IOService, o);
     if (!dev) {
-        IOLog("mt2_synth_amd: alloc is not an IOService\n");
+        IOLog("mavericks_amd_terminal: alloc is not an IOService\n");
         o->release();
         if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
-        IODelete(ctx, mt2_synth_amd_ctx, 1);
+        IODelete(ctx, mavericks_amd_terminal_ctx, 1);
         return 0;
     }
     /* Layout-compatible reinterpret: AppleMultitouchDevice single-inherits IOService
@@ -183,22 +183,22 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t tra
      *    Belt-and-suspenders: setProperty after init in case init() did not adopt the dict. */
     OSDictionary *props = OSDictionary::withCapacity(2);
     if (!props) {
-        IOLog("mt2_synth_amd: props dict alloc failed\n");
+        IOLog("mavericks_amd_terminal: props dict alloc failed\n");
         dev->release();
         ctx->amd = 0;
         if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
-        IODelete(ctx, mt2_synth_amd_ctx, 1);
+        IODelete(ctx, mavericks_amd_terminal_ctx, 1);
         return 0;
     }
     props->setObject("IsFake", kOSBooleanFalse);   /* bypass start() provider cast */
     bool ok = dev->init(props);
     props->release();
-    IOLog("mt2_synth_amd: AppleMultitouchDevice init -> %d (dev=%p)\n", ok, dev);
+    IOLog("mavericks_amd_terminal: AppleMultitouchDevice init -> %d (dev=%p)\n", ok, dev);
     if (!ok) {
         dev->release();
         ctx->amd = 0;
         if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
-        IODelete(ctx, mt2_synth_amd_ctx, 1);
+        IODelete(ctx, mavericks_amd_terminal_ctx, 1);
         return 0;
     }
     /* Belt-and-suspenders: ensure IsFake is in the property table even if init() did
@@ -220,11 +220,11 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t tra
 
     /* 6. Attach to nub. */
     if (!dev->attach(nub)) {
-        IOLog("mt2_synth_amd: device attach failed\n");
+        IOLog("mavericks_amd_terminal: device attach failed\n");
         dev->release();
         ctx->amd = 0;
         if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
-        IODelete(ctx, mt2_synth_amd_ctx, 1);
+        IODelete(ctx, mavericks_amd_terminal_ctx, 1);
         return 0;
     }
 
@@ -242,12 +242,12 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t tra
 
     /* 8. start() */
     if (!dev->start(nub)) {
-        IOLog("mt2_synth_amd: device start FAILED\n");
+        IOLog("mavericks_amd_terminal: device start FAILED\n");
         dev->detach(nub);
         dev->release();
         ctx->amd = 0;
         if (ctx->shell) { ctx->shell->terminate(); ctx->shell->release(); ctx->shell = 0; }
-        IODelete(ctx, mt2_synth_amd_ctx, 1);
+        IODelete(ctx, mavericks_amd_terminal_ctx, 1);
         return 0;
     }
 
@@ -332,12 +332,12 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t tra
             #undef MT_SET_INT
             dev->setProperty("MultitouchPreferences", tp);
             tp->release();
-            IOLog("mt2_synth_amd: MultitouchPreferences seeded\n");
+            IOLog("mavericks_amd_terminal: MultitouchPreferences seeded\n");
         }
     }
 
     dev->registerService();
-    IOLog("mt2_synth_amd: AppleMultitouchDevice started + registered\n");
+    IOLog("mavericks_amd_terminal: AppleMultitouchDevice started + registered\n");
 
     /* Retain the workloop NOW, after start() has established it.  Released LAST in teardown
      * (after the AMD itself is released) so nothing can call getWorkLoop() on freed memory —
@@ -345,97 +345,97 @@ mt2_synth_amd_ctx *mt2_synth_amd_build(IOService *nub, mt2_synth_transport_t tra
     ctx->wl = dev->getWorkLoop();
     if (ctx->wl) ctx->wl->retain();
 
-    /* Raise the feed fence LAST: callers of mt2_synth_amd_amd() see NULL until the device
+    /* Raise the feed fence LAST: callers of mavericks_amd_terminal_amd() see NULL until the device
      * is fully built+started, and again once teardown clears it. */
     ctx->ready = true;
 
     return ctx;
 }
 
-AppleMultitouchDevice *mt2_synth_amd_amd(mt2_synth_amd_ctx *ctx) {
+AppleMultitouchDevice *mavericks_amd_terminal_amd(mavericks_amd_terminal_ctx *ctx) {
     return (ctx && ctx->ready) ? ctx->amd : 0;   /* no frame reaches a not-ready / tearing-down AMD */
 }
 
 /* ---- teardown ops (kext-side implementations of the host-tested order contract) -------------- */
 
 static void op_clear_ready(void *c) {
-    ((mt2_synth_amd_ctx *)c)->ready = false;    /* fence: amd() now returns NULL; no new frame enqueued */
+    ((mavericks_amd_terminal_ctx *)c)->ready = false;    /* fence: amd() now returns NULL; no new frame enqueued */
 }
 
 static void op_term_shell(void *c) {
-    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
+    mavericks_amd_terminal_ctx *ctx = (mavericks_amd_terminal_ctx *)c;
     if (ctx->shell) {
         ctx->shell->terminate();
         ctx->shell->release();
         ctx->shell = 0;
-        IOLog("mt2_synth_amd: MT1 HID shell terminated + released\n");
+        IOLog("mavericks_amd_terminal: MT1 HID shell terminated + released\n");
     }
 }
 
 static void op_term_amd(void *c) {
-    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
+    mavericks_amd_terminal_ctx *ctx = (mavericks_amd_terminal_ctx *)c;
     if (ctx->amd) {
         /* terminate(kIOServiceSynchronous) drives willTerminate->stop->detach itself so
          * Apple's frames-clients deregister before we release.  Do NOT also call
          * stop()/detach() — that was the direct-stop path that caused the getWorkLoop()
          * panic on freed memory. */
         ((IOService *)ctx->amd)->terminate(kIOServiceSynchronous);
-        IOLog("mt2_synth_amd: AppleMultitouchDevice terminate(kIOServiceSynchronous) complete\n");
+        IOLog("mavericks_amd_terminal: AppleMultitouchDevice terminate(kIOServiceSynchronous) complete\n");
     }
 }
 
 static void op_release_amd(void *c) {
-    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
+    mavericks_amd_terminal_ctx *ctx = (mavericks_amd_terminal_ctx *)c;
     if (ctx->amd) {
         ((IOService *)ctx->amd)->release();
         ctx->amd = 0;
-        IOLog("mt2_synth_amd: AppleMultitouchDevice released\n");
+        IOLog("mavericks_amd_terminal: AppleMultitouchDevice released\n");
     }
 }
 
 static void op_release_wl(void *c) {
-    mt2_synth_amd_ctx *ctx = (mt2_synth_amd_ctx *)c;
+    mavericks_amd_terminal_ctx *ctx = (mavericks_amd_terminal_ctx *)c;
     if (ctx->wl) {
         ctx->wl->release();
         ctx->wl = 0;
-        IOLog("mt2_synth_amd: workloop released (last)\n");
+        IOLog("mavericks_amd_terminal: workloop released (last)\n");
     }
 }
 
-void mt2_synth_amd_teardown(IOService *nub, mt2_synth_amd_ctx *ctx) {
+void mavericks_amd_terminal_teardown(IOService *nub, mavericks_amd_terminal_ctx *ctx) {
     (void)nub;
     if (!ctx) return;
-    mt2_synth_teardown_ops_t ops = {
+    mavericks_synth_teardown_ops_t ops = {
         op_clear_ready, op_term_shell, op_term_amd, op_release_amd, op_release_wl, ctx
     };
-    mt2_synth_teardown_run(&ops);
-    IODelete(ctx, mt2_synth_amd_ctx, 1);
-    IOLog("mt2_synth_amd: teardown complete (ready-fenced, terminate()d, workloop released last)\n");
+    mavericks_synth_teardown_run(&ops);
+    IODelete(ctx, mavericks_amd_terminal_ctx, 1);
+    IOLog("mavericks_amd_terminal: teardown complete (ready-fenced, terminate()d, workloop released last)\n");
 }
 
 /* ---- fabricated-AMD terminal feed (one implementation; three consumers) --------------------- */
 
-void mt2_synth_amd_feed(mt2_synth_amd_ctx *ctx, const MavericksTouchFrame *frame, uint32_t timestamp) {
-    AppleMultitouchDevice *amd = mt2_synth_amd_amd(ctx);
+void mavericks_amd_terminal_feed(mavericks_amd_terminal_ctx *ctx, const MavericksTouchFrame *frame, uint32_t timestamp) {
+    AppleMultitouchDevice *amd = mavericks_amd_terminal_amd(ctx);
     if (!amd) return;
     /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point. */
     if (frame->contact_count > 0)
         MT2_DLOG(2, "feed x=%d y=%d -> amd %p", frame->transducers[0].currentCoordinates.x,
                  frame->transducers[0].currentCoordinates.y, (void *)amd);
     unsigned char mt1[512];  /* 512 >= 256: safe for any realistic contact count */
-    int n = mt1_encode(frame, mt1, sizeof mt1, timestamp);
+    int n = mavericks_amd_construct_report(frame, mt1, sizeof mt1, timestamp);
     if (n > 0) amd->handleTouchFrame(mt1, (unsigned int)n);
 }
 
-void mt2_synth_amd_button(mt2_synth_amd_ctx *ctx, unsigned mask) {
-    AppleMultitouchDevice *amd = mt2_synth_amd_amd(ctx);
+void mavericks_amd_terminal_button(mavericks_amd_terminal_ctx *ctx, unsigned mask) {
+    AppleMultitouchDevice *amd = mavericks_amd_terminal_amd(ctx);
     if (!amd) return;
     MT2_DLOG(2, "post_button_edge mask=0x%x -> amd %p", mask, (void *)amd);
     amd->handlePointerEventFromDevice(0, 0, mask, 0);
 }
 
-IOReturn mt2_synth_amd_inject(mt2_synth_amd_ctx *ctx, const unsigned char *bytes, unsigned int len) {
-    AppleMultitouchDevice *amd = mt2_synth_amd_amd(ctx);
+IOReturn mavericks_amd_terminal_inject(mavericks_amd_terminal_ctx *ctx, const unsigned char *bytes, unsigned int len) {
+    AppleMultitouchDevice *amd = mavericks_amd_terminal_amd(ctx);
     if (!amd) return kIOReturnNotReady;
     return amd->handleTouchFrame((unsigned char *)bytes, len);
 }

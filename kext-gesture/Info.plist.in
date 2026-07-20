@@ -37,12 +37,12 @@
             <key>IOResourceMatch</key>
             <string>IOKit</string>
         </dict>
-        <!-- Synthetic terminal consumer path: MT2HIDShell (IOHIDDevice subclass) publishes
+        <!-- Synthetic terminal consumer path: MavericksHIDShell (IOHIDDevice subclass) publishes
              an IOHIDInterface with the MT1 identity (VID 1452 / PID 782 / VendorIDSource 2 /
              Transport=Bluetooth). This personality matches that interface and binds Apple's
              AppleMultitouchHIDEventDriver so a started IOHIDEventService lives under our nub,
              enabling the in-kernel actuation wrapper to wire it (hidEventDriverPublished walks
-             our subtree). Inert when MT2HIDShell is not started. -->
+             our subtree). Inert when MavericksHIDShell is not started. -->
         <key>MT2HIDEventDriver</key>
         <dict>
             <key>CFBundleIdentifier</key>
@@ -181,7 +181,7 @@
         </dict>
         <!-- VoodooInput multiplexer: matches any provider publishing VoodooInputSupported=true,
              reads its Logical Max X/Y, and routes kIOMessageVoodooInputMessage through the
-             mt2_frame_from_voodoo translator into the existing gesture engine (submitFrame).
+             mavericks_frame_from_voodoo translator into the existing gesture engine (submitFrame).
              Satellite kexts (e.g. VoodooI2C) locate us via the VOODOO_INPUT_IDENTIFIER property
              we set in start(). -->
         <key>VoodooInputMux</key>

@@ -1,4 +1,4 @@
-#include "mt2_voodoo_translate.h"
+#include "mavericks_voodoo_translate.h"
 #include "mt2_coord_range.h"
 #include <string.h>
 
@@ -10,7 +10,7 @@ static int32_t rescale(uint32_t v, uint32_t lmax, int32_t omin, int32_t omax) {
     return omin + (int32_t)(((int64_t)v * (omax - omin)) / (int64_t)lmax);
 }
 
-MavericksTouchFrame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
+MavericksTouchFrame mavericks_frame_from_voodoo(const VoodooInputEvent *wire,
                                 uint32_t logical_max_x, uint32_t logical_max_y) {
     MavericksTouchFrame f;
     memset(&f, 0, sizeof(f));
@@ -29,7 +29,7 @@ MavericksTouchFrame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
         c->currentCoordinates.pressure = t->currentCoordinates.pressure;
         c->currentCoordinates.width    = t->currentCoordinates.width;
         /* state / touch_major / touch_minor / orientation deliberately left 0:
-         * mavericks_lifecycle derives state; mt1_encode defaults the radii/orientation */
+         * mavericks_lifecycle derives state; mavericks_amd_construct_report defaults the radii/orientation */
         if (t->isPhysicalButtonDown) button = 1;
     }
     f.isPhysicalButtonDown = button;
@@ -43,7 +43,7 @@ static uint32_t inv_rescale(int32_t v, uint32_t lmax, int32_t omin, int32_t omax
     return (uint32_t)(((int64_t)(v - omin) * lmax) / (int64_t)(omax - omin));
 }
 
-VoodooInputEvent mt2_voodoo_from_frame(const MavericksTouchFrame *f,
+VoodooInputEvent mavericks_voodoo_from_frame(const MavericksTouchFrame *f,
                                        uint32_t logical_max_x, uint32_t logical_max_y) {
     VoodooInputEvent w;
     memset(&w, 0, sizeof(w));

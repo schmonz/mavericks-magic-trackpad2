@@ -5,7 +5,7 @@
  * poll. SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE — on interrupt
  * bind it advertises VoodooInputSupported + its coordinate span and registerService()s; the
  * mux (com_schmonz_VoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
- * mt2_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
+ * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No BNBTrackpadDevice is ever started; no fabricated AMD
  * is built here. No decision logic lives in this file.
  *
@@ -36,8 +36,8 @@
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mavericks_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mavericks_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
-#include "mt2_synth_amd.h"           /* mt2_synth_amd_amd — read the mux's terminal AMD node for battery */
-#include "mt2_voodoo_translate.h"     /* mt2_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
+#include "MavericksAMDTerminal.h"           /* mavericks_amd_terminal_amd — read the mux's terminal AMD node for battery */
+#include "mavericks_voodoo_translate.h"     /* mavericks_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
 #include "VoodooInputMux.h"           /* com_schmonz_VoodooInput::synthCtx() — terminal AMD node for battery */
 #include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
@@ -115,13 +115,13 @@ static void mt2_publish_battery(IOService *node, uint8_t pct) {
 
 /* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), publish the capacity as
  * "BatteryPercent" on the terminal fabricated AMD node — which the mux now owns (gBtMux->synthCtx()).
- * mt2_synth_amd_amd() returns NULL until the AMD is built + ready and again once teardown starts, so
+ * mavericks_amd_terminal_amd() returns NULL until the AMD is built + ready and again once teardown starts, so
  * this self-fences; gBtMux is NULL until the interrupt reader locates the mux. The pure parse is
  * host-tested (tests/test_battery.c). No-op when the packet isn't 0x90 or no terminal AMD is up. */
 static void mt2_maybe_publish_battery(const void *data, size_t len) {
     uint8_t pct;
     if (!mt2_parse_battery_report((const uint8_t *)data, len, &pct)) return;
-    AppleMultitouchDevice *amd = gBtMux ? mt2_synth_amd_amd(gBtMux->synthCtx()) : 0;
+    AppleMultitouchDevice *amd = gBtMux ? mavericks_amd_terminal_amd(gBtMux->synthCtx()) : 0;
     if (amd) mt2_publish_battery((IOService *)amd, pct);
 }
 
@@ -275,7 +275,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
             if (self->fMux) gBtMux = OSDynamicCast(com_schmonz_VoodooInput, self->fMux);
         }
         if (self->fMux) {
-            VoodooInputEvent ev = mt2_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
+            VoodooInputEvent ev = mavericks_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
             self->messageClient(kIOMessageVoodooInputMessage, self->fMux, &ev, sizeof ev);
         }
     }

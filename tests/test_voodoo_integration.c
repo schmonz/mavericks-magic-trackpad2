@@ -2,9 +2,9 @@
 #include <string.h>
 extern "C" {
 #include "mavericks_session.h"
-#include "mt1_encode.h"
+#include "mavericks_amd_terminal_encode.h"
 }
-#include "mt2_voodoo_translate.h"
+#include "mavericks_voodoo_translate.h"
 
 typedef struct { MavericksTouchFrame frames[64]; int n; } rec_t;
 static void rec_feed(void *ctx, const MavericksTouchFrame *f) {
@@ -31,7 +31,7 @@ static void run_tests(void) {
     w.transducers[0].currentCoordinates.y = 500;
     w.transducers[0].currentCoordinates.pressure = 40;
 
-    MavericksTouchFrame f = mt2_frame_from_voodoo(&w, 1000, 1000);
+    MavericksTouchFrame f = mavericks_frame_from_voodoo(&w, 1000, 1000);
     mavericks_session_frame(&s, 1, &f, 10, &sink);
 
     CHECK_EQ(rec.n, 1);   /* exactly one frame: single-contact first touch, no empty/pump frames */
@@ -40,7 +40,7 @@ static void run_tests(void) {
 
     /* And it encodes to a valid MT1 0x28 report with the MakeTouch state nibble (0x30). */
     uint8_t buf[64];
-    int nb = mt1_encode(&rec.frames[0], buf, sizeof(buf), 100);
+    int nb = mavericks_amd_construct_report(&rec.frames[0], buf, sizeof(buf), 100);
     CHECK(nb == 4 + 9);          /* 4-byte MT1 header + 1x 9-byte contact record = 13 */
     CHECK_EQ(buf[0], 0x28);      /* MT1 report id */
     /* last byte of the first record: high nibble = state (0x30 = MakeTouch), low = fingerID */

@@ -2,7 +2,7 @@
  * together in y, FREEZE ~1.5s, glide again, lift. The mid-gesture freeze is the tell that
  * it's commanded. Drives Apple's real recognizer -> scroll-wheel events. */
 #include "../src/touch_model.h"
-#include "../src/mt1_encode.h"
+#include "../src/mavericks_amd_terminal_encode.h"
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach_time.h>
@@ -25,7 +25,7 @@ static void snd(int on, int y) {
         t->touch_major = 200; t->touch_minor = 180; t->orientation = 0; t->size = 50;
     }
     uint8_t o[256];
-    int n = mt1_encode(&f, o, sizeof(o), ems());
+    int n = mavericks_amd_construct_report(&f, o, sizeof(o), ems());
     IOConnectCallStructMethod(c, 0, o, (size_t)n, NULL, NULL);
     usleep(16000);
 }

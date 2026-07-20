@@ -1,15 +1,15 @@
 /*
- * MT2HIDShell - in-kernel IOHIDDevice presenting the Magic Trackpad MT1 report
- * descriptor. See MT2HIDShell.h for why this exists (subtree-local started event
+ * MavericksHIDShell - in-kernel IOHIDDevice presenting the Magic Trackpad MT1 report
+ * descriptor. See MavericksHIDShell.h for why this exists (subtree-local started event
  * driver for AppleMultitouchDevice's wrapper wiring).
  */
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
-#include "MT2HIDShell.h"
+#include "MavericksHIDShell.h"
 
-OSDefineMetaClassAndStructors(com_schmonz_MT2HIDShell, IOHIDDevice)
+OSDefineMetaClassAndStructors(com_schmonz_MavericksHIDShell, IOHIDDevice)
 
 /* The REAL Apple Magic Trackpad HID report descriptor (verbatim, identical to
  * src/vhid_mt1.c kMT1Desc). Top-level Generic Desktop / Mouse collection so it
@@ -35,7 +35,7 @@ static const unsigned char kMT1Desc[] = {
     0xc0
 };
 
-IOReturn com_schmonz_MT2HIDShell::newReportDescriptor(IOMemoryDescriptor **descriptor) const {
+IOReturn com_schmonz_MavericksHIDShell::newReportDescriptor(IOMemoryDescriptor **descriptor) const {
     if (!descriptor) {
         return kIOReturnBadArgument;
     }
@@ -48,21 +48,21 @@ IOReturn com_schmonz_MT2HIDShell::newReportDescriptor(IOMemoryDescriptor **descr
     return kIOReturnSuccess;
 }
 
-OSString *com_schmonz_MT2HIDShell::newTransportString() const {
+OSString *com_schmonz_MavericksHIDShell::newTransportString() const {
     return OSString::withCString("Bluetooth");
 }
-OSString *com_schmonz_MT2HIDShell::newProductString() const {
+OSString *com_schmonz_MavericksHIDShell::newProductString() const {
     return OSString::withCString("Magic Trackpad");
 }
-OSString *com_schmonz_MT2HIDShell::newManufacturerString() const {
+OSString *com_schmonz_MavericksHIDShell::newManufacturerString() const {
     return OSString::withCString("Apple Inc.");
 }
-OSNumber *com_schmonz_MT2HIDShell::newVendorIDNumber() const {
+OSNumber *com_schmonz_MavericksHIDShell::newVendorIDNumber() const {
     return OSNumber::withNumber((unsigned long long)1452, 32);
 }
-OSNumber *com_schmonz_MT2HIDShell::newProductIDNumber() const {
+OSNumber *com_schmonz_MavericksHIDShell::newProductIDNumber() const {
     return OSNumber::withNumber((unsigned long long)782, 32);
 }
-OSNumber *com_schmonz_MT2HIDShell::newVendorIDSourceNumber() const {
+OSNumber *com_schmonz_MavericksHIDShell::newVendorIDSourceNumber() const {
     return OSNumber::withNumber((unsigned long long)2, 32);
 }

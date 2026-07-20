@@ -1,9 +1,9 @@
-#ifndef MT2HIDSHELL_H
-#define MT2HIDSHELL_H
+#ifndef MAVERICKSHIDSHELL_H
+#define MAVERICKSHIDSHELL_H
 #include <IOKit/hid/IOHIDDevice.h>
 
 /*
- * MT2HIDShell - an in-kernel IOHIDDevice that presents the real Magic Trackpad
+ * MavericksHIDShell - an in-kernel IOHIDDevice that presents the real Magic Trackpad
  * MT1 HID report descriptor (the same bytes src/vhid_mt1.c presents from
  * userspace). Its ONLY purpose is to be a real IOHIDInterface provider that
  * Apple's AppleMultitouchHIDEventDriver (BNBTrackpadEventDriver personality)
@@ -27,8 +27,8 @@
  * PrimaryUsage[Page] from the property table we pass to init(); we override only
  * the pure-virtual newReportDescriptor().
  */
-class com_schmonz_MT2HIDShell : public IOHIDDevice {
-    OSDeclareDefaultStructors(com_schmonz_MT2HIDShell)
+class com_schmonz_MavericksHIDShell : public IOHIDDevice {
+    OSDeclareDefaultStructors(com_schmonz_MavericksHIDShell)
 public:
     virtual IOReturn newReportDescriptor(IOMemoryDescriptor **descriptor) const override;
 

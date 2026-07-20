@@ -1,4 +1,4 @@
-#include "mt2_voodoo_translate.h"
+#include "mavericks_voodoo_translate.h"
 #include "mt2_coord_range.h"
 #include "test.h"
 #include <string.h>
@@ -13,7 +13,7 @@ static void run_tests(void) {
     w.transducers[0].currentCoordinates.y = 0;      /* -> MT2_MIN_Y */
     w.transducers[0].currentCoordinates.pressure = 23;
 
-    f = mt2_frame_from_voodoo(&w, 1000, 1000);
+    f = mavericks_frame_from_voodoo(&w, 1000, 1000);
     CHECK_EQ(f.contact_count, 1);
     CHECK_EQ(f.transducers[0].id, 7);
     CHECK_EQ(f.isPhysicalButtonDown, 1);                 /* per-contact button OR'd to frame */
@@ -27,20 +27,20 @@ static void run_tests(void) {
 
     /* endpoints */
     w.transducers[0].currentCoordinates.x = 0;
-    f = mt2_frame_from_voodoo(&w, 1000, 1000);
+    f = mavericks_frame_from_voodoo(&w, 1000, 1000);
     CHECK_EQ(f.transducers[0].currentCoordinates.x, MT2_MIN_X);
     w.transducers[0].currentCoordinates.x = 1000;
-    f = mt2_frame_from_voodoo(&w, 1000, 1000);
+    f = mavericks_frame_from_voodoo(&w, 1000, 1000);
     CHECK_EQ(f.transducers[0].currentCoordinates.x, MT2_MAX_X);
 
     /* logical-max 0 -> identity fallback (dimension-less satellite still moves) */
     w.transducers[0].currentCoordinates.x = 512;
-    f = mt2_frame_from_voodoo(&w, 0, 0);
+    f = mavericks_frame_from_voodoo(&w, 0, 0);
     CHECK_EQ(f.transducers[0].currentCoordinates.x, 512);
 
     /* contact_count clamps to the wire array bound (10) */
     w.contact_count = 12;
-    f = mt2_frame_from_voodoo(&w, 1000, 1000);
+    f = mavericks_frame_from_voodoo(&w, 1000, 1000);
     CHECK_EQ(f.contact_count, 10);
 
     /* --- inverse translator + round-trip identity (the fidelity gate) --- */
@@ -64,8 +64,8 @@ static void run_tests(void) {
         src.transducers[1].currentCoordinates.y = MT2_MIN_Y;
         src.transducers[1].currentCoordinates.pressure = 255;
 
-        VoodooInputEvent w2 = mt2_voodoo_from_frame(&src, MT2_SPAN_X, MT2_SPAN_Y);
-        MavericksTouchFrame rt = mt2_frame_from_voodoo(&w2, MT2_SPAN_X, MT2_SPAN_Y);
+        VoodooInputEvent w2 = mavericks_voodoo_from_frame(&src, MT2_SPAN_X, MT2_SPAN_Y);
+        MavericksTouchFrame rt = mavericks_frame_from_voodoo(&w2, MT2_SPAN_X, MT2_SPAN_Y);
 
         CHECK_EQ(rt.contact_count, 2);
         CHECK_EQ(rt.isPhysicalButtonDown, 1);

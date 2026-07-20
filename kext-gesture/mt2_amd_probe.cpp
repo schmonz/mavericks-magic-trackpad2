@@ -4,12 +4,12 @@
 #include <libkern/c++/OSIterator.h>
 #include <libkern/c++/OSDictionary.h>
 #include "mt2_amd_probe.h"
-#include "mt2_synth_amd.h"
+#include "MavericksAMDTerminal.h"
 
 class com_schmonz_MT2Gesture;
 extern com_schmonz_MT2Gesture *gActiveMT2Gesture;   /* engine nub (defined in MT2Gesture.cpp) */
 
-static mt2_synth_amd_ctx *gProbeCtx = 0;
+static mavericks_amd_terminal_ctx *gProbeCtx = 0;
 static int gProbeVal = 0;
 
 static int probe_amd_count(void) {
@@ -30,20 +30,20 @@ static void probe_run(int n) {
     if (n == 1) {
         if (gProbeCtx) { IOLog("mt2_amd_probe: already up\n"); return; }
         int before = probe_amd_count();
-        gProbeCtx = mt2_synth_amd_build(nub, MT2_SYNTH_XPORT_BT);   /* oracle: transport is arbitrary */
+        gProbeCtx = mavericks_amd_terminal_build(nub, MAVERICKS_AMD_TERMINAL_XPORT_BT);   /* oracle: transport is arbitrary */
         IOLog("mt2_amd_probe: BUILD ctx=%p amd_count %d->%d\n", gProbeCtx, before, probe_amd_count());
     } else if (n == 0) {
         if (!gProbeCtx) { IOLog("mt2_amd_probe: nothing to tear down\n"); return; }
         int before = probe_amd_count();
-        mt2_synth_amd_teardown(nub, gProbeCtx);
+        mavericks_amd_terminal_teardown(nub, gProbeCtx);
         gProbeCtx = 0;
         IOLog("mt2_amd_probe: TEARDOWN amd_count %d->%d\n", before, probe_amd_count());
     } else { /* n >= 2: churn, with adoption settle each cycle */
         int base = probe_amd_count();
         for (int i = 0; i < n; i++) {
-            mt2_synth_amd_ctx *c = mt2_synth_amd_build(nub, MT2_SYNTH_XPORT_BT);
+            mavericks_amd_terminal_ctx *c = mavericks_amd_terminal_build(nub, MAVERICKS_AMD_TERMINAL_XPORT_BT);
             IOSleep(300);   /* let hidd/AppleMultitouchDriver adopt -> frames-client forms */
-            mt2_synth_amd_teardown(nub, c);
+            mavericks_amd_terminal_teardown(nub, c);
             IOSleep(100);
         }
         int fin = probe_amd_count();

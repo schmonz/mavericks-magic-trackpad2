@@ -6,13 +6,13 @@
 set(KEXT_LOCAL_CPP
   MT2Gesture.cpp MT2GestureUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mt2_log.cpp mt2_diag.cpp mavericks_splice_kext.cpp
-  VoodooInputMux.cpp MT2HIDShell.cpp mt2_synth_amd.cpp mt2_amd_probe.cpp)
+  VoodooInputMux.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mt2_amd_probe.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
-  mt2_bt_decode mt1_encode mt2_usb_decode mt2_decode mavericks_pipeline mavericks_lifecycle
+  mt2_bt_decode mavericks_amd_terminal_encode mt2_usb_decode mt2_decode mavericks_pipeline mavericks_lifecycle
   mavericks_session mt2_geometry mt2_usb_bytes mavericks_connect_sm conn_trace
-  genuine_host mavericks_coordinator mt2_battery mavericks_splice mt2_synth_report mt2_synth_teardown)
+  genuine_host mavericks_coordinator mt2_battery mavericks_splice mavericks_synth_report mavericks_synth_teardown)
 set(KEXT_SHARED_SRCS "")
 foreach(c ${KEXT_SHARED_NAMES})
   list(APPEND KEXT_SHARED_SRCS ${CMAKE_SOURCE_DIR}/src/${c}.c)
@@ -23,7 +23,7 @@ endforeach()
 # did NOT auto-track $<TARGET_OBJECTS>, so a recompiled object silently skipped the relink and we loaded a
 # stale kext (the "rm the binary to force relink" footgun). A real target has no such gap. The kext "link"
 # is just the c++ driver with freestanding-kernel flags, expressed via target_link_options.
-set(KEXT_LOCAL_CXX_ABS ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp)
+set(KEXT_LOCAL_CXX_ABS ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp)
 add_executable(mt2gesture_kext ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS} ${KEXT_LOCAL_CXX_ABS})
 set_target_properties(mt2gesture_kext PROPERTIES
   OUTPUT_NAME MT2Gesture
@@ -44,7 +44,7 @@ set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_
 # host shim). All gate behavior on #if KERNEL.
 set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/conn_trace.c
-  VoodooInputMux.cpp ${CMAKE_SOURCE_DIR}/src/mt2_voodoo_translate.cpp
+  VoodooInputMux.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
 # Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel

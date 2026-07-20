@@ -1,5 +1,5 @@
 /* replay_capture - replay recorded REAL MT2 frames through the full translation chain
- * (mt2_usb_decode -> mt1_encode -> MT2Gesture kext), to verify the pipeline end-to-end on
+ * (mt2_usb_decode -> mavericks_amd_construct_report -> MT2Gesture kext), to verify the pipeline end-to-end on
  * genuine hardware frames without needing the live trackpad.
  *
  *   replay_capture <capture.txt>            # decode + PRINT each frame (no kext, non-disruptive)
@@ -8,7 +8,7 @@
  * Capture lines look like: "len=21: 02 00 00 ... 09"  (hex bytes after the colon).
  */
 #include "../src/mt2_usb_decode.h"
-#include "../src/mt1_encode.h"
+#include "../src/mavericks_amd_terminal_encode.h"
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach_time.h>
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
             printf("\n");
         } else {
             uint8_t out[256];
-            int n = mt1_encode(&tf, out, sizeof(out), ems());
+            int n = mavericks_amd_construct_report(&tf, out, sizeof(out), ems());
             if (n > 0) { IOConnectCallStructMethod(conn, 0, out, (size_t)n, NULL, NULL); fed++; }
             usleep(8000); /* ~replay pacing */
         }
@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
     if (feed) {
         /* lift */
         touch_frame_t e; memset(&e, 0, sizeof(e));
-        uint8_t out[256]; int n = mt1_encode(&e, out, sizeof(out), ems());
+        uint8_t out[256]; int n = mavericks_amd_construct_report(&e, out, sizeof(out), ems());
         if (n > 0) IOConnectCallStructMethod(conn, 0, out, (size_t)n, NULL, NULL);
         IOServiceClose(conn);
     }

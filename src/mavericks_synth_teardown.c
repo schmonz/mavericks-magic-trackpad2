@@ -1,6 +1,6 @@
-#include "mt2_synth_teardown.h"
+#include "mavericks_synth_teardown.h"
 
-void mt2_synth_teardown_run(const mt2_synth_teardown_ops_t *ops) {
+void mavericks_synth_teardown_run(const mavericks_synth_teardown_ops_t *ops) {
     if (!ops) return;
     if (ops->clear_ready) ops->clear_ready(ops->ctx);
     if (ops->term_shell)  ops->term_shell(ops->ctx);

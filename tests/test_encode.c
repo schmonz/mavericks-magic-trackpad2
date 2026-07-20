@@ -1,4 +1,4 @@
-#include "../src/mt1_encode.h"
+#include "../src/mavericks_amd_terminal_encode.h"
 #include "test.h"
 
 /* MT1 record decode (mirrors Linux hid-magicmouse.c MAGICTRACKPAD branch),
@@ -22,7 +22,7 @@ static void run_tests(void) {
     f.transducers[0].currentCoordinates.pressure = 23;
 
     uint8_t buf[256];
-    int n = mt1_encode(&f, buf, sizeof(buf), 0x25abc /* 18-bit ts */);
+    int n = mavericks_amd_construct_report(&f, buf, sizeof(buf), 0x25abc /* 18-bit ts */);
     CHECK_EQ(n, 4 + 9);           /* 4-byte header + one 9-byte record */
     CHECK_EQ(buf[0], 0x28);       /* MT1 report id */
     CHECK_EQ(buf[1] & 0x01, 1);   /* button */
@@ -50,7 +50,7 @@ static void run_tests(void) {
      * Touching and a tap never commits. (state nibble verified vs the 10.9.5
      * CompactV4 decode: 0x30 -> MTTouchState MakeTouch(3).) */
     f.transducers[0].state = TS_START;
-    n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
+    n = mavericks_amd_construct_report(&f, buf, sizeof(buf), 0x25abc);
     CHECK_EQ(n, 4 + 9);
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
     CHECK_EQ(state, 0x30);        /* first frame -> MakeTouch */
@@ -58,7 +58,7 @@ static void run_tests(void) {
     /* A lifting contact is TS_END and must encode to BreakTouch (0x50): the
      * recognizer needs the MakeTouch->...->BreakTouch transition to commit a tap. */
     f.transducers[0].state = TS_END;
-    n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
+    n = mavericks_amd_construct_report(&f, buf, sizeof(buf), 0x25abc);
     CHECK_EQ(n, 4 + 9);
     mt1_decode_record(buf + 4, &id, &x, &y, &state);
     CHECK_EQ(state, 0x50);        /* lift -> BreakTouch */
@@ -71,7 +71,7 @@ static void run_tests(void) {
      * firm size for the gate to pass -- independent of the small MT2-derived value. */
     f.transducers[0].state = TS_TOUCHING;
     f.transducers[0].currentCoordinates.pressure = 3;                 /* small MT2-derived size */
-    n = mt1_encode(&f, buf, sizeof(buf), 0x25abc);
+    n = mavericks_amd_construct_report(&f, buf, sizeof(buf), 0x25abc);
     CHECK_EQ(n, 4 + 9);
     CHECK_EQ(buf[4 + 6] & 0x3f, 0x3f);     /* boosted to full strength for the density gate */
     /* Expected scaled coords (independently computed): MT2(752,556) -> MT1. */
@@ -83,11 +83,11 @@ static void run_tests(void) {
 
     /* No-touch frame still yields a valid header-only report. */
     MavericksTouchFrame e = {0};
-    int m = mt1_encode(&e, buf, sizeof(buf), 0);
+    int m = mavericks_amd_construct_report(&e, buf, sizeof(buf), 0);
     CHECK_EQ(m, 4);
     CHECK_EQ(buf[0], 0x28);
 
     /* Capacity guard. */
-    CHECK_EQ(mt1_encode(&f, buf, 3, 0), -1);
+    CHECK_EQ(mavericks_amd_construct_report(&f, buf, 3, 0), -1);
 }
 TEST_MAIN()

@@ -7,7 +7,7 @@
  * Run as root with /tmp/MT2Gesture.kext loaded. Watch the cursor (and mt_contacts).
  */
 #include "../src/touch_model.h"
-#include "../src/mt1_encode.h"
+#include "../src/mavericks_amd_terminal_encode.h"
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <mach/mach_time.h>
@@ -69,7 +69,7 @@ int main(int argc, char **argv) {
         }
         uint8_t out[256];
         uint32_t ts = getenv("SYNTH_FIXED_TS") ? (uint32_t)atoi(getenv("SYNTH_FIXED_TS")) : elapsed_ms();
-        int n = mt1_encode(&f, out, sizeof(out), ts);
+        int n = mavericks_amd_construct_report(&f, out, sizeof(out), ts);
         if (n > 0) {
             kr = IOConnectCallStructMethod(g_conn, 0, out, (size_t)n, NULL, NULL);
             if (kr != last) { fprintf(stderr, "synth: kr=0x%x (frame %lu)\n", kr, frames); last = kr; }
@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     }
     /* lift */
     touch_frame_t f = {0}; f.ntouches = 0;
-    uint8_t out[256]; int n = mt1_encode(&f, out, sizeof(out), elapsed_ms());
+    uint8_t out[256]; int n = mavericks_amd_construct_report(&f, out, sizeof(out), elapsed_ms());
     if (n > 0) IOConnectCallStructMethod(g_conn, 0, out, (size_t)n, NULL, NULL);
     IOServiceClose(g_conn);
     return 0;
