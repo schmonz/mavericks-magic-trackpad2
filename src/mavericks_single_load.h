@@ -1,5 +1,5 @@
-#ifndef MT2_SINGLE_LOAD_H
-#define MT2_SINGLE_LOAD_H
+#ifndef MAVERICKS_SINGLE_LOAD_H
+#define MAVERICKS_SINGLE_LOAD_H
 
 /* First-loader-wins guard for the injected prefpane payload. The osax route and the SIMBL route can
  * both load our payload into ONE System Preferences process; they are separate Mach-O images, so the
@@ -14,6 +14,6 @@
  * versions/renames (see the .c for why). */
 #define MT2_SINGLE_LOAD_ENV "MT2_PAYLOAD_ACTIVE"
 
-int mt2_claim_single_load(void);
+int mavericks_claim_single_load(void);
 
 #endif

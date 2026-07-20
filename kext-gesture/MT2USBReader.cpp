@@ -28,8 +28,8 @@
 #include "../src/mt2_coord_range.h"    /* MT2_SPAN_X / MT2_SPAN_Y */
 #include "MavericksAMDTerminal.h"           /* mavericks_amd_terminal_build/amd/teardown — fabricated AMD */
 #include "../src/mavericks_coordinator.h"    /* transport-coordinator seam (no-op for MT2) */
-#include "mt2_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
-#include "mt2_log.h"                   /* MT2_DLOG (runtime debug.mt2_log) */
+#include "mavericks_diag.h"                  /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
+#include "mavericks_log.h"                   /* MAVERICKS_DLOG (runtime debug.mavericks_log) */
 
 /* Settle after the enable, before starting the AMD, or a mouse-mode getReport storm can panic —
  * see explanation.md "MT2USBReader bring-up". 50ms measured sufficient; don't delete it. */

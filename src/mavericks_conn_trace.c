@@ -1,4 +1,4 @@
-#include "conn_trace.h"
+#include "mavericks_conn_trace.h"
 #ifdef KERNEL
 #include <libkern/libkern.h>   /* snprintf in the kernel (no <stdio.h>) */
 #else
@@ -32,7 +32,7 @@ const char *csm_event_name(csm_event_t e) {
     }
     return "?";
 }
-int conn_trace_format(char *buf, size_t n, const conn_trace_rec_t *r) {
+int mavericks_conn_trace_format(char *buf, size_t n, const mavericks_conn_trace_rec_t *r) {
     int w = snprintf(buf, n,
         "CONNTRACE ts=%u conn=%d state=%s event=%s chan=%p bnb=%p deleg=%p ret=%d",
         r->ts_ms, r->conn_id, csm_state_name(r->state), csm_event_name(r->event),

@@ -4,7 +4,7 @@
 
 /*
  * MavericksHIDShell - an in-kernel IOHIDDevice that presents the real Magic Trackpad
- * MT1 HID report descriptor (the same bytes src/vhid_mt1.c presents from
+ * MT1 HID report descriptor (the same bytes src/mavericks_vhid_mt1.c presents from
  * userspace). Its ONLY purpose is to be a real IOHIDInterface provider that
  * Apple's AppleMultitouchHIDEventDriver (BNBTrackpadEventDriver personality)
  * matches and binds, so that a *started* IOHIDEventService (with an IOHIDPointing

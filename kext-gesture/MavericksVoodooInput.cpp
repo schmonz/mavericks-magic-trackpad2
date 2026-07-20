@@ -3,7 +3,7 @@
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOLocks.h>
 #include <kern/clock.h>
-#include "mt2_log.h"              // MT2_DLOG
+#include "mavericks_log.h"              // MAVERICKS_DLOG
 #include "voodoo_wire.h"           // wire VoodooInputEvent + kIOMessage* + key macros
 #include "mavericks_voodoo_translate.h"  // mavericks_frame_from_voodoo (extern "C")
 #include <libkern/c++/OSNumber.h>
@@ -70,7 +70,7 @@ bool com_schmonz_MavericksVoodooInput::start(IOService *provider) {
 
     setProperty(VOODOO_INPUT_IDENTIFIER, kOSBooleanTrue);  // satellites locate us by this
     registerService();
-    MT2_DLOG(1, "MavericksVoodooInput: up (LmaxX=%u LmaxY=%u)", fLogicalMaxX, fLogicalMaxY);
+    MAVERICKS_DLOG(1, "MavericksVoodooInput: up (LmaxX=%u LmaxY=%u)", fLogicalMaxX, fLogicalMaxY);
     return true;
 }
 

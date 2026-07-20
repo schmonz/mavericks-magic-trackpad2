@@ -1,4 +1,4 @@
-#include "../src/mt2_single_load.h"
+#include "../src/mavericks_single_load.h"
 #include "test.h"
 #include <stdlib.h>
 
@@ -12,15 +12,15 @@ static void run_tests(void) {
     unsetenv(MT2_SINGLE_LOAD_ENV);
 
     /* First loader wins. */
-    CHECK_EQ(mt2_claim_single_load(), 1);
+    CHECK_EQ(mavericks_claim_single_load(), 1);
 
     /* Every subsequent copy bails. */
-    CHECK_EQ(mt2_claim_single_load(), 0);
-    CHECK_EQ(mt2_claim_single_load(), 0);
+    CHECK_EQ(mavericks_claim_single_load(), 0);
+    CHECK_EQ(mavericks_claim_single_load(), 0);
 
     /* Simulate a fresh process by clearing the marker: the next loader can then claim again. */
     unsetenv(MT2_SINGLE_LOAD_ENV);
-    CHECK_EQ(mt2_claim_single_load(), 1);
+    CHECK_EQ(mavericks_claim_single_load(), 1);
 
     /* Regression (2026-07-06): an INHERITED marker carries a FOREIGN pid (a child's pid != its
      * parent's), or an older payload's presence-only "1". It must NOT be mistaken for an in-process
@@ -28,8 +28,8 @@ static void run_tests(void) {
      * vanished across reopens). Seed a foreign marker; the next claim must still WIN, and only then do
      * same-process copies bail. */
     setenv(MT2_SINGLE_LOAD_ENV, "1", 1);          /* foreign/stale marker (also the old presence value) */
-    CHECK_EQ(mt2_claim_single_load(), 1);         /* ignore the foreign marker, claim fresh */
-    CHECK_EQ(mt2_claim_single_load(), 0);         /* now keyed to our pid -> siblings bail */
+    CHECK_EQ(mavericks_claim_single_load(), 1);         /* ignore the foreign marker, claim fresh */
+    CHECK_EQ(mavericks_claim_single_load(), 0);         /* now keyed to our pid -> siblings bail */
 }
 
 TEST_MAIN()

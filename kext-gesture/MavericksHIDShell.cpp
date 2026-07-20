@@ -12,7 +12,7 @@
 OSDefineMetaClassAndStructors(com_schmonz_MavericksHIDShell, IOHIDDevice)
 
 /* The REAL Apple Magic Trackpad HID report descriptor (verbatim, identical to
- * src/vhid_mt1.c kMT1Desc). Top-level Generic Desktop / Mouse collection so it
+ * src/mavericks_vhid_mt1.c kMT1Desc). Top-level Generic Desktop / Mouse collection so it
  * matches the BNBTrackpadEventDriver personality's DeviceUsagePairs {1,2}. */
 static const unsigned char kMT1Desc[] = {
     0x05,0x01, 0x09,0x02, 0xa1,0x01,

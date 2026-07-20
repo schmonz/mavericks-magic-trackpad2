@@ -10,7 +10,7 @@
  *     (registered at connectionEstablished, deregistered at connectionClosed) — encode and
  *     delivery are the reader's business; this shell owns only session + lock + timer.
  * It also advertises a debug/test user client (inject pre-encoded 0x28 frames) and the
- * debug.mt2_log sysctl.
+ * debug.mavericks_log sysctl.
  *
  * The synthetic terminal (beginSyntheticTerminal / kSynthSink) was removed in Task 3: it now
  * lives per-mux in MavericksVoodooInput, where each satellite owns its own fabricated AMD + HIDShell.
@@ -24,8 +24,8 @@
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOWorkLoop.h>
 #include "MavericksVoodooInputHost.h"
-#include "mt2_log.h"           /* gMT2LogLevel, MT2_DLOG, sysctl register/unregister */
-#include "mt2_amd_probe.h"    /* debug.mt2_amd_probe oracle (build/teardown/churn + live-AMD count) */
+#include "mavericks_log.h"           /* gMavericksLogLevel, MAVERICKS_DLOG, sysctl register/unregister */
+#include "mavericks_amd_probe.h"    /* debug.mavericks_amd_probe oracle (build/teardown/churn + live-AMD count) */
 
 OSDefineMetaClassAndStructors(com_schmonz_MavericksVoodooInputHost, IOService)
 
@@ -127,8 +127,8 @@ bool com_schmonz_MavericksVoodooInputHost::start(IOService *provider) {
     if (!IOService::start(provider)) {
         return false;
     }
-    mt2_log_register();         /* debug.mt2_log sysctl (single-instance nub owns its lifetime) */
-    mt2_amd_probe_register();  /* debug.mt2_amd_probe oracle */
+    mavericks_log_register();         /* debug.mavericks_log sysctl (single-instance nub owns its lifetime) */
+    mavericks_amd_probe_register();  /* debug.mavericks_amd_probe oracle */
 
     /* DEBUG/TEST seam: advertise a user client so userspace tools can inject encoded
      * 0x28 frames (selector 0 -> feedFrame -> handleTouchFrame) for hands-free on-device
@@ -196,8 +196,8 @@ void com_schmonz_MavericksVoodooInputHost::stop(IOService *provider) {
     /* Timer is fully removed above (no more idleTimeout), so the lock has no more
      * users and is safe to free. */
     if (fSessionLock) { IOLockFree(fSessionLock); fSessionLock = 0; }
-    mt2_amd_probe_unregister(); /* remove debug.mt2_amd_probe before the kext can unload */
-    mt2_log_unregister();   /* remove debug.mt2_log before the kext can unload */
+    mavericks_amd_probe_unregister(); /* remove debug.mavericks_amd_probe before the kext can unload */
+    mavericks_log_unregister();   /* remove debug.mavericks_log before the kext can unload */
     IOService::stop(provider);
 }
 

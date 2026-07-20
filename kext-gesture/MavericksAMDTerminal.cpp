@@ -15,7 +15,7 @@
 #include "MavericksAMDTerminal.h"
 #include "../src/mavericks_synth_teardown.h"
 #include "mavericks_amd_terminal_encode.h"
-#include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
+#include "mavericks_log.h"           /* MAVERICKS_DLOG (runtime debug.mavericks_log) */
 #include "MavericksHIDShell.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
@@ -418,9 +418,9 @@ void mavericks_amd_terminal_teardown(IOService *nub, mavericks_amd_terminal_ctx 
 void mavericks_amd_terminal_feed(mavericks_amd_terminal_ctx *ctx, const MavericksTouchFrame *frame, uint32_t timestamp) {
     AppleMultitouchDevice *amd = mavericks_amd_terminal_amd(ctx);
     if (!amd) return;
-    /* EDGE-CLAMP PROBE (debug.mt2_log>=2): per-frame decoded contact-0 x/y at the encode point. */
+    /* EDGE-CLAMP PROBE (debug.mavericks_log>=2): per-frame decoded contact-0 x/y at the encode point. */
     if (frame->contact_count > 0)
-        MT2_DLOG(2, "feed x=%d y=%d -> amd %p", frame->transducers[0].currentCoordinates.x,
+        MAVERICKS_DLOG(2, "feed x=%d y=%d -> amd %p", frame->transducers[0].currentCoordinates.x,
                  frame->transducers[0].currentCoordinates.y, (void *)amd);
     unsigned char mt1[512];  /* 512 >= 256: safe for any realistic contact count */
     int n = mavericks_amd_construct_report(frame, mt1, sizeof mt1, timestamp);
@@ -430,7 +430,7 @@ void mavericks_amd_terminal_feed(mavericks_amd_terminal_ctx *ctx, const Maverick
 void mavericks_amd_terminal_button(mavericks_amd_terminal_ctx *ctx, unsigned mask) {
     AppleMultitouchDevice *amd = mavericks_amd_terminal_amd(ctx);
     if (!amd) return;
-    MT2_DLOG(2, "post_button_edge mask=0x%x -> amd %p", mask, (void *)amd);
+    MAVERICKS_DLOG(2, "post_button_edge mask=0x%x -> amd %p", mask, (void *)amd);
     amd->handlePointerEventFromDevice(0, 0, mask, 0);
 }
 

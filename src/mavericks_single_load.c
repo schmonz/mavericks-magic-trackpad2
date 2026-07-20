@@ -1,4 +1,4 @@
-#include "mt2_single_load.h"
+#include "mavericks_single_load.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -22,7 +22,7 @@
  * changed, an old-named and a new-named payload loaded into the SAME process would not see each other's
  * claim and both would activate (double-swizzle during a cross-version overlap). The name is internal,
  * so a rename gains nothing — leave it as-is. */
-int mt2_claim_single_load(void) {
+int mavericks_claim_single_load(void) {
     char me[16];
     snprintf(me, sizeof me, "%d", (int)getpid());
     const char *v = getenv(MT2_SINGLE_LOAD_ENV);

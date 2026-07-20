@@ -1,5 +1,5 @@
-#ifndef GENUINE_HOST_H
-#define GENUINE_HOST_H
+#ifndef MAVERICKS_GENUINE_HOST_H
+#define MAVERICKS_GENUINE_HOST_H
 #include <stdbool.h>
 
 /*

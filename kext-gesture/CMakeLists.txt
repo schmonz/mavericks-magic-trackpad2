@@ -2,17 +2,17 @@
 # Mirrors kext-gesture/Makefile exactly (see OBJS there). Two compilations of the shared
 # src/*.c exist in this project: mt2core (userland, -std=c99) and HERE (kext, -x c++).
 
-# Kext-local C++ sources (incl. mt2_log + mt2_diag, which are kext-only).
+# Kext-local C++ sources (incl. mavericks_log + mavericks_diag, which are kext-only).
 set(KEXT_LOCAL_CPP
   MavericksVoodooInputHost.cpp MavericksVoodooInputHostUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
-  mt2_log.cpp mt2_diag.cpp mavericks_splice_kext.cpp
-  MavericksVoodooInput.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mt2_amd_probe.cpp)
+  mavericks_log.cpp mavericks_diag.cpp mavericks_splice_kext.cpp
+  MavericksVoodooInput.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mavericks_amd_probe.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
   mt2_bt_decode mavericks_amd_terminal_encode mt2_usb_decode mt2_decode mavericks_pipeline mavericks_lifecycle
-  mavericks_session mt2_geometry mt2_usb_bytes mavericks_connect_sm conn_trace
-  genuine_host mavericks_coordinator mt2_battery mavericks_splice mavericks_synth_report mavericks_synth_teardown)
+  mavericks_session mt2_geometry mt2_usb_bytes mavericks_connect_sm mavericks_conn_trace
+  mavericks_genuine_host mavericks_coordinator mt2_battery mavericks_splice mavericks_synth_report mavericks_synth_teardown)
 set(KEXT_SHARED_SRCS "")
 foreach(c ${KEXT_SHARED_NAMES})
   list(APPEND KEXT_SHARED_SRCS ${CMAKE_SOURCE_DIR}/src/${c}.c)
@@ -43,7 +43,7 @@ set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_
 # translator need the KERNEL branch of voodoo_wire.h (real kernel OSTypes, not the
 # host shim). All gate behavior on #if KERNEL.
 set_source_files_properties(
-  MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/conn_trace.c
+  MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_conn_trace.c
   MavericksVoodooInput.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 

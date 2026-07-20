@@ -31,9 +31,9 @@
 #include "mt2_bt_decode.h"
 #include "mt2_battery.h"    /* mt2_parse_battery_report — shared pure decode of report 0x90 */
 #include "mavericks_pipeline.h"   /* MT2_EVENT_DRIVEN */
-#include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
-#include "mt2_diag.h"          /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
-#include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
+#include "mavericks_log.h"           /* MAVERICKS_DLOG (runtime debug.mavericks_log) */
+#include "mavericks_diag.h"          /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
+#include "../src/mavericks_conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mavericks_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mavericks_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 #include "MavericksAMDTerminal.h"           /* mavericks_amd_terminal_amd — read the mux's terminal AMD node for battery */
@@ -78,8 +78,8 @@ static uint32_t bt_uptime_ms(void) {
 }
 
 /* Connect-flap measurement: each connection attempt gets an id (bumped on control-channel open); we
- * emit one canonical CONNTRACE line per transition through the SHARED conn_trace_format() (kernel emit
- * and `re/conn-trace` parsing can't drift). Gated at debug.mt2_log>=1. */
+ * emit one canonical CONNTRACE line per transition through the SHARED mavericks_conn_trace_format() (kernel emit
+ * and `re/conn-trace` parsing can't drift). Gated at debug.mavericks_log>=1. */
 static int gConnId = 0;
 /* The connId whose FIRST real multitouch frame we've seen (STEADY). Set by incomingData; read by
  * interposeTimerFired to gate the enable RETRY — re-enable ONLY while gSteadyConn != gConnId. This is
@@ -87,13 +87,13 @@ static int gConnId = 0;
 static volatile int gSteadyConn = -1;
 static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
                          const void *bnb, const void *deleg, int ret) {
-    if (gMT2LogLevel < 1) return;   /* skip formatting when diagnostics are off */
-    conn_trace_rec_t r;
+    if (gMavericksLogLevel < 1) return;   /* skip formatting when diagnostics are off */
+    mavericks_conn_trace_rec_t r;
     r.ts_ms = bt_uptime_ms(); r.conn_id = gConnId;
     r.state = st; r.event = ev;
     r.chan = chan; r.bnb = bnb; r.deleg = deleg; r.ret = ret;
     char buf[192];
-    if (conn_trace_format(buf, sizeof(buf), &r) > 0) MT2_DLOG(1, "%s", buf);
+    if (mavericks_conn_trace_format(buf, sizeof(buf), &r) > 0) MAVERICKS_DLOG(1, "%s", buf);
 }
 
 /* Battery bridge: publish the report-0x90 capacity on the fabricated AMD node.
@@ -110,7 +110,7 @@ static void mt2_publish_battery(IOService *node, uint8_t pct) {
     gLastBattPct = (int)pct; gLastBattBnb = node;
     OSNumber *n = OSNumber::withNumber((unsigned long long)pct, 32);
     if (n) { node->setProperty("BatteryPercent", n); n->release(); }
-    MT2_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
+    MAVERICKS_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
 }
 
 /* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), publish the capacity as
@@ -136,7 +136,7 @@ static void bt_control_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
     /* Log distinct ids seen on control (confirmed the battery 0x90 response arrives here, not on the
      * interrupt channel). Strip the 0xA1 transport byte for the id, matching the interrupt diag.
      * saw_id (not _raw): control-plane battery polls must NOT reset the touch stream's idle-gap clock. */
-    if (length > 0) mt2_diag_saw_id(MT2_DIAG_BT, (length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
+    if (length > 0) mavericks_diag_saw_id(MT2_DIAG_BT, (length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
     mt2_maybe_publish_battery(data, length);
     /* Forward to saved delegate (set if there was a prior delegate, e.g. from BNB; no-op if null). */
     if (gBtControlState.saved_cb) {
@@ -197,7 +197,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     /* A control channel coming up starts a new connection attempt — bump the id, mark CONTROL_UP, and
      * reset the shared diag so a reconnect re-observes report ids + re-arms the first-frame/gap markers. */
     if (psm == 0x11) {
-        gConnId++; mt2_diag_reset(MT2_DIAG_BT); bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0);
+        gConnId++; mavericks_diag_reset(MT2_DIAG_BT); bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0);
         /* Genuine handshake steps 1-2 (reference.md "BT connect handshake"): ACCEPT the control channel
          * (listenAt) then WAIT for it to reach OPEN, writing no HID byte first. This acceptance is the
          * wire action that provokes the device to open its device-initiated PSM 19 interrupt channel;
@@ -237,7 +237,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
     if (b[0] == 0xA1) { report = b + 1; rlen = length - 1; }   /* strip HID transport byte */
 
     /* Shared diag: distinct report id (once) + resume-after-gap. Mirrors bt_interpose_shim. */
-    if (rlen > 0) mt2_diag_raw(MT2_DIAG_BT, report[0]);
+    if (rlen > 0) mavericks_diag_raw(MT2_DIAG_BT, report[0]);
 
     MavericksTouchFrame tf;
     int drc = mt2_bt_decode(report, rlen, &tf);
@@ -255,8 +255,8 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
             bt_conntrace(CSM_STEADY, CSM_EV_FRAME, channel, 0, 0, 0); }
     }
 
-    /* Shared diag: per-frame edge coords (debug.mt2_log>=2). want_first=false: CSM_STEADY above. */
-    mt2_diag_frame(MT2_DIAG_BT, &tf, /*want_first=*/false);
+    /* Shared diag: per-frame edge coords (debug.mavericks_log>=2). want_first=false: CSM_STEADY above. */
+    mavericks_diag_frame(MT2_DIAG_BT, &tf, /*want_first=*/false);
 
     /* Cross the seam as a VoodooInput satellite: translate to a wire event and message the mux
      * (found lazily — it attaches async after registerService; pre-attach frames drop). The mux

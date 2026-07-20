@@ -1,5 +1,5 @@
-#ifndef VHID_MT1_H
-#define VHID_MT1_H
+#ifndef MAVERICKS_VHID_MT1_H
+#define MAVERICKS_VHID_MT1_H
 #include <stdint.h>
 #include <stddef.h>
 

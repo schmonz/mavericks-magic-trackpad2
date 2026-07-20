@@ -55,7 +55,7 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include "mavericks_presence.h"
 #include "mavericks_presence_observer.h"
-#include "mt2_single_load.h"
+#include "mavericks_single_load.h"
 #include "../mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
 #define LOG(...) syslog(LOG_NOTICE, "[MT2PaneRefresh] " __VA_ARGS__)
@@ -1564,7 +1564,7 @@ static void install_swizzle(void) {
 
 /* THE single activation choke point — the whole-payload owner decision, no per-swizzle granularity.
  * The FIRST payload image to reach here (the SIMBL plugin via [bundle load], or the osax via its
- * MT2InjectHandler) claims process-wide ownership via mt2_claim_single_load() and does EVERYTHING;
+ * MT2InjectHandler) claims process-wide ownership via mavericks_claim_single_load() and does EVERYTHING;
  * any other image that later reaches ANY entry point finds the claim taken and stays FULLY inert.
  * Idempotent within one image (gActivated). Because this is the only place activation lives and both
  * entry points funnel through it, a new swizzle/feature added here (or inside install_swizzle) is
@@ -1572,7 +1572,7 @@ static void install_swizzle(void) {
 static int gActivated = 0;
 static void mt2_activate(const char *via) {
     if (gActivated) return;                    /* already active in THIS image (idempotent) */
-    if (!mt2_claim_single_load()) {            /* another image already owns this process */
+    if (!mavericks_claim_single_load()) {            /* another image already owns this process */
         LOG("payload: lost the single-load claim (via %s) — staying inert", via);
         return;
     }
