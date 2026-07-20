@@ -1,8 +1,7 @@
 /*
  * mavericks_prefpane_refresh — the payload injected into System Preferences that makes the
  * Trackpad + Bluetooth panes behave correctly for the Magic Trackpad 2 on 10.9. ONE
- * payload, loaded by whichever route wins the single-load claim (the standalone .osax
- * via MT2InjectHandler, or the SIMBL plugin via its [bundle load] constructor).
+ * payload, shipped as a SIMBL plugin and loaded via its [bundle load] constructor.
  *
  * What it does, by concern — each is one numbered section below:
  *    1. Generic helpers          objc dispatch shims, front window, view-type probe
@@ -34,8 +33,7 @@
  *
  * Build: clang -bundle -mmacosx-version-min=10.9 \
  *        -framework IOKit -framework CoreFoundation -lobjc
- * Loaded via the OSAXHandlers entry in Info.plist (event 'MT2x'/'load' -> MT2InjectHandler),
- * sent by tools/voodooinputmavericks_prefpane/voodooinputmavericks_pane_arm at System Preferences launch.
+ * Shipped as a SIMBL plugin (SIMBL-Info.plist); SIMBLAgent injects it into System Preferences at launch.
  */
 
 #include <string.h>
@@ -1563,12 +1561,10 @@ static void install_swizzle(void) {
 }
 
 /* THE single activation choke point — the whole-payload owner decision, no per-swizzle granularity.
- * The FIRST payload image to reach here (the SIMBL plugin via [bundle load], or the osax via its
- * MT2InjectHandler) claims process-wide ownership via mavericks_claim_single_load() and does EVERYTHING;
- * any other image that later reaches ANY entry point finds the claim taken and stays FULLY inert.
- * Idempotent within one image (gActivated). Because this is the only place activation lives and both
- * entry points funnel through it, a new swizzle/feature added here (or inside install_swizzle) is
- * automatically owned by exactly one image — nothing to remember to guard. */
+ * The payload loads once, as a SIMBL plugin, via its [bundle load] constructor, which reaches here and
+ * claims process-wide ownership via mavericks_claim_single_load(). The single-load guard is kept as cheap
+ * insurance: if the bundle were ever injected twice into one process, the second image finds the claim
+ * taken and stays FULLY inert. Idempotent within one image (gActivated). */
 static int gActivated = 0;
 static void mavericks_activate(const char *via) {
     if (gActivated) return;                    /* already active in THIS image (idempotent) */
@@ -1592,22 +1588,6 @@ static void mavericks_activate(const char *via) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)delays[i] * NSEC_PER_MSEC),
                        dispatch_get_main_queue(), ^{ try_capture_current(); });
     }
-}
-
-/* OSAX entry point named in Info.plist (OSAXHandlers Events MT2xload Handler). Put a MARKER in the
- * reply so the watcher can tell OUR handler ran (osax actually loaded) from System Prefs' default
- * handler, which ALSO returns noErr when our handler isn't registered yet (the reinstall load race).
- * Without this the watcher declares a false-positive "injected" and stops before the osax loads. */
-#define MT2_INJECT_MARKER 0x4D543258   /* 'MT2X' */
-OSErr MT2InjectHandler(const AppleEvent *evt, AppleEvent *reply, long refcon) {
-    (void)evt; (void)refcon;
-    LOG("inject handler invoked");
-    mavericks_activate("inject-handler");   /* same choke point as the constructor; inert if we lost the claim */
-    if (reply && reply->descriptorType != typeNull) {
-        SInt32 marker = MT2_INJECT_MARKER;
-        AEPutParamPtr(reply, keyDirectObject, typeSInt32, &marker, sizeof(marker));
-    }
-    return noErr;
 }
 
 /* Runs the instant our image loads into the host process (SIMBL [bundle load]). */
