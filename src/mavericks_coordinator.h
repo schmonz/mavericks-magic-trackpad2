@@ -11,9 +11,9 @@
  * row in the phase-2 device table).
  */
 
-typedef enum { MT2_XPORT_BT = 0, MT2_XPORT_USB = 1 } mt2_transport_id_t;
+typedef enum { MAVERICKS_XPORT_BT = 0, MAVERICKS_XPORT_USB = 1 } mavericks_transport_id_t;
 
 /* True ⇒ proceed to drive the device on this transport. */
-bool mavericks_coordinator_activate(mt2_transport_id_t transport, unsigned long device_id);
+bool mavericks_coordinator_activate(mavericks_transport_id_t transport, unsigned long device_id);
 
 #endif

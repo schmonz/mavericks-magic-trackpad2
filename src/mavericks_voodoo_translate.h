@@ -10,7 +10,7 @@
  * Declared extern "C" so the (C++) kext + tests share a stable symbol.
  *
  * CONTRACT: a satellite must report pressure > 0 for an active contact — the shared engine's
- * mt2_drop_lifted gates presence on pressure, and isTransducerActive is NOT consulted here.
+ * mavericks_drop_lifted gates presence on pressure, and isTransducerActive is NOT consulted here.
  * A conformant-but-pressureless satellite would drop to no-contacts; synthesizing a pressure
  * floor from isTransducerActive is a sub-project-2 (terminal-consumer) decision, not done here. */
 #ifdef __cplusplus

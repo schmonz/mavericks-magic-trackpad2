@@ -16,7 +16,7 @@
 #include "mavericks_frame.h"
 #include <stdint.h>
 
-typedef enum { MT2_DIAG_BT = 0, MT2_DIAG_USB = 1, MT2_DIAG_NXPORT } mavericks_diag_xport_t;
+typedef enum { MAVERICKS_DIAG_BT = 0, MAVERICKS_DIAG_USB = 1, MAVERICKS_DIAG_NXPORT } mavericks_diag_xport_t;
 
 /* Fresh stream for this transport: re-observe report ids, re-arm the first-frame + gap markers. Call on
  * a new connection (BT CONTROL_UP) / re-enumeration (USB startGenuine). */

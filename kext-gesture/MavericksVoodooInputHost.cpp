@@ -55,9 +55,9 @@ void com_schmonz_MavericksVoodooInputHost::sink_arm_timer(void *ctx, uint32_t ms
 }
 
 /* A reader announces its transport: register its policy row + delivery sink, reset the session. */
-void com_schmonz_MavericksVoodooInputHost::connectionEstablished(IOService *source, mt2_transport_mode_t mode,
+void com_schmonz_MavericksVoodooInputHost::connectionEstablished(IOService *source, mavericks_transport_mode_t mode,
                                                    const mavericks_session_policy_t *policy,
-                                                   const mt2_transport_sink_t *sink) {
+                                                   const mavericks_transport_sink_t *sink) {
     if (fSessionLock) IOLockLock(fSessionLock);
     if (fIdleTimer) fIdleTimer->cancelTimeout();
     fXport = *sink;
@@ -140,10 +140,10 @@ bool com_schmonz_MavericksVoodooInputHost::start(IOService *provider) {
      * timer the session arms. The session owns all post-decode logic; this shell only
      * supplies the clock, the source token, and these effect callbacks. */
     fSession.active_source = 0;
-    fSession.mode = MT2_EVENT_DRIVEN;
+    fSession.mode = MAVERICKS_EVENT_DRIVEN;
     fSession.settle_until_ms = 0;
     fSession.last_button = 0;
-    fSession.policy = mt2_policy_default;   /* inert default — active_source==0 drops all frames until
+    fSession.policy = mavericks_policy_default;   /* inert default — active_source==0 drops all frames until
                                           a reader's connectionEstablished installs its real row;
                                           the default row keeps the struct initialized. */
     mavericks_lifecycle_reset(&fSession.lifecycle);

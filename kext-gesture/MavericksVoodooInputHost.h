@@ -25,13 +25,13 @@ typedef struct {
     void (*post_button_edge)(void *ctx, unsigned mask);
     IOReturn (*inject_encoded)(void *ctx, const unsigned char *bytes, unsigned int len);
     void *ctx;
-} mt2_transport_sink_t;
+} mavericks_transport_sink_t;
 
 class com_schmonz_MavericksVoodooInputHost : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MavericksVoodooInputHost)
     mavericks_session_t fSession;               /* pure functional core: owns all post-decode logic */
     mavericks_session_sink_t fSink;             /* effects seam handed to the session: trampolines below */
-    mt2_transport_sink_t fXport;          /* the ACTIVE reader's delivery, registered at
+    mavericks_transport_sink_t fXport;          /* the ACTIVE reader's delivery, registered at
                                              connectionEstablished, cleared at connectionClosed */
     IOWorkLoop *fPipeWL;                  /* hosts the watchdog timer */
     IOTimerEventSource *fIdleTimer;       /* the silence-watchdog timer the session arms */
@@ -52,9 +52,9 @@ public:
      * delivery sink), then submits decoded MavericksTouchFrame frames; the session decides what
      * reaches the device via the registered sink. connectionClosed() deregisters: after it
      * returns, no sink callback of that reader's will run (clear-under-lock + lifecycle reset). */
-    void connectionEstablished(IOService *source, mt2_transport_mode_t mode,
+    void connectionEstablished(IOService *source, mavericks_transport_mode_t mode,
                                const mavericks_session_policy_t *policy,
-                               const mt2_transport_sink_t *sink);
+                               const mavericks_transport_sink_t *sink);
     void connectionClosed(IOService *source);
 
     /* Barrier for teardown paths that clear delivery targets OUTSIDE the engine (e.g. the BT

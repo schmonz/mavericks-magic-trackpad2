@@ -6,11 +6,11 @@
 
 static NSString * const kSysPrefsBundleID = @"com.apple.systempreferences";
 
-BOOL mt2_should_inject(NSString *bundleID) {
+BOOL mavericks_should_inject(NSString *bundleID) {
     return bundleID != nil && [bundleID isEqualToString:kSysPrefsBundleID];
 }
 
-#ifndef MT2_PANE_WATCH_TEST
+#ifndef MAVERICKS_PANE_WATCH_TEST
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <sys/sysctl.h>   // kinfo_proc — target-process credential probe (diagnostic)
@@ -116,14 +116,14 @@ int main(void) {
         [ws.notificationCenter addObserverForName:NSWorkspaceDidLaunchApplicationNotification
                                            object:nil queue:nil usingBlock:^(NSNotification *note) {
             NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
-            if (mt2_should_inject(app.bundleIdentifier)) inject(app.processIdentifier);
+            if (mavericks_should_inject(app.bundleIdentifier)) inject(app.processIdentifier);
         }];
         // Cover a System Preferences that's already running when the agent starts.
         for (NSRunningApplication *app in ws.runningApplications)
-            if (mt2_should_inject(app.bundleIdentifier)) inject(app.processIdentifier);
+            if (mavericks_should_inject(app.bundleIdentifier)) inject(app.processIdentifier);
         NSLog(@"[mt2panewatch] watching for System Preferences launches");
         [[NSRunLoop currentRunLoop] run];
     }
     return 0;
 }
-#endif /* MT2_PANE_WATCH_TEST */
+#endif /* MAVERICKS_PANE_WATCH_TEST */

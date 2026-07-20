@@ -54,10 +54,10 @@ static MavericksTouchFrame contact(int x, int pressure, int button) {
  *    post_button_edge fires ONLY on the two edges (down: 1-finger mask 0x1; up: mask 0x0), NEVER on the
  *    held frame, and emit() posts the click BEFORE the frame it belongs to. feed_frame fires every
  *    frame; the watchdog arms every frame the contact stays down. (Mask values read from
- *    mt2_button_edge in src/mavericks_pipeline.c: button-down 1 finger => 0x1, release => 0x0.) */
+ *    mavericks_button_edge in src/mavericks_pipeline.c: button-down 1 finger => 0x1, release => 0x0.) */
 static void s1_button_edge(void) {
     mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-    mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+    mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
 
     MavericksTouchFrame f0 = contact(50, 20, 0);  mavericks_session_frame(&s, USB, &f0, 5000, &k);
     MavericksTouchFrame f1 = contact(50, 20, 1);  mavericks_session_frame(&s, USB, &f1, 5005, &k);
@@ -69,40 +69,40 @@ static void s1_button_edge(void) {
     /* frame2 (held 1==1): FEED, ARM      -- no spurious post_button_edge */
     /* frame3 (edge 1->0): CLICK 0x0, FEED, ARM */
     CHECK_EQ(r.n, 10);
-    EXPECT_FEED (r,0,1); EXPECT_ARM(r,1,MT2_IDLE_MS);
-    EXPECT_CLICK(r,2,0x1u); EXPECT_FEED(r,3,1); EXPECT_ARM(r,4,MT2_IDLE_MS);
-    EXPECT_FEED (r,5,1); EXPECT_ARM(r,6,MT2_IDLE_MS);
-    EXPECT_CLICK(r,7,0x0u); EXPECT_FEED(r,8,1); EXPECT_ARM(r,9,MT2_IDLE_MS);
+    EXPECT_FEED (r,0,1); EXPECT_ARM(r,1,MAVERICKS_IDLE_MS);
+    EXPECT_CLICK(r,2,0x1u); EXPECT_FEED(r,3,1); EXPECT_ARM(r,4,MAVERICKS_IDLE_MS);
+    EXPECT_FEED (r,5,1); EXPECT_ARM(r,6,MAVERICKS_IDLE_MS);
+    EXPECT_CLICK(r,7,0x0u); EXPECT_FEED(r,8,1); EXPECT_ARM(r,9,MAVERICKS_IDLE_MS);
 }
 
-/* 2. Two-finger physical click -> the SECONDARY (right-click) mask. mt2_button_edge keys the
+/* 2. Two-finger physical click -> the SECONDARY (right-click) mask. mavericks_button_edge keys the
  *    mask on the contact count at the edge: 2 fingers down => 0x2 (vs 1 finger => 0x1). Pin that
  *    the click posts before the frame and carries 0x2. */
 static void s2_twofinger_secondary_mask(void) {
     mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-    mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+    mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
     MavericksTouchFrame f; memset(&f,0,sizeof f); f.contact_count=2;
     f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20;
     f.isPhysicalButtonDown=1;
     mavericks_session_frame(&s, USB, &f, 5000, &k);
     /* CLICK 0x2 (two-finger secondary), FEED(cc=2), ARM */
     CHECK_EQ(r.n, 3);
-    EXPECT_CLICK(r,0,0x2u); EXPECT_FEED(r,1,2); EXPECT_ARM(r,2,MT2_IDLE_MS);
+    EXPECT_CLICK(r,0,0x2u); EXPECT_FEED(r,1,2); EXPECT_ARM(r,2,MAVERICKS_IDLE_MS);
 }
 
-/* 3. Settle GATE. With MT2_SETTLE_MS=0 connect never opens a real window, so the gate branch in
+/* 3. Settle GATE. With MAVERICKS_SETTLE_MS=0 connect never opens a real window, so the gate branch in
  *    mavericks_session_frame is characterized directly by seeding settle_until_ms: a frame with
  *    now_ms < settle_until is fully dropped (no post_button_edge, no feed, no arm); a frame at/after it
  *    flows. This pins that the gate blocks EVERYTHING, not just the frame. */
 static void s3_settle_gate_blocks(void) {
     mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-    mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+    mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
     s.settle_until_ms = 1000;                       /* seed a non-zero gate window */
     MavericksTouchFrame f = contact(50, 20, 1);
     mavericks_session_frame(&s, USB, &f, 999, &k);        /* before settle: dropped whole */
     CHECK_EQ(r.n, 0);
     mavericks_session_frame(&s, USB, &f, 1000, &k);       /* at settle: flows (edge + feed + arm) */
-    EXPECT_CLICK(r,0,0x1u); EXPECT_FEED(r,1,1); EXPECT_ARM(r,2,MT2_IDLE_MS);
+    EXPECT_CLICK(r,0,0x1u); EXPECT_FEED(r,1,1); EXPECT_ARM(r,2,MAVERICKS_IDLE_MS);
     CHECK_EQ(r.n, 3);
 }
 
@@ -110,11 +110,11 @@ static void s3_settle_gate_blocks(void) {
  *    before the gate/lifecycle; the active source flows. */
 static void s4_single_source_guard(void) {
     mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-    mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+    mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
     MavericksTouchFrame f = contact(50, 20, 0);
     mavericks_session_frame(&s, BT,  &f, 5000, &k);  CHECK_EQ(r.n, 0);   /* foreign source: nothing */
     mavericks_session_frame(&s, USB, &f, 5000, &k);  CHECK_EQ(r.n, 2);   /* active source: FEED + ARM */
-    EXPECT_FEED(r,0,1); EXPECT_ARM(r,1,MT2_IDLE_MS);
+    EXPECT_FEED(r,0,1); EXPECT_ARM(r,1,MAVERICKS_IDLE_MS);
 }
 
 /* 5. Full-lift ABSENCE + PUMP. Contact down, then a frame where it lifts (pressure 0). drop_lifted
@@ -124,7 +124,7 @@ static void s4_single_source_guard(void) {
  *    lifted, prev_ids cleared). */
 static void s5_full_lift_absence_pump(void) {
     mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-    mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+    mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
     MavericksTouchFrame down = contact(70, 20, 0);
     mavericks_session_frame(&s, BT, &down, 5000, &k);      /* START + arm */
     r.n = 0;                                         /* isolate the lift */
@@ -136,20 +136,20 @@ static void s5_full_lift_absence_pump(void) {
     EXPECT_FEED(r,1,0);   /* pump: lets the recognizer flush the waiting tap-click */
 }
 
-/* 6. TIMER / silence WATCHDOG. While a contact is down the frame path arms MT2_IDLE_MS. If the
+/* 6. TIMER / silence WATCHDOG. While a contact is down the frame path arms MAVERICKS_IDLE_MS. If the
  *    stream then goes silent (no lift frame), mavericks_session_timer flushes the still-down contact as
  *    BreakTouch via emit_with_liftoff -> the same absence + pump pair. Pins that the frame armed
  *    the timer and the timer produced the lift. */
 static void s6_timer_watchdog_flush(void) {
     mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-    mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+    mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
     MavericksTouchFrame f; memset(&f,0,sizeof f);
     f.contact_count=1; f.transducers[0].id=2; f.transducers[0].currentCoordinates.pressure=20;
     f.transducers[0].currentCoordinates.x=88;
     mavericks_session_frame(&s, BT, &f, 5000, &k);
     /* down frame: FEED(cc=1) + ARM(IDLE) */
     CHECK_EQ(r.n, 2);
-    EXPECT_FEED(r,0,1); EXPECT_ARM(r,1,MT2_IDLE_MS);
+    EXPECT_FEED(r,0,1); EXPECT_ARM(r,1,MAVERICKS_IDLE_MS);
     r.n = 0;
     mavericks_session_timer(&s, &k);                       /* stream went silent */
     /* watchdog flush of the still-down contact -> absence + pump */

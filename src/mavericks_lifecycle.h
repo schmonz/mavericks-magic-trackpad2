@@ -6,7 +6,7 @@
 /* Contact-lifecycle marking across frames.
  *
  * The MT2 device gives us only "present" contacts per frame (mt2_decode +
- * mt2_drop_lifted), with no clean first-frame or lift signal. But the native
+ * mavericks_drop_lifted), with no clean first-frame or lift signal. But the native
  * gesture recognizer keys tap-to-click on the MTTouchState lifecycle
  * MakeTouch -> Touching -> BreakTouch (verified vs the 10.9.5 CompactV4 decode:
  * the per-touch state nibble IS the MTTouchState; 0x30/0x40/0x50). A contact
@@ -27,7 +27,7 @@ typedef struct {
  * Call on (re)connect. */
 void mavericks_lifecycle_reset(mavericks_lifecycle_t *lc);
 
-/* Advance by one frame of currently-present contacts (post mt2_drop_lifted),
+/* Advance by one frame of currently-present contacts (post mavericks_drop_lifted),
  * in place:
  *   - promote each TS_TOUCHING contact whose id was absent last frame to TS_START;
  *   - APPEND a TS_END contact (last-known position) for each id present last frame

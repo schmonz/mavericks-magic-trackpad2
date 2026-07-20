@@ -18,14 +18,14 @@ static void run_tests(void) {
     /* positional init in struct field order: post_button_edge, feed_frame, arm_timer, ctx */
     mavericks_session_sink_t sink = { rec_btn, rec_feed, rec_timer, &rec };
     mavericks_session_t s;
-    mavericks_session_connect(&s, 1, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+    mavericks_session_connect(&s, 1, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
 
     /* A VoodooInput satellite's first frame: one active contact, STANDARD fields only. */
     VoodooInputEvent w; memset(&w, 0, sizeof(w));
     w.contact_count = 1;
     w.transducers[0].secondaryId = 3;
     /* isTransducerActive is set for realism but the translator does NOT consult it today:
-     * contact activity is inferred from pressure > 0 (mt2_drop_lifted). See translator note. */
+     * contact activity is inferred from pressure > 0 (mavericks_drop_lifted). See translator note. */
     w.transducers[0].isTransducerActive = true;
     w.transducers[0].currentCoordinates.x = 500;
     w.transducers[0].currentCoordinates.y = 500;

@@ -21,34 +21,34 @@ typedef struct {
    known test (see the engine-unification design spec). Nothing speculative: one field
    per delta the seam map found, no more. */
 typedef enum {
-    MT2_LIFTOFF_ABSENCE_PAIR = 0,  /* full lift -> two zero-contact frames (BT-proven shape) */
-    MT2_LIFTOFF_PASSTHROUGH  = 1,  /* full lift -> the BreakTouch frame as-is */
-} mt2_liftoff_shape_t;
+    MAVERICKS_LIFTOFF_ABSENCE_PAIR = 0,  /* full lift -> two zero-contact frames (BT-proven shape) */
+    MAVERICKS_LIFTOFF_PASSTHROUGH  = 1,  /* full lift -> the BreakTouch frame as-is */
+} mavericks_liftoff_shape_t;
 
 typedef struct {
-    mt2_liftoff_shape_t liftoff_shape;
+    mavericks_liftoff_shape_t liftoff_shape;
     uint8_t emit_empty_frames;   /* 1: zero-contact frames reach the sink; 0: dropped */
-    uint8_t arm_watchdog;        /* 1: arm the MT2_IDLE_MS silence flush while contacts are down */
+    uint8_t arm_watchdog;        /* 1: arm the MAVERICKS_IDLE_MS silence flush while contacts are down */
 } mavericks_session_policy_t;
 
 /* The shipped row (defined in mavericks_session.c so host tests drive the exact row the
-   kext registers). mt2_policy_default = the single MT2 conditioning policy — both
+   kext registers). mavericks_policy_default = the single MT2 conditioning policy — both
    transports converged to it (ABSENCE_PAIR liftoff, no empty-frame forwarding, silence
    watchdog); a future device would supply its own row. */
-extern const mavericks_session_policy_t mt2_policy_default;
+extern const mavericks_session_policy_t mavericks_policy_default;
 
 typedef struct {
     uintptr_t active_source;
-    mt2_transport_mode_t mode;
+    mavericks_transport_mode_t mode;
     uint32_t settle_until_ms;
     unsigned last_button;
     mavericks_session_policy_t policy;
     mavericks_lifecycle_t lifecycle;   /* MakeTouch/BreakTouch lifecycle synthesis */
 } mavericks_session_t;
 
-/* policy must be non-NULL — pass a shipped row (mt2_policy_default). */
+/* policy must be non-NULL — pass a shipped row (mavericks_policy_default). */
 void mavericks_session_connect(mavericks_session_t *s, uintptr_t source,
-                         mt2_transport_mode_t mode,
+                         mavericks_transport_mode_t mode,
                          const mavericks_session_policy_t *policy, uint32_t now_ms);
 void mavericks_session_frame(mavericks_session_t *s, uintptr_t source,
                        const MavericksTouchFrame *tf, uint32_t now_ms,

@@ -90,7 +90,7 @@ int main(int argc, char **argv) {
     sink.arm_timer = sink_arm; sink.ctx = 0;
 
     uint32_t now = elapsed_ms();
-    mavericks_session_connect(&s, (uintptr_t)SRC, MT2_EVENT_DRIVEN, &mt2_policy_bt, now);
+    mavericks_session_connect(&s, (uintptr_t)SRC, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_bt, now);
     printf("synth_tap: %d down-frames @ %dms at MT2(%d,%d)\n", downframes, frame_ms, x, y);
 
     /* SYNTH_TAPS=N: repeat N taps in ONE open connection (default 1). The recognizer queues a

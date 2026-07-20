@@ -20,34 +20,34 @@ static MavericksTouchFrame one(int x){ MavericksTouchFrame f; memset(&f,0,sizeof
     f.contact_count=1; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=x; return f; }
 
 static void run_tests(void) {
-    /* settle gate calibrated to 0 (MT2_SETTLE_MS): cold-boot measurement on both
+    /* settle gate calibrated to 0 (MAVERICKS_SETTLE_MS): cold-boot measurement on both
        transports showed NO post-connect burst reaching the pipeline (interrupt/event
        endpoints deliver only on touch), so frames flow immediately from connect with
-       no startup delay. The gate mechanism is retained (mt2_settle_passed, covered in
+       no startup delay. The gate mechanism is retained (mavericks_settle_passed, covered in
        test_pipeline) as a zero-cost seam should a future device ever need it. */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 1000);
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 1000);
       MavericksTouchFrame f=one(50);
       mavericks_session_frame(&s, BT, &f, 1000, &k); CHECK_EQ(r.n_feed, 1);   /* flows at connect, no gate */
       mavericks_session_frame(&s, BT, &f, 1500, &k); CHECK_EQ(r.n_feed, 2); } /* keeps flowing */
 
     /* single-active guard: non-active source ignored */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
       MavericksTouchFrame f=one(50);
       mavericks_session_frame(&s, BT,  &f, 9999, &k); CHECK_EQ(r.n_feed, 0);
       mavericks_session_frame(&s, USB, &f, 9999, &k); CHECK_EQ(r.n_feed, 1); }
 
     /* A lone lift frame with no contact ever down produces nothing (no phantom feed). */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
       MavericksTouchFrame lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
       mavericks_session_frame(&s, USB, &lift, 5000, &k);
       CHECK_EQ(r.n_feed, 0); CHECK_EQ(r.n_arm, 0); }
 
     /* click: two-finger press -> secondary then feed (post-settle) */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
       MavericksTouchFrame f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20; f.isPhysicalButtonDown=1;
       mavericks_session_frame(&s, USB, &f, 5000, &k);
@@ -55,12 +55,12 @@ static void run_tests(void) {
 
     /* EVENT_DRIVEN real contact: lift-drop applied, feed, arm IDLE */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
       MavericksTouchFrame f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=70; f.transducers[1].currentCoordinates.pressure=0;   /* one lifted */
       mavericks_session_frame(&s, BT, &f, 5000, &k);
       CHECK_EQ(r.n_feed, 1); CHECK_EQ(r.last_feed.contact_count, 1);
-      CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS); }
+      CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MAVERICKS_IDLE_MS); }
 
     /* EVENT_DRIVEN clean (full) lift: emit TWO absence frames (contact_count=0) -- NOT a separate
        BreakTouch frame then an absence (emitting a BreakTouch frame made the native recognizer
@@ -75,7 +75,7 @@ static void run_tests(void) {
        0). Two ABSENCE frames do NOT double handleChordLiftoff (only the first absence is a lift
        transition; the 2nd is "still no contact"). Arms NO watchdog (cleanly lifted). */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
       MavericksTouchFrame real=one(70); mavericks_session_frame(&s, BT, &real, 5000, &k);
       rec_t r2={0}; k=mk(&r2);
       MavericksTouchFrame lift; memset(&lift,0,sizeof lift); lift.contact_count=1; lift.transducers[0].currentCoordinates.pressure=0;
@@ -91,20 +91,20 @@ static void run_tests(void) {
     /* source switch: a late frame from the OLD source is dropped after reconnect to a new one
        (the real regression the single-active guard defends — the transport-handoff window) */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
-      mavericks_session_connect(&s, BT,  MT2_EVENT_DRIVEN, &mt2_policy_default, 0);   /* handoff: BT is now active */
+      mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
+      mavericks_session_connect(&s, BT,  MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);   /* handoff: BT is now active */
       MavericksTouchFrame f=one(50);
       mavericks_session_frame(&s, USB, &f, 5000, &k); CHECK_EQ(r.n_feed, 0);   /* stale USB frame dropped */
       mavericks_session_frame(&s, BT,  &f, 5000, &k); CHECK_EQ(r.n_feed, 1); } /* BT flows */
 
-    /* reconnect re-arms the settle window, but with MT2_SETTLE_MS=0 the window is empty,
+    /* reconnect re-arms the settle window, but with MAVERICKS_SETTLE_MS=0 the window is empty,
        so there is no re-gate: frames flow immediately after a reconnect too. The boot
        flap-storm guard is unneeded — cold-boot measurement found no post-connect burst. */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
       MavericksTouchFrame f=one(50);
       mavericks_session_frame(&s, BT, &f, 5000, &k); CHECK_EQ(r.n_feed, 1);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 10000);             /* reconnect */
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 10000);             /* reconnect */
       rec_t r2={0}; k=mk(&r2);
       mavericks_session_frame(&s, BT, &f, 10000, &k); CHECK_EQ(r2.n_feed, 1);  /* flows at reconnect, no re-gate */
       mavericks_session_frame(&s, BT, &f, 10500, &k); CHECK_EQ(r2.n_feed, 2); }/* keeps flowing */
@@ -112,7 +112,7 @@ static void run_tests(void) {
     /* lifecycle: a new contact's FIRST emitted frame is TS_START (MakeTouch),
        subsequent frames are TS_TOUCHING -- the transition tap-to-click needs. */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
       MavericksTouchFrame f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=3; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].state=TS_TOUCHING;
       mavericks_session_frame(&s, BT, &f, 5000, &k);
@@ -122,7 +122,7 @@ static void run_tests(void) {
 
     /* lifecycle (STREAMING/USB too): first frame of a contact -> TS_START */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, USB, MT2_STREAMING, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, USB, MAVERICKS_STREAMING, &mavericks_policy_default, 0);
       MavericksTouchFrame f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=7; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].state=TS_TOUCHING;
       mavericks_session_frame(&s, USB, &f, 5000, &k);
@@ -134,12 +134,12 @@ static void run_tests(void) {
        frame arrives), the armed timer flushes the lift. A full lift emits ONE absence frame
        (the flushed contacts are all BreakTouch -> emit absence only, not BreakTouch+absence). */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
       MavericksTouchFrame f; memset(&f,0,sizeof f);
       f.contact_count=1; f.transducers[0].id=2; f.transducers[0].currentCoordinates.pressure=20; f.transducers[0].currentCoordinates.x=88; f.transducers[0].state=TS_TOUCHING;
       mavericks_session_frame(&s, BT, &f, 5000, &k);             /* contact down -> START + arm watchdog */
       CHECK_EQ(r.last_feed.transducers[0].state, TS_START);
-      CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MT2_IDLE_MS);
+      CHECK_EQ(r.n_arm, 1); CHECK_EQ(r.last_arm, MAVERICKS_IDLE_MS);
       rec_t t={0}; k=mk(&t); mavericks_session_timer(&s,&k);     /* stream went silent */
       CHECK_EQ(t.n_feed, 2);                               /* full lift: absence + pump absence */
       CHECK_EQ(t.feeds[0].contact_count, 0);                    /* 1st absence finalizes the lift */
@@ -147,14 +147,14 @@ static void run_tests(void) {
 
     /* EVENT_DRIVEN two-finger physical click: secondary mask survives lift-drop */
     { mavericks_session_t s; memset(&s,0,sizeof s); rec_t r={0}; mavericks_session_sink_t k=mk(&r);
-      mavericks_session_connect(&s, BT, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+      mavericks_session_connect(&s, BT, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, 0);
       MavericksTouchFrame f; memset(&f,0,sizeof f); f.contact_count=2;
       f.transducers[0].currentCoordinates.pressure=20; f.transducers[1].currentCoordinates.pressure=20; f.isPhysicalButtonDown=1;
       mavericks_session_frame(&s, BT, &f, 5000, &k);
       CHECK_EQ(r.n_click, 1); CHECK_EQ(r.last_mask, 0x2u); CHECK_EQ(r.n_feed, 1); }
 
     /* The convergence flips (2026-07) collapsed the two transport rows into one shared
-       mt2_policy_default, so the three USB-row difference cases that pinned the old divergence
+       mavericks_policy_default, so the three USB-row difference cases that pinned the old divergence
        (PASSTHROUGH liftoff / empties emitted / no watchdog) were retired. The cases above
        already cover the unified behavior. */
 }

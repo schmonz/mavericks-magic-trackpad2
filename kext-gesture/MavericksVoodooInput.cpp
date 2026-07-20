@@ -66,7 +66,7 @@ bool com_schmonz_MavericksVoodooInput::start(IOService *provider) {
     fWL = IOWorkLoop::workLoop();
     fIdle = fWL ? IOTimerEventSource::timerEventSource(this, &idleTick) : 0;
     if (fIdle) fWL->addEventSource(fIdle);
-    mavericks_session_connect(&fSession, (uintptr_t)this, MT2_EVENT_DRIVEN, &mt2_policy_default, (uint32_t)uptime_ms());
+    mavericks_session_connect(&fSession, (uintptr_t)this, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, (uint32_t)uptime_ms());
 
     setProperty(VOODOO_INPUT_IDENTIFIER, kOSBooleanTrue);  // satellites locate us by this
     registerService();

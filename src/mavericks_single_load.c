@@ -25,10 +25,10 @@
 int mavericks_claim_single_load(void) {
     char me[16];
     snprintf(me, sizeof me, "%d", (int)getpid());
-    const char *v = getenv(MT2_SINGLE_LOAD_ENV);
+    const char *v = getenv(MAVERICKS_SINGLE_LOAD_ENV);
     if (v && strcmp(v, me) == 0) return 0;   /* another image in THIS process already claimed */
     /* Fail CLOSED: if we cannot record the claim (setenv OOM), do NOT claim — zero active payloads
      * is safer than two. */
-    if (setenv(MT2_SINGLE_LOAD_ENV, me, 1) != 0) return 0;
+    if (setenv(MAVERICKS_SINGLE_LOAD_ENV, me, 1) != 0) return 0;
     return 1;
 }

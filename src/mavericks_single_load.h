@@ -12,7 +12,7 @@
 /* The process-global marker env var. Exposed here (not just in the .c) so tests and any teardown
  * can reference the name without duplicating the string literal. Keep this name STABLE across
  * versions/renames (see the .c for why). */
-#define MT2_SINGLE_LOAD_ENV "MT2_PAYLOAD_ACTIVE"
+#define MAVERICKS_SINGLE_LOAD_ENV "MT2_PAYLOAD_ACTIVE"
 
 int mavericks_claim_single_load(void);
 

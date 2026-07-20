@@ -11,7 +11,7 @@ void mavericks_lifecycle_step(mavericks_lifecycle_t *lc, MavericksTouchFrame *fr
     /* Pass 1: state by PRESENCE, not by the device's per-frame state bits. The MT2
      * device reports a transition state on touchdown that mt2_decode mislabels TS_END;
      * surfacing that as a lift means the recognizer never sees MakeTouch and never
-     * commits a tap. A contact that is present here (it survived mt2_drop_lifted, which
+     * commits a tap. A contact that is present here (it survived mavericks_drop_lifted, which
      * keys on size) is touching: its first frame for an id is TS_START (MakeTouch),
      * later frames are TS_TOUCHING. Only a VANISHED contact (pass 2) is a real lift. */
     for (int i = 0; i < (int)frame->contact_count; i++) {

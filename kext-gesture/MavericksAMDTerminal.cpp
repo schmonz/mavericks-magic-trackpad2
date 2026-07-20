@@ -29,7 +29,7 @@
 extern "C" {
 #include "mavericks_synth_report.h"
 }
-/* mavericks_stack.h: MT2_PROP_EXTRACT_BUTTON — must precede start() */
+/* mavericks_stack.h: MAVERICKS_PROP_EXTRACT_BUTTON — must precede start() */
 #include "../src/mavericks_stack.h"
 
 /* ---- per-build context (replaces module-static g_regs / g_shell) ----------------------------- */
@@ -210,7 +210,7 @@ mavericks_amd_terminal_ctx *mavericks_amd_terminal_build(IOService *nub, maveric
      * press/release edges — not only when a later motion frame ORs it in. Without it quick
      * stationary taps (no motion between press and release) are dropped (RE'd live). Must be
      * present before start() runs its gate check, hence set alongside IsFake. */
-    dev->setProperty(MT2_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
+    dev->setProperty(MAVERICKS_PROP_EXTRACT_BUTTON, kOSBooleanTrue);
 
     /* 5. Install handler stubs before start(), with ctx as target so each stub operates on
      *    the per-build register table (enables N independent AMDs to coexist). */

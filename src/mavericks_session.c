@@ -21,15 +21,15 @@
  * =========================================================================== */
 
 /* The single MT2 conditioning policy — both transports converged to it. */
-const mavericks_session_policy_t mt2_policy_default = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
+const mavericks_session_policy_t mavericks_policy_default = { MAVERICKS_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
 
 void mavericks_session_connect(mavericks_session_t *s, uintptr_t source,
-                         mt2_transport_mode_t mode,
+                         mavericks_transport_mode_t mode,
                          const mavericks_session_policy_t *policy, uint32_t now_ms) {
     s->active_source = source;
     s->mode = mode;
     s->policy = *policy;
-    s->settle_until_ms = now_ms + MT2_SETTLE_MS;
+    s->settle_until_ms = now_ms + MAVERICKS_SETTLE_MS;
     s->last_button = 0;
     mavericks_lifecycle_reset(&s->lifecycle);      /* next contacts read as new; none pending an end */
 }
@@ -41,7 +41,7 @@ void mavericks_session_connect(mavericks_session_t *s, uintptr_t source,
 static void emit(mavericks_session_t *s, const MavericksTouchFrame *tf,
                  const mavericks_session_sink_t *sink) {
     unsigned mask = 0;
-    if (mt2_button_edge((unsigned)tf->isPhysicalButtonDown, tf->contact_count, &s->last_button, &mask))
+    if (mavericks_button_edge((unsigned)tf->isPhysicalButtonDown, tf->contact_count, &s->last_button, &mask))
         sink->post_button_edge(sink->ctx, mask);
     sink->feed_frame(sink->ctx, tf);
 }
@@ -99,7 +99,7 @@ void mavericks_session_frame(mavericks_session_t *s, uintptr_t source,
                        const MavericksTouchFrame *tf, uint32_t now_ms,
                        const mavericks_session_sink_t *sink) {
     if (source != s->active_source) return;                       /* single-active guard */
-    if (!mt2_settle_passed(now_ms, s->settle_until_ms)) return;   /* settle gate */
+    if (!mavericks_settle_passed(now_ms, s->settle_until_ms)) return;   /* settle gate */
 
     /* Unified lifecycle path (both transports): reduce to the real (present) contacts,
        then synthesize the MakeTouch/BreakTouch transitions the gesture recognizer needs
@@ -107,10 +107,10 @@ void mavericks_session_frame(mavericks_session_t *s, uintptr_t source,
        last-known position -- the native clean-lift signal that also prevents fling, so no
        held-replay deceleration is needed. */
     MavericksTouchFrame f = *tf;
-    mt2_drop_lifted(&f);                          /* keep only real (size>0) contacts */
+    mavericks_drop_lifted(&f);                          /* keep only real (size>0) contacts */
     mavericks_lifecycle_step(&s->lifecycle, &f);        /* +START for new, +BreakTouch for vanished */
     if (f.contact_count > 0) {
-        if (s->policy.liftoff_shape == MT2_LIFTOFF_ABSENCE_PAIR)
+        if (s->policy.liftoff_shape == MAVERICKS_LIFTOFF_ABSENCE_PAIR)
             emit_with_liftoff(s, &f, sink);
         else
             emit(s, &f, sink);              /* PASSTHROUGH: the BreakTouch frame as-is */
@@ -122,7 +122,7 @@ void mavericks_session_frame(mavericks_session_t *s, uintptr_t source,
        lift frame, the timer flushes the outstanding BreakTouch so the lift still registers.
        (Policy-gated: the USB row runs without it today — its absence pump covers the gap.) */
     if (s->policy.arm_watchdog && s->lifecycle.prev_ids)
-        sink->arm_timer(sink->ctx, MT2_IDLE_MS);
+        sink->arm_timer(sink->ctx, MAVERICKS_IDLE_MS);
 }
 
 void mavericks_session_timer(mavericks_session_t *s, const mavericks_session_sink_t *sink) {

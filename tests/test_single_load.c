@@ -9,7 +9,7 @@
  * silently re-enables double injection (double icon swizzle / duplicated pane controls). */
 static void run_tests(void) {
     /* Deterministic start: clear the marker regardless of the caller's inherited environment. */
-    unsetenv(MT2_SINGLE_LOAD_ENV);
+    unsetenv(MAVERICKS_SINGLE_LOAD_ENV);
 
     /* First loader wins. */
     CHECK_EQ(mavericks_claim_single_load(), 1);
@@ -19,7 +19,7 @@ static void run_tests(void) {
     CHECK_EQ(mavericks_claim_single_load(), 0);
 
     /* Simulate a fresh process by clearing the marker: the next loader can then claim again. */
-    unsetenv(MT2_SINGLE_LOAD_ENV);
+    unsetenv(MAVERICKS_SINGLE_LOAD_ENV);
     CHECK_EQ(mavericks_claim_single_load(), 1);
 
     /* Regression (2026-07-06): an INHERITED marker carries a FOREIGN pid (a child's pid != its
@@ -27,7 +27,7 @@ static void run_tests(void) {
      * claim — presence-only made whole fresh System Preferences instances stay inert (the About tab
      * vanished across reopens). Seed a foreign marker; the next claim must still WIN, and only then do
      * same-process copies bail. */
-    setenv(MT2_SINGLE_LOAD_ENV, "1", 1);          /* foreign/stale marker (also the old presence value) */
+    setenv(MAVERICKS_SINGLE_LOAD_ENV, "1", 1);          /* foreign/stale marker (also the old presence value) */
     CHECK_EQ(mavericks_claim_single_load(), 1);         /* ignore the foreign marker, claim fresh */
     CHECK_EQ(mavericks_claim_single_load(), 0);         /* now keyed to our pid -> siblings bail */
 }

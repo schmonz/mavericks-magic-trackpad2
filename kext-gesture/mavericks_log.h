@@ -13,8 +13,8 @@
 extern int gMavericksLogLevel;
 
 /* debug.mt2_batt: force the published battery % for prefpane UI testing (-1=off, 0-100=force).
- * See mavericks_log.cpp; consumed by MT2BTReader's mt2_publish_battery. */
-extern int gMT2BattOverride;
+ * See mavericks_log.cpp; consumed by MT2BTReader's mavericks_publish_battery. */
+extern int gMavericksBattOverride;
 
 
 #define MAVERICKS_DLOG(lvl, fmt, ...) \

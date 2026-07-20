@@ -24,13 +24,13 @@
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
 #include "MavericksVoodooInputHost.h"
-#include "amd_shim.h"          /* AppleMultitouchDevice (used by mt2_maybe_publish_battery) */
+#include "amd_shim.h"          /* AppleMultitouchDevice (used by mavericks_maybe_publish_battery) */
 
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
  * with C++ linkage on both sides — no extern "C". */
 #include "mt2_bt_decode.h"
 #include "mt2_battery.h"    /* mt2_parse_battery_report — shared pure decode of report 0x90 */
-#include "mavericks_pipeline.h"   /* MT2_EVENT_DRIVEN */
+#include "mavericks_pipeline.h"   /* MAVERICKS_EVENT_DRIVEN */
 #include "mavericks_log.h"           /* MAVERICKS_DLOG (runtime debug.mavericks_log) */
 #include "mavericks_diag.h"          /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "../src/mavericks_conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
@@ -49,13 +49,13 @@
 /* Battery poll cadence (ms). The MT2 only answers a GET_REPORT(0x90) — it never streams battery —
  * so the control reader polls on this interval once the connection is settled. A battery moves
  * slowly; 30 s keeps the prefpane number fresh without churning the control channel. */
-#define MT2_BATTERY_POLL_MS  30000
+#define MAVERICKS_BATTERY_POLL_MS  30000
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 
 /* Field offsets: canonical values + re/ commands live in ../src/mavericks_stack.h. These are readable
  * local aliases so the numbers exist in exactly one place (no doc/build drift). */
-#define L2CAP_DELEGATE_CB_OFF       MT2_OFF_L2CAP_DELEGATE_CB     /* L2CAP delegate cb (+8 = target)*/
+#define L2CAP_DELEGATE_CB_OFF       MAVERICKS_OFF_L2CAP_DELEGATE_CB     /* L2CAP delegate cb (+8 = target)*/
 
 /* The bound VoodooInput mux (set by the interrupt reader once it locates its attached mux).
  * The mux owns the terminal fabricated AMD now; the control reader's battery poll publishes
@@ -101,10 +101,10 @@ static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
  * (gGenuineBnb is gone — Task 3 wires the fabricated node instead). */
 static int        gLastBattPct = -1;
 static IOService *gLastBattBnb = 0;
-static void mt2_publish_battery(IOService *node, uint8_t pct) {
+static void mavericks_publish_battery(IOService *node, uint8_t pct) {
     /* debug.mt2_batt override: force a value for prefpane UI testing (e.g. 0 to exercise the pane's
      * low-battery / Change-Batteries painting). -1 = off (use the real device value). */
-    if (gMT2BattOverride >= 0 && gMT2BattOverride <= 100) pct = (uint8_t)gMT2BattOverride;
+    if (gMavericksBattOverride >= 0 && gMavericksBattOverride <= 100) pct = (uint8_t)gMavericksBattOverride;
     if (pct > 100) return;                     /* capacity is 0-100; ignore out-of-range */
     if (node == gLastBattBnb && (int)pct == gLastBattPct) return;   /* same node + same value */
     gLastBattPct = (int)pct; gLastBattBnb = node;
@@ -118,11 +118,11 @@ static void mt2_publish_battery(IOService *node, uint8_t pct) {
  * mavericks_amd_terminal_amd() returns NULL until the AMD is built + ready and again once teardown starts, so
  * this self-fences; gBtMux is NULL until the interrupt reader locates the mux. The pure parse is
  * host-tested (tests/test_battery.c). No-op when the packet isn't 0x90 or no terminal AMD is up. */
-static void mt2_maybe_publish_battery(const void *data, size_t len) {
+static void mavericks_maybe_publish_battery(const void *data, size_t len) {
     uint8_t pct;
     if (!mt2_parse_battery_report((const uint8_t *)data, len, &pct)) return;
     AppleMultitouchDevice *amd = gBtMux ? mavericks_amd_terminal_amd(gBtMux->synthCtx()) : 0;
-    if (amd) mt2_publish_battery((IOService *)amd, pct);
+    if (amd) mavericks_publish_battery((IOService *)amd, pct);
 }
 
 /* CONTROL-channel (PSM 17) delegate shim. Unlike the interrupt shim (which consumes touch frames),
@@ -136,8 +136,8 @@ static void bt_control_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
     /* Log distinct ids seen on control (confirmed the battery 0x90 response arrives here, not on the
      * interrupt channel). Strip the 0xA1 transport byte for the id, matching the interrupt diag.
      * saw_id (not _raw): control-plane battery polls must NOT reset the touch stream's idle-gap clock. */
-    if (length > 0) mavericks_diag_saw_id(MT2_DIAG_BT, (length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
-    mt2_maybe_publish_battery(data, length);
+    if (length > 0) mavericks_diag_saw_id(MAVERICKS_DIAG_BT, (length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
+    mavericks_maybe_publish_battery(data, length);
     /* Forward to saved delegate (set if there was a prior delegate, e.g. from BNB; no-op if null). */
     if (gBtControlState.saved_cb) {
         typedef void (*bt_l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
@@ -175,7 +175,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         /* Become a VoodooInput satellite. Advertise support + our coordinate span, then
          * registerService so the mux (com_schmonz_MavericksVoodooInput) matches us as its provider and
          * attaches as our client. incomingData emits VoodooInputEvent to that mux; the mux owns
-         * the terminal AMD + conditioning (identical MT2_EVENT_DRIVEN/mt2_policy_default). */
+         * the terminal AMD + conditioning (identical MAVERICKS_EVENT_DRIVEN/mavericks_policy_default). */
         self->setProperty("VoodooInputSupported", kOSBooleanTrue);
         self->setProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
         self->setProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
@@ -197,7 +197,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
     /* A control channel coming up starts a new connection attempt — bump the id, mark CONTROL_UP, and
      * reset the shared diag so a reconnect re-observes report ids + re-arms the first-frame/gap markers. */
     if (psm == 0x11) {
-        gConnId++; mavericks_diag_reset(MT2_DIAG_BT); bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0);
+        gConnId++; mavericks_diag_reset(MAVERICKS_DIAG_BT); bt_conntrace(CSM_CONTROL_UP, CSM_EV_CONTROL_OPEN, self->fChannel, 0, 0, 0);
         /* Genuine handshake steps 1-2 (reference.md "BT connect handshake"): ACCEPT the control channel
          * (listenAt) then WAIT for it to reach OPEN, writing no HID byte first. This acceptance is the
          * wire action that provokes the device to open its device-initiated PSM 19 interrupt channel;
@@ -213,7 +213,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
          * no-op for streaming. HYPOTHESIS (open-questions.md Layer A): completing the full HID setup is
          * what leaves the device "properly HID-connected" and thus reconnect-ready at the login screen —
          * a 0xF1-only session streams but does not arm the device's cold-boot reconnect. */
-        static const uint8_t kSetProtocolReport[] = { MT2_HIDP_SET_PROTOCOL | 0x01 }; /* 0x71 */
+        static const uint8_t kSetProtocolReport[] = { MAVERICKS_HIDP_SET_PROTOCOL | 0x01 }; /* 0x71 */
         static const uint8_t kSetIdle[]           = { 0x90, 0x00 };                   /* SET_IDLE rate 0 */
         self->fChannel->sendTo((void *)kSetProtocolReport, sizeof(kSetProtocolReport), 0, self, 0, 0);
         self->fChannel->sendTo((void *)kSetIdle, sizeof(kSetIdle), 0, self, 0, 0);
@@ -237,7 +237,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
     if (b[0] == 0xA1) { report = b + 1; rlen = length - 1; }   /* strip HID transport byte */
 
     /* Shared diag: distinct report id (once) + resume-after-gap. Mirrors bt_interpose_shim. */
-    if (rlen > 0) mavericks_diag_raw(MT2_DIAG_BT, report[0]);
+    if (rlen > 0) mavericks_diag_raw(MAVERICKS_DIAG_BT, report[0]);
 
     MavericksTouchFrame tf;
     int drc = mt2_bt_decode(report, rlen, &tf);
@@ -256,7 +256,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
     }
 
     /* Shared diag: per-frame edge coords (debug.mavericks_log>=2). want_first=false: CSM_STEADY above. */
-    mavericks_diag_frame(MT2_DIAG_BT, &tf, /*want_first=*/false);
+    mavericks_diag_frame(MAVERICKS_DIAG_BT, &tf, /*want_first=*/false);
 
     /* Cross the seam as a VoodooInput satellite: translate to a wire event and message the mux
      * (found lazily — it attaches async after registerService; pre-attach frames drop). The mux
@@ -399,7 +399,7 @@ IOReturn com_schmonz_MT2BTReader::pollBatteryInGate(OSObject * /*owner*/, void *
                                                     void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
     if (!self || !self->fChannel) return kIOReturnNoDevice;
-    static const uint8_t kGetBattery[] = { MT2_HIDP_GET_REPORT_INPUT, MT2_BATTERY_REPORT_ID };
+    static const uint8_t kGetBattery[] = { MAVERICKS_HIDP_GET_REPORT_INPUT, MAVERICKS_BATTERY_REPORT_ID };
     self->fChannel->sendTo((void *)kGetBattery, sizeof(kGetBattery), 0, self, 0, 0);
     return kIOReturnSuccess;
 }
@@ -412,7 +412,7 @@ IOReturn com_schmonz_MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg
                                                  void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
     if (!self || !self->fChannel) return kIOReturnNoDevice;
-    static const uint8_t kEnable[] = { MT2_HIDP_SET_REPORT_FEATURE, MT2_ENABLE_REPORT_ID, 0x02, 0x01 };
+    static const uint8_t kEnable[] = { MAVERICKS_HIDP_SET_REPORT_FEATURE, MAVERICKS_ENABLE_REPORT_ID, 0x02, 0x01 };
     self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
     return kIOReturnSuccess;
 }
@@ -450,7 +450,7 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
         cg->runAction(&com_schmonz_MT2BTReader::controlInterposeInGate, self->fChannel);
 
     if (cg) cg->runAction(&com_schmonz_MT2BTReader::pollBatteryInGate, self);
-    ts->setTimeoutMS(MT2_BATTERY_POLL_MS);
+    ts->setTimeoutMS(MAVERICKS_BATTERY_POLL_MS);
 }
 
 void com_schmonz_MT2BTReader::stop(IOService *provider) {

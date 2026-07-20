@@ -1,5 +1,5 @@
 /*
- * mt2_prefpane_refresh — the payload injected into System Preferences that makes the
+ * mavericks_prefpane_refresh — the payload injected into System Preferences that makes the
  * Trackpad + Bluetooth panes behave correctly for the Magic Trackpad 2 on 10.9. ONE
  * payload, loaded by whichever route wins the single-load claim (the standalone .osax
  * via MT2InjectHandler, or the SIMBL plugin via its [bundle load] constructor).
@@ -12,7 +12,7 @@
  *    4. State machine + observers live USB+BT IOKit observers -> SM -> one render owner
  *    5. Change-Batteries button  keep the sealed-battery AA swap prompt hidden
  *    6. Bluetooth-pane icon      device-tied MT2 trackpad art (swizzle deviceIcon/image)
- *    7. View-tree dump           on-demand RE aid (touch /tmp/mt2_pane_dump)
+ *    7. View-tree dump           on-demand RE aid (touch /tmp/mavericks_pane_dump)
  *    8. Aux tick                 front-window belt: icon swizzle + dump service
  *    9. Pane capture + nav       willSelect/didSelect swizzles; capture the live pane
  *   10. Updater launch           fire the shared Sparkle helper (Phase 4)
@@ -66,7 +66,7 @@
 #endif
 
 /* Sparkle + the daily auto-check agent read this key from the updater's own prefs domain. */
-#define MT2_UPDATER_DOMAIN CFSTR("com.schmonz.MavericksTrackpad2Updater")
+#define MAVERICKS_UPDATER_DOMAIN CFSTR("com.schmonz.MavericksTrackpad2Updater")
 
 /* ============================================================================================
  * 1. GENERIC HELPERS — objc dispatch shims + core cross-section state
@@ -89,7 +89,7 @@ static int responds(id obj, SEL s) {
  * (non-registered) host makes Autoupdate hang forever and the install NEVER happens (root-caused
  * on-device 2026-07-06: Autoupdate stuck waiting on a host pid that had already exited). The updater is
  * now a normal foreground app (not LSUIElement), so `open` also brings its Sparkle dialog to the front. */
-static void mt2_launch_updater(void) {
+static void mavericks_launch_updater(void) {
     const char *app = "/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app";
     if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
     /* --args --user: this is an EXPLICIT summon, so the updater runs its interactive check and reports
@@ -141,8 +141,8 @@ static int current_view_is_trackpad(void) {
  * the window's bottom bar) and shows "Set Up Bluetooth Trackpad…"; on BT it shows the row but
  * caches its own copy and never refreshes after a power-cycle. The MT2 reports battery on BOTH
  * transports (USB: Power-Device report 0x90; BT: the BNBTrackpadDevice node's BatteryPercent).
- * So we OWN the row for both: mt2_render_battery paints Apple's own control from
- * mt2_battery_now(), called from perform() (immediate, every transition) AND the aux tick (belt).
+ * So we OWN the row for both: mavericks_render_battery paints Apple's own control from
+ * mavericks_battery_now(), called from perform() (immediate, every transition) AND the aux tick (belt).
  * Painting the correct "NN%" overwrites any stale/charging leftover — no separate residue-strip.
  * ============================================================================================ */
 
@@ -181,7 +181,7 @@ static void find_battery_row(id view, int depth, id *ctl, id *pctField, id *stat
 /* Read the MT2 battery via HID (USB interface answers on the USB view). Returns 1 and fills
  * pct/charging on success. Fresh manager per read so cable cycles never leave a stale device ref.
  * kIOHIDOptionsTypeNone — never seizes the device. */
-static int mt2_usb_read_battery(int *pct, int *charging) {
+static int mavericks_usb_read_battery(int *pct, int *charging) {
     int got = 0;
     IOHIDManagerRef mgr = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
     if (!mgr) return 0;
@@ -234,7 +234,7 @@ static int    gUsbReadInFlight = 0; /* a dispatched USB HID read is pending (don
 
 /* The debug.mt2_batt kext knob, read from the osax so a forced value applies on BOTH transports (the
  * kext only applies it on its own BT publish). -1 = off, 0-100 = forced value. */
-static int mt2_batt_override(void) {
+static int mavericks_batt_override(void) {
     int v = -1; size_t sz = sizeof(v);
     if (sysctlbyname("debug.mt2_batt", &v, &sz, NULL, 0) != 0) return -1;
     return v;
@@ -243,7 +243,7 @@ static int mt2_batt_override(void) {
 /* "BatteryPercent" (0-100) off our fabricated AppleMultitouchDevice node, or -1 if absent (USB publishes
  * none; the BNBTrackpadDevice node is gone post-full-synthetic). Only our BT AMD carries BatteryPercent, so
  * iterate the AMDs and take the first that has it (robust if a co-connected genuine AMD is also present). */
-static int mt2_read_node_battery(void) {
+static int mavericks_read_node_battery(void) {
     int pct = -1;
     io_iterator_t it = 0;
     if (IOServiceGetMatchingServices(kIOMasterPortDefault,
@@ -265,12 +265,12 @@ static int mt2_read_node_battery(void) {
  * waiting for the slow USB HID read. Debug override wins. A fresh BT node reads 0/absent until the
  * kext's first poll — treat that as the un-polled sentinel and hold the last value (a truly 0% MT2 is
  * dead + disconnected). Returns -1 only if the battery has never been known. */
-static int mt2_battery_now(int *charging) {
+static int mavericks_battery_now(int *charging) {
     *charging = (presence_observer_state(gObs) == PRESENCE_USB);
-    int ov = mt2_batt_override();
+    int ov = mavericks_batt_override();
     if (ov >= 0 && ov <= 100) return ov;
     if (presence_observer_state(gObs) == PRESENCE_BT) {
-        int pct = mt2_read_node_battery();
+        int pct = mavericks_read_node_battery();
         if (pct >= 1 && pct <= 100) gDevicePct = pct;
     }
     return gDevicePct;
@@ -278,7 +278,7 @@ static int mt2_battery_now(int *charging) {
 
 /* Paint the battery row: gauge (setFloatValue) + "NN%[ (charging|charged)]" + unhide the three views.
  * On the cable the device is "charging" below 100% and "charged" at 100% (Apple's wording). */
-static void mt2_paint_battery(id root, int pct, int charging) {
+static void mavericks_paint_battery(id root, int pct, int charging) {
     id ctl = NULL, pf = NULL, sl = NULL;
     find_battery_row(root, 0, &ctl, &pf, &sl);
     if (!ctl || !pf || !sl) return;
@@ -303,17 +303,17 @@ static void mt2_paint_battery(id root, int pct, int charging) {
 /* Refresh the USB battery % via the HID read (matches only the MT2, but still off the transition
  * path): throttled (~30 s), dispatched to the next runloop so it never blocks a switch, then repaints
  * if still on USB. */
-static void mt2_refresh_usb_battery(void) {
+static void mavericks_refresh_usb_battery(void) {
     time_t now = time(NULL);
     if (gUsbReadInFlight || (gLastUsbRead && now - gLastUsbRead < 30)) return;
     gLastUsbRead = now; gUsbReadInFlight = 1;
     dispatch_async(dispatch_get_main_queue(), ^{
         gUsbReadInFlight = 0;
         int p, c;
-        if (mt2_usb_read_battery(&p, &c)) {          /* c (charging byte) is ignored — inferred from transport */
+        if (mavericks_usb_read_battery(&p, &c)) {          /* c (charging byte) is ignored — inferred from transport */
             if (p >= 1 && p != gDevicePct) LOG("usb-battery: read %d%%", p);
             if (p >= 1 && p <= 100) gDevicePct = p;
-            if (presence_observer_state(gObs) == PRESENCE_USB) { int ch; int pct = mt2_battery_now(&ch); if (pct >= 0) mt2_paint_battery(front_window_content(), pct, ch); }
+            if (presence_observer_state(gObs) == PRESENCE_USB) { int ch; int pct = mavericks_battery_now(&ch); if (pct >= 0) mavericks_paint_battery(front_window_content(), pct, ch); }
         }
     });
 }
@@ -321,14 +321,14 @@ static void mt2_refresh_usb_battery(void) {
 /* THE single battery-row renderer for the current transport state — the ONE place every battery
  * behavior lives, unified across transports. Called from perform() (immediate, on every transition)
  * AND the aux tick (belt):
- *   USB/BT    -> paint the row from mt2_battery_now() (USB HID / BT node); USB also kicks an async HID
+ *   USB/BT    -> paint the row from mavericks_battery_now() (USB HID / BT node); USB also kicks an async HID
  *                refresh. Painting the correct "NN%" overwrites any leftover "(charging)" from a prior
  *                USB session, so there is no separate residue-strip and no stale value survives.
  *   NoTrackpad-> hide the row (NoTrackpad must not show battery)
  *   HOLD      -> keep the display through the removal window
  * Fast (BT read = a quick IOKit lookup; USB paints the cache), so perform() calls it synchronously —
  * the correct value lands in the SAME runloop turn as the render, so there is no flash. */
-static void mt2_render_battery(id root) {
+static void mavericks_render_battery(id root) {
     if (presence_observer_state(gObs) == PRESENCE_HOLD) return;   /* removal window: the _checkBatteryTimer swizzle corrects any 0 in-flight */
     if (presence_observer_state(gObs) == PRESENCE_NONE) {
         if (gBattPainted) {
@@ -342,9 +342,9 @@ static void mt2_render_battery(id root) {
         gBattPainted = 0; gLastUsbRead = 0;
         return;
     }
-    int charging; int pct = mt2_battery_now(&charging);
-    if (pct >= 0) mt2_paint_battery(root, pct, charging);
-    if (presence_observer_state(gObs) == PRESENCE_USB) mt2_refresh_usb_battery();
+    int charging; int pct = mavericks_battery_now(&charging);
+    if (pct >= 0) mavericks_paint_battery(root, pct, charging);
+    if (presence_observer_state(gObs) == PRESENCE_USB) mavericks_refresh_usb_battery();
 }
 
 /* ============================================================================================
@@ -458,7 +458,7 @@ static void my_deviceConnected(id self, SEL _cmd, id obs, signed char connected)
  * loadMainView only when the view type must change (NoTrackpad<->Trackpad), else just set the
  * battery via the real _magicTrackpadAction(connected). We OWN that selector (see my_magicAction),
  * so this is the only place it fires. */
-static void mt2_inject_about_tab(id root);   /* fwd: (re)inject the About tab after a render (idempotent) */
+static void mavericks_inject_about_tab(id root);   /* fwd: (re)inject the About tab after a render (idempotent) */
 static void perform(presence_action_t a) {
     if (!gPane) return;
     switch (a) {
@@ -467,9 +467,9 @@ static void perform(presence_action_t a) {
             /* Clean any "(charging)" off the outgoing battery field NOW, while the trackpad view still
              * exists, BEFORE loadMainView switches to NoTrackpad. The field is reused when BT later
              * brings the view back, so pre-cleaning it here means it's already a plain "NN%" on the BT
-             * wake -> no flash. (The one irreducible pre-teardown step; mt2_render_battery on the BT
+             * wake -> no flash. (The one irreducible pre-teardown step; mavericks_render_battery on the BT
              * render then paints the live node value over it.) */
-            if (gDevicePct >= 0) mt2_paint_battery(front_window_content(), gDevicePct, 0);
+            if (gDevicePct >= 0) mavericks_paint_battery(front_window_content(), gDevicePct, 0);
             SEL lmv = sel_registerName("loadMainView");
             if (responds(gPane, lmv)) ((id (*)(id, SEL))objc_msgSend)(gPane, lmv);
         }
@@ -493,12 +493,12 @@ static void perform(presence_action_t a) {
     }
     /* ONE place for every battery behavior: after any state render, make the battery row correct for
      * the new transport state (USB/BT paint / NoTrackpad hide). Fast + non-blocking (the HID read is
-     * async inside mt2_render_battery), so it lands in the SAME runloop turn as the render — no flash,
+     * async inside mavericks_render_battery), so it lands in the SAME runloop turn as the render — no flash,
      * and the USB paint appears immediately instead of a tick later. The aux tick calls the same
      * function as the steady-state belt. */
     if (a == PRESENCE_ACT_ABSENT || a == PRESENCE_ACT_ON_BT || a == PRESENCE_ACT_ON_USB) {
-        mt2_render_battery(front_window_content());
-        mt2_inject_about_tab(front_window_content());  /* loadMainView rebuilds the tab strip on a
+        mavericks_render_battery(front_window_content());
+        mavericks_inject_about_tab(front_window_content());  /* loadMainView rebuilds the tab strip on a
                                                         * reconnect -> re-inject the About tab NOW, not on the tick */
     }
 }
@@ -623,10 +623,10 @@ static void install_battery_timer_swizzle(const char *src) {
  * Apple's "Set Up Bluetooth Trackpad…" button keeps its original title + onboarding action. */
 
 /* The button's action IMP, installed on the pane class -> launch the shared updater helper. */
-static void mt2_check_updates_imp(id self, SEL _cmd, id sender) {
+static void mavericks_check_updates_imp(id self, SEL _cmd, id sender) {
     (void)self; (void)_cmd; (void)sender;
     LOG("updater: Check-for-Updates clicked");
-    mt2_launch_updater();
+    mavericks_launch_updater();
 }
 
 /* Add -[<pane> mt2CheckForUpdates:] once — a real selector so the button's target/action reaches our
@@ -635,7 +635,7 @@ static int gUpdaterActionInstalled = 0;
 static void install_updater_action(void) {
     if (gUpdaterActionInstalled || !gPane) return;
     Class c = object_getClass(gPane);
-    class_addMethod(c, sel_registerName("mt2CheckForUpdates:"), (IMP)mt2_check_updates_imp, "v@:@");
+    class_addMethod(c, sel_registerName("mt2CheckForUpdates:"), (IMP)mavericks_check_updates_imp, "v@:@");
     gUpdaterActionInstalled = 1;
     LOG("updater: installed mt2CheckForUpdates: on %s", class_getName(c));
 }
@@ -647,22 +647,22 @@ static void install_updater_action(void) {
  * entry point, replacing the retired Set-Up-button repurpose), an "Automatically check for updates"
  * checkbox (persisted to the updater's SUEnableAutomaticChecks in its own prefs domain), and a
  * "View on GitHub" link. All controls are built through the objc runtime (GC-neutral pure C) and laid
- * out with frames. Injection is idempotent (keyed on the "MT2About" tab identifier) and re-asserted on
+ * out with frames. Injection is idempotent (keyed on the "MavericksAbout" tab identifier) and re-asserted on
  * every pane render, so a loadMainView rebuild never duplicates it.
  * ============================================================================================ */
 
 /* The two extra About-tab action IMPs (Check-for-Updates reuses mt2CheckForUpdates: from above). */
-static void mt2_toggle_autocheck_imp(id self, SEL _cmd, id sender) {
+static void mavericks_toggle_autocheck_imp(id self, SEL _cmd, id sender) {
     (void)self; (void)_cmd;
     /* sender is the checkbox; NSOnState == 1. Persist to the UPDATER's domain where Sparkle + the daily
      * agent read it, then synchronize so the change is durable immediately. */
     long state = ((long (*)(id, SEL))objc_msgSend)(sender, sel_registerName("state"));
     CFPreferencesSetAppValue(CFSTR("SUEnableAutomaticChecks"),
-                             state ? kCFBooleanTrue : kCFBooleanFalse, MT2_UPDATER_DOMAIN);
-    CFPreferencesAppSynchronize(MT2_UPDATER_DOMAIN);
+                             state ? kCFBooleanTrue : kCFBooleanFalse, MAVERICKS_UPDATER_DOMAIN);
+    CFPreferencesAppSynchronize(MAVERICKS_UPDATER_DOMAIN);
     LOG("about: SUEnableAutomaticChecks -> %s", state ? "on" : "off");
 }
-static void mt2_open_github_imp(id self, SEL _cmd, id sender) {
+static void mavericks_open_github_imp(id self, SEL _cmd, id sender) {
     (void)self; (void)_cmd; (void)sender;
     Class wsCls = objc_getClass("NSWorkspace");
     id ws = wsCls ? ((id (*)(Class, SEL))objc_msgSend)(wsCls, sel_registerName("sharedWorkspace")) : NULL;
@@ -678,23 +678,23 @@ static void mt2_open_github_imp(id self, SEL _cmd, id sender) {
  * (3) — so selecting our index-3 tab is objectAtIndex:3 on a 3-element array => NSRangeException, which
  * wedges tab switching. tabView:didSelectTabViewItem: also persists "lastselectedtab"=our index (would
  * crash on the next open's restore). Fix: swizzle both to SKIP the pane's per-tab logic for OUR item
- * (identifier "MT2About") and pass through for its own tabs — NSTabView still shows our item's view via
+ * (identifier "MavericksAbout") and pass through for its own tabs — NSTabView still shows our item's view via
  * its built-in display, and mGestureViewController stays on the last real tab. RE'd 2026-07-06 (disasm
  * of tabView:willSelectTabViewItem: @0x6eab). */
 static void (*gOrigTabWillSelect)(id, SEL, id, id) = NULL;
 static void (*gOrigTabDidSelect)(id, SEL, id, id) = NULL;
-static int mt2_is_about_item(id item) {
+static int mavericks_is_about_item(id item) {
     if (!item) return 0;
     id ident = ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("identifier"));
     return ident && CFGetTypeID((CFTypeRef)ident) == CFStringGetTypeID()
-        && CFEqual((CFStringRef)ident, CFSTR("MT2About"));
+        && CFEqual((CFStringRef)ident, CFSTR("MavericksAbout"));
 }
 static void my_tab_will_select(id self, SEL _cmd, id tv, id item) {
-    if (mt2_is_about_item(item)) return;              /* skip: [_allControllers objectAtIndex:3] would crash */
+    if (mavericks_is_about_item(item)) return;              /* skip: [_allControllers objectAtIndex:3] would crash */
     if (gOrigTabWillSelect) gOrigTabWillSelect(self, _cmd, tv, item);
 }
 static void my_tab_did_select(id self, SEL _cmd, id tv, id item) {
-    if (mt2_is_about_item(item)) return;              /* skip: don't persist our tab as lastselectedtab */
+    if (mavericks_is_about_item(item)) return;              /* skip: don't persist our tab as lastselectedtab */
     if (gOrigTabDidSelect) gOrigTabDidSelect(self, _cmd, tv, item);
 }
 
@@ -707,15 +707,15 @@ static void install_about_actions(void) {
     install_updater_action();                       /* mt2CheckForUpdates: (idempotent) */
     if (gAboutActionsInstalled) return;
     Class c = object_getClass(gPane);
-    class_addMethod(c, sel_registerName("mt2ToggleAutoCheck:"), (IMP)mt2_toggle_autocheck_imp, "v@:@");
-    class_addMethod(c, sel_registerName("mt2OpenGitHub:"),      (IMP)mt2_open_github_imp,      "v@:@");
+    class_addMethod(c, sel_registerName("mt2ToggleAutoCheck:"), (IMP)mavericks_toggle_autocheck_imp, "v@:@");
+    class_addMethod(c, sel_registerName("mt2OpenGitHub:"),      (IMP)mavericks_open_github_imp,      "v@:@");
     gAboutActionsInstalled = 1;
     LOG("about: installed mt2ToggleAutoCheck:/mt2OpenGitHub: on %s", class_getName(c));
 }
 
 /* Swizzle the TAB DELEGATE's class so our foreign tab can't crash its per-tab logic. The delegate is the
  * MTTrackpadController that owns the NSTabView — a DIFFERENT object from gPane (the NSPreferencePane), so
- * we must swizzle [tabview delegate]'s class, not gPane's. Installed once, from mt2_inject_about_tab
+ * we must swizzle [tabview delegate]'s class, not gPane's. Installed once, from mavericks_inject_about_tab
  * where the live NSTabView is in hand. */
 static int gTabSwizzleInstalled = 0;
 static void install_tab_delegate_swizzle(id tabview) {
@@ -735,9 +735,9 @@ static void install_tab_delegate_swizzle(id tabview) {
 }
 
 /* Is the updater's automatic-check preference ON? Reads the updater domain; DEFAULT OFF if unset. */
-static int mt2_autocheck_enabled(void) {
+static int mavericks_autocheck_enabled(void) {
     int on = 0;
-    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("SUEnableAutomaticChecks"), MT2_UPDATER_DOMAIN);
+    CFPropertyListRef v = CFPreferencesCopyAppValue(CFSTR("SUEnableAutomaticChecks"), MAVERICKS_UPDATER_DOMAIN);
     if (v) {
         if (CFGetTypeID(v) == CFBooleanGetTypeID()) on = CFBooleanGetValue((CFBooleanRef)v);
         CFRelease(v);
@@ -747,9 +747,9 @@ static int mt2_autocheck_enabled(void) {
 
 /* Small control builders. Controls pin to the container's TOP (autoresize: flexible bottom margin) so
  * the layout survives the NSTabView resizing the container to its content rect. */
-#define MT2_AR_TOP 8   /* NSViewMinYMargin — bottom margin flexible => fixed distance from the top edge */
+#define MAVERICKS_AR_TOP 8   /* NSViewMinYMargin — bottom margin flexible => fixed distance from the top edge */
 
-static id mt2_make_label(CGRect frame, CFStringRef text) {
+static id mavericks_make_label(CGRect frame, CFStringRef text) {
     Class cls = objc_getClass("NSTextField");
     id tf = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_registerName("alloc"));
     tf = ((id (*)(id, SEL, CGRect))objc_msgSend)(tf, sel_registerName("initWithFrame:"), frame);
@@ -758,10 +758,10 @@ static id mt2_make_label(CGRect frame, CFStringRef text) {
     ((void (*)(id, SEL, signed char))objc_msgSend)(tf, sel_registerName("setBezeled:"), 0);
     ((void (*)(id, SEL, signed char))objc_msgSend)(tf, sel_registerName("setDrawsBackground:"), 0);
     if (text) ((void (*)(id, SEL, id))objc_msgSend)(tf, sel_registerName("setStringValue:"), (id)text);
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(tf, sel_registerName("setAutoresizingMask:"), MT2_AR_TOP);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(tf, sel_registerName("setAutoresizingMask:"), MAVERICKS_AR_TOP);
     return tf;
 }
-static id mt2_make_button(CGRect frame, CFStringRef title, SEL action) {
+static id mavericks_make_button(CGRect frame, CFStringRef title, SEL action) {
     Class cls = objc_getClass("NSButton");
     id b = ((id (*)(Class, SEL))objc_msgSend)(cls, sel_registerName("alloc"));
     b = ((id (*)(id, SEL, CGRect))objc_msgSend)(b, sel_registerName("initWithFrame:"), frame);
@@ -769,25 +769,25 @@ static id mt2_make_button(CGRect frame, CFStringRef title, SEL action) {
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(b, sel_registerName("setBezelStyle:"), 1);   /* NSRoundedBezelStyle */
     ((void (*)(id, SEL, id))objc_msgSend)(b, sel_registerName("setTarget:"), gPane);
     ((void (*)(id, SEL, SEL))objc_msgSend)(b, sel_registerName("setAction:"), action);
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(b, sel_registerName("setAutoresizingMask:"), MT2_AR_TOP);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(b, sel_registerName("setAutoresizingMask:"), MAVERICKS_AR_TOP);
     return b;
 }
 
 /* Autoresize masks (NSAutoresizingMaskOptions): MinXMargin=1, WidthSizable=2, MaxXMargin=4,
  * MinYMargin=8, HeightSizable=16, MaxYMargin=32. Centered+top-anchored = 1|4|8; full-width+top = 2|8;
  * bottom-right-pinned = 1|32. Text alignment (old NSTextAlignment): left=0, right=1, center=2. */
-#define MT2_AR_CENTER_TOP  (1|4|8)
+#define MAVERICKS_AR_CENTER_TOP  (1|4|8)
 #define MT2_W  520
 #define MT2_H  260
-#define MT2_TAG_VERLINK 55501   /* the "GitHub | <ver>" link button */
-#define MT2_TAG_HINT    55502   /* the "Update available" hint label */
-#define MT2_TAG_AUTOCHECK 55503 /* the "Check automatically" checkbox */
+#define MAVERICKS_TAG_VERLINK 55501   /* the "GitHub | <ver>" link button */
+#define MAVERICKS_TAG_HINT    55502   /* the "Update available" hint label */
+#define MAVERICKS_TAG_AUTOCHECK 55503 /* the "Check automatically" checkbox */
 
 /* The version actually installed on disk = the pkg-updated updater app's CFBundleShortVersionString.
  * The About tab shows THIS (not the compile-baked MAVERICKS_VERSION_STR) so it reflects reality after an update
  * even though this osax binary may be older. Returns a +1 CFString (caller releases) or NULL -> fall back
  * to compile-baked. CF-only (no ObjC syntax) so it stays GC-neutral. */
-static CFStringRef mt2_installed_version_copy(void) {
+static CFStringRef mavericks_installed_version_copy(void) {
     CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
         CFSTR("/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app/Contents/Info.plist"),
         kCFURLPOSIXPathStyle, false);
@@ -814,8 +814,8 @@ static CFStringRef mt2_installed_version_copy(void) {
 }
 
 /* Fill buf with the installed version (updater Info.plist), or the compile-baked fallback. */
-static void mt2_version_cstr(char *buf, unsigned long n) {
-    CFStringRef iv = mt2_installed_version_copy();
+static void mavericks_version_cstr(char *buf, unsigned long n) {
+    CFStringRef iv = mavericks_installed_version_copy();
     if (iv && CFStringGetCString(iv, buf, (CFIndex)n, kCFStringEncodingUTF8)) { CFRelease(iv); return; }
     if (iv) CFRelease(iv);
     snprintf(buf, n, "%s", MAVERICKS_VERSION_STR);
@@ -826,7 +826,7 @@ static char gAboutVer[48] = "";   /* version currently shown in the About link (
 /* Build the About tab's container view + its controls, CENTERED. Big bold title on top, the update
  * controls + GitHub hyperlink centered, and the version tucked in the lower-right corner. Version from
  * MAVERICKS_VERSION_STR (compile time); the checkbox reflects SUEnableAutomaticChecks (default OFF). */
-static id mt2_build_about_view(void) {
+static id mavericks_build_about_view(void) {
     Class viewCls = objc_getClass("NSView");
     id v = ((id (*)(Class, SEL))objc_msgSend)(viewCls, sel_registerName("alloc"));
     v = ((id (*)(id, SEL, CGRect))objc_msgSend)(v, sel_registerName("initWithFrame:"), CGRectMake(0, 0, MT2_W, MT2_H));
@@ -836,7 +836,7 @@ static id mt2_build_about_view(void) {
     SEL setAlign = sel_registerName("setAlignment:");
 
     /* Title — large, bold, centered, full width. */
-    id title = mt2_make_label(CGRectMake(0, 200, MT2_W, 36), CFSTR("Mavericks Trackpad 2"));
+    id title = mavericks_make_label(CGRectMake(0, 200, MT2_W, 36), CFSTR("Mavericks Trackpad 2"));
     Class fontCls = objc_getClass("NSFont");
     id font = fontCls ? ((id (*)(Class, SEL, double))objc_msgSend)(fontCls, sel_registerName("boldSystemFontOfSize:"), 22.0) : NULL;
     if (font) ((void (*)(id, SEL, id))objc_msgSend)(title, sel_registerName("setFont:"), font);
@@ -845,12 +845,12 @@ static id mt2_build_about_view(void) {
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, title);
 
     /* Check for Updates — centered button; standard control font so it matches the pane's own buttons. */
-    id upd = mt2_make_button(CGRectMake((MT2_W-200)/2, 148, 200, 32), CFSTR("Check for Updates…"),
+    id upd = mavericks_make_button(CGRectMake((MT2_W-200)/2, 148, 200, 32), CFSTR("Check for Updates…"),
                              sel_registerName("mt2CheckForUpdates:"));
     Class fontCls2 = objc_getClass("NSFont");
     id ctlfont = fontCls2 ? ((id (*)(Class, SEL, double))objc_msgSend)(fontCls2, sel_registerName("systemFontOfSize:"), 13.0) : NULL;
     if (ctlfont) ((void (*)(id, SEL, id))objc_msgSend)(upd, sel_registerName("setFont:"), ctlfont);
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(upd, setMask, MT2_AR_CENTER_TOP);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(upd, setMask, MAVERICKS_AR_CENTER_TOP);
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, upd);
 
     /* Check automatically — checkbox centered directly under the Check for Updates button; same font. */
@@ -859,20 +859,20 @@ static id mt2_build_about_view(void) {
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, sel_registerName("setButtonType:"), 3);
     ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTitle:"), (id)CFSTR("Check automatically"));
     if (ctlfont) ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setFont:"), ctlfont);
-    ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setTag:"), MT2_TAG_AUTOCHECK);
-    ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setState:"), mt2_autocheck_enabled() ? 1 : 0);
+    ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setTag:"), MAVERICKS_TAG_AUTOCHECK);
+    ((void (*)(id, SEL, long))objc_msgSend)(chk, sel_registerName("setState:"), mavericks_autocheck_enabled() ? 1 : 0);
     ((void (*)(id, SEL, id))objc_msgSend)(chk, sel_registerName("setTarget:"), gPane);
     ((void (*)(id, SEL, SEL))objc_msgSend)(chk, sel_registerName("setAction:"), sel_registerName("mt2ToggleAutoCheck:"));
-    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, setMask, MT2_AR_CENTER_TOP);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(chk, setMask, MAVERICKS_AR_CENTER_TOP);
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, chk);
 
     /* "Update available" hint — centered below the checkbox, HIDDEN until an update is pending. The
-     * updater records MT2AvailableUpdateVersion when Sparkle finds one; mt2_about_refresh() (reconcile
+     * updater records MT2AvailableUpdateVersion when Sparkle finds one; mavericks_about_refresh() (reconcile
      * tick) fills + shows/hides this by tag. */
-    id hint = mt2_make_label(CGRectMake(0, 88, MT2_W, 18), NULL);
+    id hint = mavericks_make_label(CGRectMake(0, 88, MT2_W, 18), NULL);
     ((void (*)(id, SEL, long))objc_msgSend)(hint, setAlign, 2);            /* center */
     if (ctlfont) ((void (*)(id, SEL, id))objc_msgSend)(hint, sel_registerName("setFont:"), ctlfont);
-    ((void (*)(id, SEL, long))objc_msgSend)(hint, sel_registerName("setTag:"), MT2_TAG_HINT);
+    ((void (*)(id, SEL, long))objc_msgSend)(hint, sel_registerName("setTag:"), MAVERICKS_TAG_HINT);
     ((void (*)(id, SEL, signed char))objc_msgSend)(hint, sel_registerName("setHidden:"), 1);
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(hint, setMask, 2 | 8); /* width-sizable, top */
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, hint);
@@ -881,16 +881,16 @@ static id mt2_build_about_view(void) {
      * version changes. Carries the tag the reconcile tick updates after an install. (No GitHub link — the
      * repo link lived here but its click area/placement read poorly; dropped per user.) */
     char vbuf[48];
-    mt2_version_cstr(vbuf, sizeof vbuf);
+    mavericks_version_cstr(vbuf, sizeof vbuf);
     snprintf(gAboutVer, sizeof gAboutVer, "%s", vbuf);
     CFStringRef vs = CFStringCreateWithCString(kCFAllocatorDefault, vbuf, kCFStringEncodingUTF8);
-    id ver = mt2_make_label(CGRectMake(MT2_W-80, 12, 68, 16), vs);
+    id ver = mavericks_make_label(CGRectMake(MT2_W-80, 12, 68, 16), vs);
     if (vs) CFRelease(vs);
     Class vfCls = objc_getClass("NSFont");
     id vfont = vfCls ? ((id (*)(Class, SEL, double))objc_msgSend)(vfCls, sel_registerName("systemFontOfSize:"), 11.0) : NULL;
     if (vfont) ((void (*)(id, SEL, id))objc_msgSend)(ver, sel_registerName("setFont:"), vfont);
     ((void (*)(id, SEL, long))objc_msgSend)(ver, setAlign, 1);          /* right — hugs the edge */
-    ((void (*)(id, SEL, long))objc_msgSend)(ver, sel_registerName("setTag:"), MT2_TAG_VERLINK);
+    ((void (*)(id, SEL, long))objc_msgSend)(ver, sel_registerName("setTag:"), MAVERICKS_TAG_VERLINK);
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(ver, setMask, 1 | 32);   /* pinned bottom-right */
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, ver);
     return v;
@@ -912,24 +912,24 @@ static id find_tabview(id view, int depth) {
     return NULL;
 }
 
-/* (Re)inject the About tab. Idempotent: keyed on the "MT2About" tab identifier — if the strip already
+/* (Re)inject the About tab. Idempotent: keyed on the "MavericksAbout" tab identifier — if the strip already
  * carries it, do nothing. Called from every pane render + the reconcile tick, so a loadMainView that
  * rebuilds the tab strip re-adds it once, never duplicating. No-op on NoTrackpad (no NSTabView). */
-static void mt2_inject_about_tab(id root) {
+static void mavericks_inject_about_tab(id root) {
     if (!gPane || !root) return;
     id tabview = find_tabview(root, 0);
     if (!tabview) return;
     install_about_actions();
     install_tab_delegate_swizzle(tabview);   /* swizzle the REAL delegate (MTTrackpadController), not gPane */
     long idx = ((long (*)(id, SEL, id))objc_msgSend)(
-        tabview, sel_registerName("indexOfTabViewItemWithIdentifier:"), (id)CFSTR("MT2About"));
+        tabview, sel_registerName("indexOfTabViewItemWithIdentifier:"), (id)CFSTR("MavericksAbout"));
     if (idx != LONG_MAX) return;   /* NSNotFound == NSIntegerMax; anything else => already present */
 
     Class itemCls = objc_getClass("NSTabViewItem");
     id item = ((id (*)(Class, SEL))objc_msgSend)(itemCls, sel_registerName("alloc"));
-    item = ((id (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("initWithIdentifier:"), (id)CFSTR("MT2About"));
+    item = ((id (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("initWithIdentifier:"), (id)CFSTR("MavericksAbout"));
     ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setLabel:"), (id)CFSTR("About"));
-    ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setView:"), mt2_build_about_view());
+    ((void (*)(id, SEL, id))objc_msgSend)(item, sel_registerName("setView:"), mavericks_build_about_view());
     ((void (*)(id, SEL, id))objc_msgSend)(tabview, sel_registerName("addTabViewItem:"), item);
     LOG("about: injected About tab (4th) on %s", object_getClassName(tabview));
 }
@@ -938,23 +938,23 @@ static void mt2_inject_about_tab(id root) {
  * INSTALLED version (right after an update, no reopen needed), and the "Update available" hint shows/hides
  * from the version the updater recorded. Controls are re-found by TAG each call (no dangling refs across a
  * pane rebuild). No-op if the About tab isn't present. */
-static void mt2_about_refresh(id root) {
+static void mavericks_about_refresh(id root) {
     if (!root) return;
     id tabview = find_tabview(root, 0);
     if (!tabview) return;
     long idx = ((long (*)(id, SEL, id))objc_msgSend)(
-        tabview, sel_registerName("indexOfTabViewItemWithIdentifier:"), (id)CFSTR("MT2About"));
+        tabview, sel_registerName("indexOfTabViewItemWithIdentifier:"), (id)CFSTR("MavericksAbout"));
     if (idx == LONG_MAX) return;                        /* About tab not present */
     id item = ((id (*)(id, SEL, long))objc_msgSend)(tabview, sel_registerName("tabViewItemAtIndex:"), idx);
     id view = item ? ((id (*)(id, SEL))objc_msgSend)(item, sel_registerName("view")) : NULL;
     if (!view) return;
 
     char cur[48];
-    mt2_version_cstr(cur, sizeof cur);
+    mavericks_version_cstr(cur, sizeof cur);
 
     /* installed version changed -> update the " | <ver>" label (right-aligned, so no reposition needed) */
     if (strcmp(cur, gAboutVer) != 0) {
-        id lbl = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_VERLINK);
+        id lbl = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MAVERICKS_TAG_VERLINK);
         if (lbl) {
             CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, cur, kCFStringEncodingUTF8);
             if (s) { ((void (*)(id, SEL, id))objc_msgSend)(lbl, sel_registerName("setStringValue:"), (id)s); CFRelease(s); }
@@ -964,16 +964,16 @@ static void mt2_about_refresh(id root) {
 
     /* keep the "Check automatically" checkbox in sync with the persisted setting, so an external change
      * (the daily agent, a second window, a defaults write) never leaves it showing a stale state. */
-    id box = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_AUTOCHECK);
-    if (box) ((void (*)(id, SEL, long))objc_msgSend)(box, sel_registerName("setState:"), mt2_autocheck_enabled() ? 1 : 0);
+    id box = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MAVERICKS_TAG_AUTOCHECK);
+    if (box) ((void (*)(id, SEL, long))objc_msgSend)(box, sel_registerName("setState:"), mavericks_autocheck_enabled() ? 1 : 0);
 
     /* "Update available" hint: show only if the updater recorded an available version that differs from
      * what's installed (a lingering flag whose version == installed means we already updated -> hide). */
-    id hint = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MT2_TAG_HINT);
+    id hint = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MAVERICKS_TAG_HINT);
     if (!hint) return;
     int show = 0;
-    CFPreferencesAppSynchronize(MT2_UPDATER_DOMAIN);
-    CFStringRef av = CFPreferencesCopyAppValue(CFSTR("MT2AvailableUpdateVersion"), MT2_UPDATER_DOMAIN);
+    CFPreferencesAppSynchronize(MAVERICKS_UPDATER_DOMAIN);
+    CFStringRef av = CFPreferencesCopyAppValue(CFSTR("MT2AvailableUpdateVersion"), MAVERICKS_UPDATER_DOMAIN);
     if (av && CFGetTypeID(av) == CFStringGetTypeID()) {
         char avc[48];
         if (CFStringGetCString(av, avc, sizeof avc, kCFStringEncodingUTF8) && avc[0] && strcmp(avc, cur) != 0) {
@@ -999,8 +999,8 @@ static void hide_battery_button_now(void) {
      * window contentView; fall back to mainView if the pane isn't in a window yet. */
     id win = ((id (*)(id, SEL))objc_msgSend)(mv, sel_registerName("window"));
     id root = win ? ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("contentView")) : mv;
-    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mt2_render_battery(root); mt2_inject_about_tab(root); mt2_about_refresh(root); }
-    /* NB: the /tmp/mt2_pane_dump view-tree dump lives ONLY in the aux tick (front window) so it works
+    if (root) { walk_hide_battery_button(root, 0); gLoggedButtons = 1; mavericks_render_battery(root); mavericks_inject_about_tab(root); mavericks_about_refresh(root); }
+    /* NB: the /tmp/mavericks_pane_dump view-tree dump lives ONLY in the aux tick (front window) so it works
      * on any pane, incl. Bluetooth; a second trigger here would consume the flag first on the Trackpad
      * pane and dump the wrong window. */
 }
@@ -1019,7 +1019,7 @@ static id (*gOrigGetDeviceIcon)(id, SEL) = NULL;   /* saved -[IOBluetoothDevice 
 static id (*gOrigImage)(id, SEL)         = NULL;   /* saved -[IOBluetoothDevice image] (row icon accessor) */
 
 /* Our MT2 art, prepared like the vault does for bundle-loaded images (scalable, 32x32 pt row). */
-static id mt2_trackpad_image(void) {
+static id mavericks_trackpad_image(void) {
     static id img = NULL;
     if (!img) {
         id a = ((id (*)(id, SEL))objc_msgSend)(
@@ -1073,7 +1073,7 @@ static void set_bt_battery_control(id view, int depth, float frac) {
     for (unsigned long i = 0; i < n; i++)
         set_bt_battery_control(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1, frac);
 }
-static void mt2_paint_bt_list_battery(id view, int depth, float frac) {
+static void mavericks_paint_bt_list_battery(id view, int depth, float frac) {
     if (!view || depth > 16) return;
     Class cellCls = objc_getClass("NSTableCellView");
     if (cellCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(view, sel_registerName("isKindOfClass:"), cellCls)
@@ -1084,7 +1084,7 @@ static void mt2_paint_bt_list_battery(id view, int depth, float frac) {
     id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
     unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
     for (unsigned long i = 0; i < n; i++)
-        mt2_paint_bt_list_battery(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1, frac);
+        mavericks_paint_bt_list_battery(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1, frac);
 }
 
 /* The image swizzle may install AFTER the pane already bound the row icons (the osax loads once the
@@ -1094,7 +1094,7 @@ static void mt2_paint_bt_list_battery(id view, int depth, float frac) {
  * art. Not per-view painting: we reuse the pane's own binding + the device's own deviceIcon; from
  * here Apple re-reads deviceIcon (our value) on every future refresh, so it stays correct. One-shot. */
 static int gIconRebound = 0;
-static void kvo_refresh_mt2_icon(id view, int depth) {
+static void kvo_refresh_mavericks_icon(id view, int depth) {
     if (!view || depth > 16 || gIconRebound || !gOrigDeviceIcon) return;
     Class cellCls = objc_getClass("NSTableCellView");
     if (cellCls && ((signed char (*)(id, SEL, Class))objc_msgSend)(view, sel_registerName("isKindOfClass:"), cellCls)
@@ -1117,19 +1117,19 @@ static void kvo_refresh_mt2_icon(id view, int depth) {
     id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
     unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
     for (unsigned long i = 0; i < n; i++)
-        kvo_refresh_mt2_icon(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
+        kvo_refresh_mavericks_icon(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
 }
 
 /* deviceIcon/image swizzle body: trackpad art for the MT2 CoD (5,0x25), else the original. */
-static id mt2_icon_for(id self, id (*orig)(id, SEL), SEL _cmd) {
+static id mavericks_icon_for(id self, id (*orig)(id, SEL), SEL _cmd) {
     int mj = ((int (*)(id, SEL))objc_msgSend)(self, sel_registerName("getDeviceClassMajor"));
     int mn = ((int (*)(id, SEL))objc_msgSend)(self, sel_registerName("getDeviceClassMinor"));
-    if (mj == 5 && mn == 0x25) { id img = mt2_trackpad_image(); if (img) return img; }
+    if (mj == 5 && mn == 0x25) { id img = mavericks_trackpad_image(); if (img) return img; }
     return orig ? orig(self, _cmd) : NULL;
 }
-static id my_deviceIcon(id self, SEL _cmd)    { return mt2_icon_for(self, gOrigDeviceIcon, _cmd); }
-static id my_getDeviceIcon(id self, SEL _cmd) { return mt2_icon_for(self, gOrigGetDeviceIcon, _cmd); }
-static id my_image(id self, SEL _cmd)         { return mt2_icon_for(self, gOrigImage, _cmd); }
+static id my_deviceIcon(id self, SEL _cmd)    { return mavericks_icon_for(self, gOrigDeviceIcon, _cmd); }
+static id my_getDeviceIcon(id self, SEL _cmd) { return mavericks_icon_for(self, gOrigGetDeviceIcon, _cmd); }
+static id my_image(id self, SEL _cmd)         { return mavericks_icon_for(self, gOrigImage, _cmd); }
 
 /* The row's icon binds to objectValue.device.deviceIcon, but the value it displays is
  * -[IOBluetoothDevice image] (the generic 512x512 for the MT2; RE'd via a method enumeration —
@@ -1153,7 +1153,7 @@ static void install_device_icon_swizzle(const char *src) {
         method_setImplementation(mg, (IMP)my_getDeviceIcon); }
     if (mi) LOG("bt-icon: swizzled IOBluetoothDevice image/deviceIcon via %s (device-tied MT2 icon)", src);
 }
-static void mt2_dyld_added(const struct mach_header *mh, intptr_t slide) {
+static void mavericks_dyld_added(const struct mach_header *mh, intptr_t slide) {
     (void)mh; (void)slide; install_device_icon_swizzle("dyld");
 }
 
@@ -1161,7 +1161,7 @@ static void mt2_dyld_added(const struct mach_header *mh, intptr_t slide) {
  * 7. VIEW-TREE DUMP — on-demand RE aid
  * ============================================================================================ */
 
-/* `touch /tmp/mt2_pane_dump` -> the next aux tick dumps the whole window view tree (class, hidden,
+/* `touch /tmp/mavericks_pane_dump` -> the next aux tick dumps the whole window view tree (class, hidden,
  * frame, and any title/stringValue/image) to syslog, once, then removes the flag. Used to map the
  * battery-row controls / icon views in each transport state. */
 static void dump_view_tree(id view, int depth) {
@@ -1228,7 +1228,7 @@ static void dump_view_tree(id view, int depth) {
  * `Name` cache live; setDisplayName:nil clears the alias. The enable report is 0xF1 (untouched).
  *
  * SAFETY: the SET_REPORT runs inside System Preferences (the process in the 2026-07-04 getReport-panic
- * backtrace). The write self-gates to a present BLUETOOTH-transport MT2 (mt2_name_write_onboard skips
+ * backtrace). The write self-gates to a present BLUETOOTH-transport MT2 (mavericks_name_write_onboard skips
  * USB, which has no room anyway); since the MT2 drives ONE transport at a time (cabling USB drops BT),
  * "a BT HID is present" means no USB bring-up storm is in flight. We additionally skip a known in-flight
  * transition (presence_observer_state==PRESENCE_HOLD). So a single deliberate write never lands during churn. NB the
@@ -1237,7 +1237,7 @@ static void dump_view_tree(id view, int depth) {
 
 /* The paired MT2 IOBluetoothDevice (CoD 0x594 = peripheral+pointing, digitizer minor 0x25), or NULL.
  * IOBluetooth is resident whenever the BT pane has been shown (where Rename happens). */
-static id mt2_bt_device(void) {
+static id mavericks_bt_device(void) {
     Class c = objc_getClass("IOBluetoothDevice");
     if (!c) return NULL;
     id arr = ((id (*)(Class, SEL))objc_msgSend)(c, sel_registerName("pairedDevices"));
@@ -1252,8 +1252,8 @@ static id mt2_bt_device(void) {
 }
 
 /* SET_REPORT(Feature, 0x55, [id][name]) onto the MT2 over Bluetooth (USB has no room:
- * MaxFeatureReportSize==1). Returns 1 if the write landed. Mirrors tools/mt2_name_write.c. */
-static int mt2_name_write_onboard(const char *name) {
+ * MaxFeatureReportSize==1). Returns 1 if the write landed. Mirrors tools/mavericks_name_write.c. */
+static int mavericks_name_write_onboard(const char *name) {
     size_t nl = name ? strlen(name) : 0;
     if (nl == 0 || nl > 63) return 0;
     int ok = 0;
@@ -1299,8 +1299,8 @@ static int  gNameDeferLogged = 0;    /* logged a pending rename we're holding fo
 
 /* One reconcile pass, called from the aux tick (~1.5s). Detects a user Rename (displayName change),
  * pushes it onboard, refreshes the host name, and clears the alias. Read-only + idempotent otherwise. */
-static void mt2_name_mirror_tick(void) {
-    id d = mt2_bt_device();
+static void mavericks_name_mirror_tick(void) {
+    id d = mavericks_bt_device();
     if (!d) return;
     id dn = ((id (*)(id, SEL))objc_msgSend)(d, sel_registerName("getDisplayName"));
     const char *s = dn ? ((const char *(*)(id, SEL))objc_msgSend)(dn, sel_registerName("UTF8String")) : "";
@@ -1332,7 +1332,7 @@ static void mt2_name_mirror_tick(void) {
     memcpy(wname, s, wl); wname[wl] = 0;
 
     LOG("name-mirror: displayName \"%s\" -> \"%s\"; writing onboard (0x55)", gLastDisplayName, wname);
-    if (mt2_name_write_onboard(wname)) {          /* self-gates to a present Bluetooth-transport MT2 */
+    if (mavericks_name_write_onboard(wname)) {          /* self-gates to a present Bluetooth-transport MT2 */
         ((int (*)(id, SEL, id))objc_msgSend)(d, sel_registerName("remoteNameRequest:"), NULL); /* refresh host name cache */
         ((void (*)(id, SEL, id))objc_msgSend)(d, sel_registerName("setDisplayName:"), NULL);    /* clear alias -> on-device name shows */
         strlcpy(gLastDisplayName, s, sizeof gLastDisplayName);   /* mark THIS displayName handled: if the clear ever fails, we won't rewrite in a loop */
@@ -1352,12 +1352,12 @@ static void mt2_name_mirror_tick(void) {
  * startup, NOT only on the aux tick, so none of it waits up to a tick to appear. */
 static void aux_reassert(void) {
     install_device_icon_swizzle("reassert");          /* belt: ensure the image swizzle is in */
-    kvo_refresh_mt2_icon(front_window_content(), 0);  /* re-read if swizzled after the pane bound it */
+    kvo_refresh_mavericks_icon(front_window_content(), 0);  /* re-read if swizzled after the pane bound it */
     /* Bluetooth pane device-list battery glyph (the pane leaves it empty for the MT2). */
-    int ov = mt2_batt_override();
-    int gpct = (ov >= 0 && ov <= 100) ? ov : mt2_read_node_battery();
+    int ov = mavericks_batt_override();
+    int gpct = (ov >= 0 && ov <= 100) ? ov : mavericks_read_node_battery();
     if (gpct >= 1 && gpct <= 100) gDevicePct = gpct;
-    if (gDevicePct >= 0) mt2_paint_bt_list_battery(front_window_content(), 0, (float)gDevicePct / 100.0f);
+    if (gDevicePct >= 0) mavericks_paint_bt_list_battery(front_window_content(), 0, (float)gDevicePct / 100.0f);
 }
 
 /* Keep the BT-icon swizzle installed + serviced, and run the on-demand view-tree dump for WHATEVER
@@ -1370,9 +1370,9 @@ static void aux_tick_start(void) {
                               (uint64_t)(1.5 * NSEC_PER_SEC), (uint64_t)(0.25 * NSEC_PER_SEC));
     dispatch_source_set_event_handler(gAuxTick, ^{
         aux_reassert();                                  /* belt for the front-window UI */
-        mt2_name_mirror_tick();                          /* pane Rename -> on-device name (report 0x55) */
-        if (access("/tmp/mt2_pane_dump", F_OK) == 0) {
-            unlink("/tmp/mt2_pane_dump");
+        mavericks_name_mirror_tick();                          /* pane Rename -> on-device name (report 0x55) */
+        if (access("/tmp/mavericks_pane_dump", F_OK) == 0) {
+            unlink("/tmp/mavericks_pane_dump");
             /* Walk EVERY window's contentView (not just the front one) — the Bluetooth pane's device
              * list can live in a window the front-window probe missed, which is why an earlier dump
              * came up empty. Each window is labelled by title. */
@@ -1570,7 +1570,7 @@ static void install_swizzle(void) {
  * entry points funnel through it, a new swizzle/feature added here (or inside install_swizzle) is
  * automatically owned by exactly one image — nothing to remember to guard. */
 static int gActivated = 0;
-static void mt2_activate(const char *via) {
+static void mavericks_activate(const char *via) {
     if (gActivated) return;                    /* already active in THIS image (idempotent) */
     if (!mavericks_claim_single_load()) {            /* another image already owns this process */
         LOG("payload: lost the single-load claim (via %s) — staying inert", via);
@@ -1581,9 +1581,9 @@ static void mt2_activate(const char *via) {
     install_swizzle();
     /* Device-tied BT-pane icon: install the deviceIcon swizzle the moment IOBluetooth loads (the hook
      * also replays already-loaded images), so it is in before the pane first reads deviceIcon. */
-    _dyld_register_func_for_add_image(&mt2_dyld_added);
+    _dyld_register_func_for_add_image(&mavericks_dyld_added);
     /* Aux tick over the front window (works for any pane, incl. Bluetooth — gPane only tracks
-     * Trackpad): swizzle belt + the on-demand /tmp/mt2_pane_dump view-tree dump. */
+     * Trackpad): swizzle belt + the on-demand /tmp/mavericks_pane_dump view-tree dump. */
     dispatch_async(dispatch_get_main_queue(), ^{ aux_tick_start(); });
     /* Handle the direct-open case (already on Trackpad): retry a proactive capture on the main queue
      * once the app/pane are up. didSelect still handles navigation. */
@@ -1602,7 +1602,7 @@ static void mt2_activate(const char *via) {
 OSErr MT2InjectHandler(const AppleEvent *evt, AppleEvent *reply, long refcon) {
     (void)evt; (void)refcon;
     LOG("inject handler invoked");
-    mt2_activate("inject-handler");   /* same choke point as the constructor; inert if we lost the claim */
+    mavericks_activate("inject-handler");   /* same choke point as the constructor; inert if we lost the claim */
     if (reply && reply->descriptorType != typeNull) {
         SInt32 marker = MT2_INJECT_MARKER;
         AEPutParamPtr(reply, keyDirectObject, typeSInt32, &marker, sizeof(marker));
@@ -1612,6 +1612,6 @@ OSErr MT2InjectHandler(const AppleEvent *evt, AppleEvent *reply, long refcon) {
 
 /* Runs the instant our image loads into the host process (SIMBL [bundle load]). */
 __attribute__((constructor))
-static void mt2_image_loaded(void) {
-    mt2_activate("constructor");
+static void mavericks_image_loaded(void) {
+    mavericks_activate("constructor");
 }

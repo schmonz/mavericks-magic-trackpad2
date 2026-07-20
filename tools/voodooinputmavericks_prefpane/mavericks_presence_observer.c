@@ -9,7 +9,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include "mavericks_presence_observer.h"
 
-#define LOG(...) syslog(LOG_NOTICE, "[MT2Presence] " __VA_ARGS__)
+#define LOG(...) syslog(LOG_NOTICE, "[MavericksPresence] " __VA_ARGS__)
 
 /* Per-notification refcon: which observer + which SM event this edge maps to (+ a log tag). */
 typedef struct { struct mavericks_presence_observer *o; presence_event_t ev; const char *tag; } obs_cbctx_t;

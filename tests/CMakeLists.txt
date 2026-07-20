@@ -87,10 +87,10 @@ add_test(NAME test_appcast_notes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/test_appca
 add_test(NAME test_plists COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/check_plists.sh ${CMAKE_BINARY_DIR})
 
 # Branch A watcher inject-decision (first ObjC ctest). Links the watcher source for
-# mt2_should_inject; -DMT2_PANE_WATCH_TEST excludes the watcher's main (no duplicate main).
+# mavericks_should_inject; -DMAVERICKS_PANE_WATCH_TEST excludes the watcher's main (no duplicate main).
 add_executable(test_pane_watch test_pane_watch.m
   ${CMAKE_SOURCE_DIR}/tools/voodooinputmavericks_prefpane/voodooinputmavericks_pane_watch.m)
-target_compile_options(test_pane_watch PRIVATE -fobjc-arc -DMT2_PANE_WATCH_TEST)
+target_compile_options(test_pane_watch PRIVATE -fobjc-arc -DMAVERICKS_PANE_WATCH_TEST)
 target_include_directories(test_pane_watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_pane_watch
   "-framework Foundation" "-framework AppKit" "-framework ApplicationServices")

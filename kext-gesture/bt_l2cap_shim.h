@@ -24,7 +24,7 @@ class IOCommandGate;
 
 /* L2CAP channel state passed to waitForChannelState(). The enum's NAME must be exactly
  * IOBluetoothL2CAPChannelState so waitForChannelState below mangles to the exported symbol
- * (…19waitForChannelStateE28IOBluetoothL2CAPChannelState). Only OPEN (= MT2_L2CAP_STATE_OPEN
+ * (…19waitForChannelStateE28IOBluetoothL2CAPChannelState). Only OPEN (= MAVERICKS_L2CAP_STATE_OPEN
  * = 4) is used. */
 enum IOBluetoothL2CAPChannelState { kIOBluetoothL2CAPChannelStateOpen = 4 };
 
