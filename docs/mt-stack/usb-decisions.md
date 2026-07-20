@@ -203,3 +203,36 @@ one `AppleMultitouchDevice`; USB interface `0x613` present/plugged for power; `c
 **Verdict:** owned-USB is NOT trivially unblocked — the collision condition is real and present. But it is
 narrower than "impossible": the colliding kext is idle/unloadable, so a "unload-Apple's-then-load-ours"
 sequence is a candidate mitigation to try under U1b. Genuine-USB remains the shipped, validated default.
+
+## U1b — owned-USB metaclass collision + mitigation (on-device load test, 2026-07-19; crash-risk, NO panic)
+
+A throwaway `/tmp` probe kext defining a **name-wearing** `AppleUSBMultitouchDriver : IOService` (reimplementation,
+NOT a subclass; `OSDefineMetaClassAndStructors`, no matching personality so it can't touch the live MT2). Two steps,
+both empirically resolved — BT session never perturbed (`MT2BTReader`=2, mux=1, AMD=1 throughout):
+
+**U1b-1 (probe loaded WITH Apple's `AppleUSBMultitouch` resident):** GRACEFUL REJECTION, no panic:
+```
+OSMetaClass: Kext com.schmonz.AumdCollisionProbe class AppleUSBMultitouchDriver is a duplicate;
+             kext com.apple.driver.AppleUSBMultitouch already has a class by that name.
+Kext ... start failed (0xdc00400a) ... failed to load (0xdc008017).
+```
+So a duplicate class name is a clean `kextload` failure — **NOT** the bare-node `registerService` panic. (Confirms
+the KB thesis that the ② panic was a *different* mechanism; the metaclass-dup path is handled.)
+
+**U1b-2 (unload Apple's idle kext, THEN load the probe):** `kextunload -b com.apple.driver.AppleUSBMultitouch`
+succeeded (it is idle/unloadable — refcount 0, 0 instances), and the name-wearing probe then **loaded clean**
+(`com.schmonz.AumdCollisionProbe` resident). Baseline restored after (probe unloaded, Apple's AUMD reloaded).
+
+**Load-bearing conclusion — owned-USB is NOT gated on a fragile "prevent it ever loading" invariant.** The
+collision is **graceful and first-wins-symmetric**: whichever kext registers `AppleUSBMultitouchDriver` first owns
+the name; the second loader (Apple's speculative probe-load OR ours) gets a clean rejection, no panic, no harm. So
+the real requirement for owned-USB is **"claim the name FIRST"** (load our owned kext before Apple's speculative
+probe-load), not "block Apple forever." Two viable routes to that, both non-fragile:
+- **load-order:** get our owned kext resident before IOKit speculatively loads Apple's `AppleUSBMultitouch` to probe
+  the MT2's `0x613` interface (Apple's then fails to load gracefully — fine unless a real MT1 USB device needs it);
+- **unload-then-load:** `kextunload` Apple's idle kext, load ours (proven here).
+
+**Remaining question (deferred to U3 = build the real owned driver):** the boot/re-plug ORDERING — does our kext
+reliably claim the name before Apple's speculative load across boot + USB re-enumerate, and does Apple's stay out?
+That needs the real IOHIDDevice-based owned terminal + a USB plug event; U1b has cleared the panic/possibility gate.
+Genuine-USB remains the shipped default; owned-USB is now a de-risked, reachable option rather than a dead end.
