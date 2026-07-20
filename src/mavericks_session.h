@@ -1,7 +1,7 @@
-#ifndef MT2_SESSION_H
-#define MT2_SESSION_H
-#include "mt2_pipeline.h"
-#include "mt2_lifecycle.h"
+#ifndef MAVERICKS_SESSION_H
+#define MAVERICKS_SESSION_H
+#include "mavericks_pipeline.h"
+#include "mavericks_lifecycle.h"
 #include "mavericks_frame.h"
 #include <stdint.h>
 
@@ -14,7 +14,7 @@ typedef struct {
     void (*feed_frame)(void *ctx, const MavericksTouchFrame *frame);
     void (*arm_timer)(void *ctx, uint32_t ms);
     void *ctx;
-} mt2_session_sink_t;
+} mavericks_session_sink_t;
 
 /* Per-transport conditioning policy: the THREE observed deltas between the BT and USB
    assemblies, expressed as data so each later convergence is a one-line flip with a
@@ -29,29 +29,29 @@ typedef struct {
     mt2_liftoff_shape_t liftoff_shape;
     uint8_t emit_empty_frames;   /* 1: zero-contact frames reach the sink; 0: dropped */
     uint8_t arm_watchdog;        /* 1: arm the MT2_IDLE_MS silence flush while contacts are down */
-} mt2_session_policy_t;
+} mavericks_session_policy_t;
 
-/* The shipped row (defined in mt2_session.c so host tests drive the exact row the
+/* The shipped row (defined in mavericks_session.c so host tests drive the exact row the
    kext registers). mt2_policy_default = the single MT2 conditioning policy — both
    transports converged to it (ABSENCE_PAIR liftoff, no empty-frame forwarding, silence
    watchdog); a future device would supply its own row. */
-extern const mt2_session_policy_t mt2_policy_default;
+extern const mavericks_session_policy_t mt2_policy_default;
 
 typedef struct {
     uintptr_t active_source;
     mt2_transport_mode_t mode;
     uint32_t settle_until_ms;
     unsigned last_button;
-    mt2_session_policy_t policy;
-    mt2_lifecycle_t lifecycle;   /* MakeTouch/BreakTouch lifecycle synthesis */
-} mt2_session_t;
+    mavericks_session_policy_t policy;
+    mavericks_lifecycle_t lifecycle;   /* MakeTouch/BreakTouch lifecycle synthesis */
+} mavericks_session_t;
 
 /* policy must be non-NULL — pass a shipped row (mt2_policy_default). */
-void mt2_session_connect(mt2_session_t *s, uintptr_t source,
+void mavericks_session_connect(mavericks_session_t *s, uintptr_t source,
                          mt2_transport_mode_t mode,
-                         const mt2_session_policy_t *policy, uint32_t now_ms);
-void mt2_session_frame(mt2_session_t *s, uintptr_t source,
+                         const mavericks_session_policy_t *policy, uint32_t now_ms);
+void mavericks_session_frame(mavericks_session_t *s, uintptr_t source,
                        const MavericksTouchFrame *tf, uint32_t now_ms,
-                       const mt2_session_sink_t *sink);
-void mt2_session_timer(mt2_session_t *s, const mt2_session_sink_t *sink);
+                       const mavericks_session_sink_t *sink);
+void mavericks_session_timer(mavericks_session_t *s, const mavericks_session_sink_t *sink);
 #endif

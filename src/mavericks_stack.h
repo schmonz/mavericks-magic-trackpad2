@@ -1,5 +1,5 @@
-#ifndef MT2_STACK_H
-#define MT2_STACK_H
+#ifndef MAVERICKS_STACK_H
+#define MAVERICKS_STACK_H
 /* Canonical RE facts for driving the 10.9 multitouch stack (Magic Trackpad 2).
  *
  * SINGLE SOURCE OF TRUTH. The kext builds with the constants tagged [BUILD]; reference-only facts
@@ -43,7 +43,7 @@
 #define MT2_OFF_L2CAP_DELEGATE_CB        0x110  /* [BUILD] IOBluetoothL2CAPChannel delegate cb     */
                                                /*   fn-ptr; the target is the ADJACENT word       */
                                                /*   +0x118 (= cb + sizeof(void*)) — which the      */
-                                               /*   mt2_splice MEM_SLOT engine saves/restores as  */
+                                               /*   mavericks_splice MEM_SLOT engine saves/restores as  */
                                                /*   "slot+8". re/xref-offset on newDataIn.        */
 #define MT2_OFF_AMD_HANDLER_OBJ          0xa8   /* [REF] AMD getReport handler object; layout      */
                                                /*   {report fn @+0x0, refcon +0x8,                */
@@ -109,4 +109,4 @@
  *         AMD::start sets the S+9 device-button gate (physical + two-finger right click).          */
 #define MT2_PROP_EXTRACT_BUTTON          "ExtractAndPostDeviceButtonState"
 
-#endif /* MT2_STACK_H */
+#endif /* MAVERICKS_STACK_H */

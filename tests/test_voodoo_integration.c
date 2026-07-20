@@ -1,7 +1,7 @@
 #include "test.h"
 #include <string.h>
 extern "C" {
-#include "mt2_session.h"
+#include "mavericks_session.h"
 #include "mt1_encode.h"
 }
 #include "mt2_voodoo_translate.h"
@@ -16,9 +16,9 @@ static void rec_timer(void *ctx, uint32_t ms){ (void)ctx; (void)ms; }
 static void run_tests(void) {
     rec_t rec; memset(&rec, 0, sizeof(rec));
     /* positional init in struct field order: post_button_edge, feed_frame, arm_timer, ctx */
-    mt2_session_sink_t sink = { rec_btn, rec_feed, rec_timer, &rec };
-    mt2_session_t s;
-    mt2_session_connect(&s, 1, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
+    mavericks_session_sink_t sink = { rec_btn, rec_feed, rec_timer, &rec };
+    mavericks_session_t s;
+    mavericks_session_connect(&s, 1, MT2_EVENT_DRIVEN, &mt2_policy_default, 0);
 
     /* A VoodooInput satellite's first frame: one active contact, STANDARD fields only. */
     VoodooInputEvent w; memset(&w, 0, sizeof(w));
@@ -32,7 +32,7 @@ static void run_tests(void) {
     w.transducers[0].currentCoordinates.pressure = 40;
 
     MavericksTouchFrame f = mt2_frame_from_voodoo(&w, 1000, 1000);
-    mt2_session_frame(&s, 1, &f, 10, &sink);
+    mavericks_session_frame(&s, 1, &f, 10, &sink);
 
     CHECK_EQ(rec.n, 1);   /* exactly one frame: single-contact first touch, no empty/pump frames */
     /* The engine derived MakeTouch on the contact's first frame — the satellite never set it. */

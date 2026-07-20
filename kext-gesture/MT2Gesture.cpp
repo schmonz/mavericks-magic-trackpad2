@@ -4,7 +4,7 @@
  * For the MT2 itself it does NOT create a multitouch device of its own — Apple's genuine driver
  * does that: over BT a manually-started BNBTrackpadDevice spawns its own AppleMultitouchDevice
  * (AMD); over USB a manually-started AppleUSBMultitouchDriver owns the interface. This nub:
- *   - hosts the shared mt2_session (settle gate, MakeTouch/Touching/BreakTouch lifecycle, liftoff)
+ *   - hosts the shared mavericks_session (settle gate, MakeTouch/Touching/BreakTouch lifecycle, liftoff)
  *     that the in-kernel readers feed via connectionEstablished()/submitFrame(); and
  *   - dispatches the session's effects to the active reader's registered transport sink
  *     (registered at connectionEstablished, deregistered at connectionClosed) — encode and
@@ -56,12 +56,12 @@ void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
 
 /* A reader announces its transport: register its policy row + delivery sink, reset the session. */
 void com_schmonz_MT2Gesture::connectionEstablished(IOService *source, mt2_transport_mode_t mode,
-                                                   const mt2_session_policy_t *policy,
+                                                   const mavericks_session_policy_t *policy,
                                                    const mt2_transport_sink_t *sink) {
     if (fSessionLock) IOLockLock(fSessionLock);
     if (fIdleTimer) fIdleTimer->cancelTimeout();
     fXport = *sink;
-    mt2_session_connect(&fSession, (uintptr_t)source, mode, policy, uptime_ms());
+    mavericks_session_connect(&fSession, (uintptr_t)source, mode, policy, uptime_ms());
     if (fSessionLock) IOLockUnlock(fSessionLock);
     IOLog("MT2Gesture: connection established (src=%p mode=%d)\n", source, (int)mode);
 }
@@ -75,7 +75,7 @@ void com_schmonz_MT2Gesture::connectionClosed(IOService *source) {
         if (fIdleTimer) fIdleTimer->cancelTimeout();
         fXport.feed_frame = 0; fXport.post_button_edge = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
         fSession.active_source = 0;
-        mt2_lifecycle_reset(&fSession.lifecycle);
+        mavericks_lifecycle_reset(&fSession.lifecycle);
         IOLog("MT2Gesture: connection closed (src=%p)\n", source);
     }
     if (fSessionLock) IOLockUnlock(fSessionLock);
@@ -93,7 +93,7 @@ void com_schmonz_MT2Gesture::quiesceDelivery(void) {
 /* A reader submits one decoded frame; the session decides what reaches the device. */
 void com_schmonz_MT2Gesture::submitFrame(IOService *source, const MavericksTouchFrame *tf) {
     if (fSessionLock) IOLockLock(fSessionLock);
-    mt2_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
+    mavericks_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
     if (fSessionLock) IOLockUnlock(fSessionLock);
 }
 
@@ -114,7 +114,7 @@ void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /
     com_schmonz_MT2Gesture *self = OSDynamicCast(com_schmonz_MT2Gesture, owner);
     if (!self) return;
     if (self->fSessionLock) IOLockLock(self->fSessionLock);
-    mt2_session_timer(&self->fSession, &self->fSink);
+    mavericks_session_timer(&self->fSession, &self->fSink);
     if (self->fSessionLock) IOLockUnlock(self->fSessionLock);
 }
 
@@ -146,7 +146,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fSession.policy = mt2_policy_default;   /* inert default — active_source==0 drops all frames until
                                           a reader's connectionEstablished installs its real row;
                                           the default row keeps the struct initialized. */
-    mt2_lifecycle_reset(&fSession.lifecycle);
+    mavericks_lifecycle_reset(&fSession.lifecycle);
     fSink.post_button_edge = &com_schmonz_MT2Gesture::sink_post_button_edge;
     fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
     fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;

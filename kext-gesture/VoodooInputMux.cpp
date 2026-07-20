@@ -40,9 +40,9 @@ void com_schmonz_VoodooInput::armIdle(uint32_t ms) { if (fIdle) fIdle->setTimeou
 void com_schmonz_VoodooInput::idleTick(OSObject *owner, IOTimerEventSource *) {
     com_schmonz_VoodooInput *self = OSDynamicCast(com_schmonz_VoodooInput, owner);
     if (!self) return;
-    mt2_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, self };
+    mavericks_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, self };
     if (self->fLock) IOLockLock(self->fLock);
-    mt2_session_timer(&self->fSession, &sink);
+    mavericks_session_timer(&self->fSession, &sink);
     if (self->fLock) IOLockUnlock(self->fLock);
 }
 
@@ -66,7 +66,7 @@ bool com_schmonz_VoodooInput::start(IOService *provider) {
     fWL = IOWorkLoop::workLoop();
     fIdle = fWL ? IOTimerEventSource::timerEventSource(this, &idleTick) : 0;
     if (fIdle) fWL->addEventSource(fIdle);
-    mt2_session_connect(&fSession, (uintptr_t)this, MT2_EVENT_DRIVEN, &mt2_policy_default, (uint32_t)uptime_ms());
+    mavericks_session_connect(&fSession, (uintptr_t)this, MT2_EVENT_DRIVEN, &mt2_policy_default, (uint32_t)uptime_ms());
 
     setProperty(VOODOO_INPUT_IDENTIFIER, kOSBooleanTrue);  // satellites locate us by this
     registerService();
@@ -76,7 +76,7 @@ bool com_schmonz_VoodooInput::start(IOService *provider) {
 
 void com_schmonz_VoodooInput::stop(IOService *provider) {
     fProvider = 0;                        // fence: a late message() drops on the provider==fProvider check
-    /* Quiesce: drain any message() that passed the fence and holds fLock inside mt2_session_frame,
+    /* Quiesce: drain any message() that passed the fence and holds fLock inside mavericks_session_frame,
      * before we tear down fSynth / free fLock. With fProvider==0 no new message() enters the fLock
      * region, so this barrier makes the teardown UAF-safe (matches the old quiesceDelivery pattern).
      * Needed for the edge case where the mux is torn down while a live satellite is still sending. */
@@ -92,9 +92,9 @@ IOReturn com_schmonz_VoodooInput::message(UInt32 type, IOService *provider, void
     if (type == kIOMessageVoodooInputMessage && provider == fProvider && argument) {
         const VoodooInputEvent *w = (const VoodooInputEvent *)argument;
         MavericksTouchFrame f = mt2_frame_from_voodoo(w, fLogicalMaxX, fLogicalMaxY);
-        mt2_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, this };
+        mavericks_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, this };
         if (fLock) IOLockLock(fLock);
-        mt2_session_frame(&fSession, (uintptr_t)this, &f, (uint32_t)uptime_ms(), &sink);
+        mavericks_session_frame(&fSession, (uintptr_t)this, &f, (uint32_t)uptime_ms(), &sink);
         if (fLock) IOLockUnlock(fLock);
         return kIOReturnSuccess;
     }

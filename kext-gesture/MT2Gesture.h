@@ -1,7 +1,7 @@
 #ifndef MT2GESTURE_H
 #define MT2GESTURE_H
 #include <IOKit/IOService.h>
-#include "mt2_session.h"
+#include "mavericks_session.h"
 #include "amd_shim.h"
 
 /* The transport nub + session/conditioning core. It creates NO multitouch device of its own —
@@ -29,8 +29,8 @@ typedef struct {
 
 class com_schmonz_MT2Gesture : public IOService {
     OSDeclareDefaultStructors(com_schmonz_MT2Gesture)
-    mt2_session_t fSession;               /* pure functional core: owns all post-decode logic */
-    mt2_session_sink_t fSink;             /* effects seam handed to the session: trampolines below */
+    mavericks_session_t fSession;               /* pure functional core: owns all post-decode logic */
+    mavericks_session_sink_t fSink;             /* effects seam handed to the session: trampolines below */
     mt2_transport_sink_t fXport;          /* the ACTIVE reader's delivery, registered at
                                              connectionEstablished, cleared at connectionClosed */
     IOWorkLoop *fPipeWL;                  /* hosts the watchdog timer */
@@ -53,7 +53,7 @@ public:
      * reaches the device via the registered sink. connectionClosed() deregisters: after it
      * returns, no sink callback of that reader's will run (clear-under-lock + lifecycle reset). */
     void connectionEstablished(IOService *source, mt2_transport_mode_t mode,
-                               const mt2_session_policy_t *policy,
+                               const mavericks_session_policy_t *policy,
                                const mt2_transport_sink_t *sink);
     void connectionClosed(IOService *source);
 

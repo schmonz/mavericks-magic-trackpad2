@@ -29,7 +29,7 @@ MavericksTouchFrame mt2_frame_from_voodoo(const VoodooInputEvent *wire,
         c->currentCoordinates.pressure = t->currentCoordinates.pressure;
         c->currentCoordinates.width    = t->currentCoordinates.width;
         /* state / touch_major / touch_minor / orientation deliberately left 0:
-         * mt2_lifecycle derives state; mt1_encode defaults the radii/orientation */
+         * mavericks_lifecycle derives state; mt1_encode defaults the radii/orientation */
         if (t->isPhysicalButtonDown) button = 1;
     }
     f.isPhysicalButtonDown = button;

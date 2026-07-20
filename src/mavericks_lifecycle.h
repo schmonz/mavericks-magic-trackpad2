@@ -1,5 +1,5 @@
-#ifndef MT2_LIFECYCLE_H
-#define MT2_LIFECYCLE_H
+#ifndef MAVERICKS_LIFECYCLE_H
+#define MAVERICKS_LIFECYCLE_H
 #include "mavericks_frame.h"
 #include <stdint.h>
 
@@ -13,7 +13,7 @@
  * that only ever reports Touching reads as "already down, then vanished" and a
  * tap never commits.
  *
- * mt2_lifecycle tracks which contact ids were present last frame (and their last
+ * mavericks_lifecycle tracks which contact ids were present last frame (and their last
  * position) so we can synthesize the missing transitions:
  *   - a new contact's first frame  -> TS_START (MakeTouch)
  *   - a vanished contact           -> TS_END   (BreakTouch), at last-known position
@@ -21,11 +21,11 @@
 typedef struct {
     uint32_t prev_ids;             /* bitmask of ids present in the last stepped frame */
     MavericksTouchContact  last[MAX_TOUCHES];    /* last-known touch per id (index = id), for BreakTouch */
-} mt2_lifecycle_t;
+} mavericks_lifecycle_t;
 
 /* Forget all history: the next contacts read as new, none pending an end.
  * Call on (re)connect. */
-void mt2_lifecycle_reset(mt2_lifecycle_t *lc);
+void mavericks_lifecycle_reset(mavericks_lifecycle_t *lc);
 
 /* Advance by one frame of currently-present contacts (post mt2_drop_lifted),
  * in place:
@@ -34,12 +34,12 @@ void mt2_lifecycle_reset(mt2_lifecycle_t *lc);
  *     but absent now;
  *   - record this frame's present ids + their touches for next time (ended ids are
  *     dropped from history, so their end is delivered exactly once). */
-void mt2_lifecycle_step(mt2_lifecycle_t *lc, MavericksTouchFrame *frame);
+void mavericks_lifecycle_step(mavericks_lifecycle_t *lc, MavericksTouchFrame *frame);
 
 /* Build a frame of TS_END contacts (last-known position) for every still-active id,
  * then clear history. Returns 1 if any were produced, else 0. Used as a silence
  * watchdog: if the input stream simply stops with no lift frame, deliver the
  * outstanding BreakTouch so the recognizer sees a clean lift. */
-int mt2_lifecycle_flush(mt2_lifecycle_t *lc, MavericksTouchFrame *out);
+int mavericks_lifecycle_flush(mavericks_lifecycle_t *lc, MavericksTouchFrame *out);
 
 #endif

@@ -7,7 +7,7 @@
  * manual-start it, verify its class before any vtable write, instance-vtable-interpose a seam, start
  * it, and tear it all down in the RIGHT order. Both transport readers (MT2BTReader, MT2USBReader) drive
  * this; the IOKit calls are injected via gh_adapter_t so the dangerous ordering logic lives — and is
- * unit-tested — in one place. (Policy here / mechanism in the adapter, mirroring mt2_session/sink.)
+ * unit-tested — in one place. (Policy here / mechanism in the adapter, mirroring mavericks_session/sink.)
  *
  * Each adapter callback receives the gh_host_t, which carries everything it needs: the hosted object
  * (obj), the IOKit provider to attach/start on (provider), the device context (ctx), and the config

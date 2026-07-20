@@ -1,4 +1,4 @@
-/* synth_tap - drive our REAL pipeline (mt2_session -> lifecycle -> mt1_encode) with a
+/* synth_tap - drive our REAL pipeline (mavericks_session -> lifecycle -> mt1_encode) with a
  * synthetic single-finger TAP and inject each encoded frame into the kext, so we can
  * test tap-to-click with no physical finger. A tap = one stationary contact present for
  * a few frames (well under the recognizer's 250ms duration gate), then a lift frame that
@@ -14,7 +14,7 @@
  *
  * Run as root with the kext loaded. Pair with click_monitor (does a click commit?) and/or
  * mt_contacts (what does the recognizer receive?). */
-#include "../src/mt2_session.h"
+#include "../src/mavericks_session.h"
 #include "../src/mt1_encode.h"
 #include <IOKit/IOKitLib.h>
 #include <mach/mach_time.h>
@@ -85,12 +85,12 @@ int main(int argc, char **argv) {
     IOObjectRelease(svc);
     if (kr != KERN_SUCCESS) { fprintf(stderr, "IOServiceOpen 0x%x\n", kr); return 1; }
 
-    mt2_session_t s; memset(&s, 0, sizeof s);
-    mt2_session_sink_t sink; sink.post_button_edge = sink_click; sink.feed_frame = sink_feed;
+    mavericks_session_t s; memset(&s, 0, sizeof s);
+    mavericks_session_sink_t sink; sink.post_button_edge = sink_click; sink.feed_frame = sink_feed;
     sink.arm_timer = sink_arm; sink.ctx = 0;
 
     uint32_t now = elapsed_ms();
-    mt2_session_connect(&s, (uintptr_t)SRC, MT2_EVENT_DRIVEN, &mt2_policy_bt, now);
+    mavericks_session_connect(&s, (uintptr_t)SRC, MT2_EVENT_DRIVEN, &mt2_policy_bt, now);
     printf("synth_tap: %d down-frames @ %dms at MT2(%d,%d)\n", downframes, frame_ms, x, y);
 
     /* SYNTH_TAPS=N: repeat N taps in ONE open connection (default 1). The recognizer queues a
@@ -116,14 +116,14 @@ int main(int argc, char **argv) {
             f.touches[0].touch_major = 600; f.touches[0].touch_minor = 500;
             f.touches[0].size = 40; f.touches[0].orientation = 0;
             now = elapsed_ms();
-            mt2_session_frame(&s, (uintptr_t)SRC, &f, now, &sink);
+            mavericks_session_frame(&s, (uintptr_t)SRC, &f, now, &sink);
             usleep((useconds_t)frame_ms * 1000);
         }
         /* lift: empty frame -> session synthesizes the BreakTouch AND a trailing zero-contact
          * frame so the recognizer finalizes the path lift. */
         touch_frame_t lift; memset(&lift, 0, sizeof lift); lift.ntouches = 0;
         now = elapsed_ms();
-        mt2_session_frame(&s, (uintptr_t)SRC, &lift, now, &sink);
+        mavericks_session_frame(&s, (uintptr_t)SRC, &lift, now, &sink);
         /* pump frames: flush THIS tap's queued click now, instead of waiting for the next tap. */
         for (int p = 0; p < pump; p++) {
             if (pump_ms > 0) usleep((useconds_t)pump_ms * 1000);

@@ -29,8 +29,8 @@
 extern "C" {
 #include "mt2_synth_report.h"
 }
-/* mt2_stack.h: MT2_PROP_EXTRACT_BUTTON — must precede start() */
-#include "../src/mt2_stack.h"
+/* mavericks_stack.h: MT2_PROP_EXTRACT_BUTTON — must precede start() */
+#include "../src/mavericks_stack.h"
 
 /* ---- per-build context (replaces module-static g_regs / g_shell) ----------------------------- */
 

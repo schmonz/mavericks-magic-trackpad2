@@ -1,4 +1,4 @@
-#include "../src/mt2_pipeline.h"
+#include "../src/mavericks_pipeline.h"
 #include "test.h"
 
 static void run_tests(void) {

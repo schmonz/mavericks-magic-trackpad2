@@ -1,7 +1,7 @@
-#ifndef MT2_PIPELINE_H
-#define MT2_PIPELINE_H
+#ifndef MAVERICKS_PIPELINE_H
+#define MAVERICKS_PIPELINE_H
 /* Pure conditioning primitives for the pipeline's CONDITION stage. See the
-   Translate/Condition/Inject banner atop mt2_session.c for the whole picture. */
+   Translate/Condition/Inject banner atop mavericks_session.c for the whole picture. */
 #include "mavericks_frame.h"
 #include <stdint.h>
 

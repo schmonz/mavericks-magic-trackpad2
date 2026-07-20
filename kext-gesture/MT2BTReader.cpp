@@ -30,21 +30,21 @@
  * with C++ linkage on both sides — no extern "C". */
 #include "mt2_bt_decode.h"
 #include "mt2_battery.h"    /* mt2_parse_battery_report — shared pure decode of report 0x90 */
-#include "mt2_pipeline.h"   /* MT2_EVENT_DRIVEN */
+#include "mavericks_pipeline.h"   /* MT2_EVENT_DRIVEN */
 #include "mt2_log.h"           /* MT2_DLOG (runtime debug.mt2_log) */
 #include "mt2_diag.h"          /* shared per-transport stream diagnostics (report id / first frame / edge / gap) */
 #include "../src/conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
-#include "../src/mt2_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
+#include "../src/mavericks_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mt2_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 #include "mt2_synth_amd.h"           /* mt2_synth_amd_amd — read the mux's terminal AMD node for battery */
 #include "mt2_voodoo_translate.h"     /* mt2_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
 #include "VoodooInputMux.h"           /* com_schmonz_VoodooInput::synthCtx() — terminal AMD node for battery */
 #include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
-/* mt2_splice_kext.h -> mt2_splice.h -> vtable_clone.h requires these macros before the include. */
+/* mavericks_splice_kext.h -> mavericks_splice.h -> vtable_clone.h requires these macros before the include. */
 #define VTC_ALLOC(sz)  IOMalloc(sz)
 #define VTC_FREE(p,sz) IOFree((p), (sz))
-#include "mt2_splice_kext.h"   /* declarative interpose engine + kext ops (mt2_splice_kext_ops). */
+#include "mavericks_splice_kext.h"   /* declarative interpose engine + kext ops (mavericks_splice_kext_ops). */
 
 /* Battery poll cadence (ms). The MT2 only answers a GET_REPORT(0x90) — it never streams battery —
  * so the control reader polls on this interval once the connection is settled. A battery moves
@@ -53,7 +53,7 @@
 
 OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 
-/* Field offsets: canonical values + re/ commands live in ../src/mt2_stack.h. These are readable
+/* Field offsets: canonical values + re/ commands live in ../src/mavericks_stack.h. These are readable
  * local aliases so the numbers exist in exactly one place (no doc/build drift). */
 #define L2CAP_DELEGATE_CB_OFF       MT2_OFF_L2CAP_DELEGATE_CB     /* L2CAP delegate cb (+8 = target)*/
 
@@ -68,7 +68,7 @@ static IOService *gInterruptReader = 0;
 
 /* Control-delegate seam state (battery channel). gCtrlInterposedChannel is the "which channel"
  * tracker (where to run the restore). */
-static mt2_splice_state_t gBtControlState;
+static mavericks_splice_state_t gBtControlState;
 static IOBluetoothL2CAPChannel *gCtrlInterposedChannel = 0;
 
 static uint32_t bt_uptime_ms(void) {
@@ -149,8 +149,8 @@ static void bt_control_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
 /* The BT control-channel L2CAP delegate seam as a declarative row (MEM_SLOT: swap the cb at +0x110,
  * the engine saves both cb and the adjacent +0x118 target). SLOT_POPULATED gate = the old
  * "not set yet / already ours -> NotReady" precondition. */
-static const mt2_splice_row_t kBtControlRow = {
-    "bt-control", MT2_SPLICE_MEM_SLOT, MT2_GATE_SLOT_POPULATED, 0, 0,
+static const mavericks_splice_row_t kBtControlRow = {
+    "bt-control", MAVERICKS_SPLICE_MEM_SLOT, MAVERICKS_GATE_SLOT_POPULATED, 0, 0,
     L2CAP_DELEGATE_CB_OFF, (void *)&bt_control_shim, 0, 0, 0
 };
 
@@ -374,9 +374,9 @@ IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg
 IOReturn com_schmonz_MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, void *arg0,
                                                          void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
-    int rc = mt2_splice_install(&kBtControlRow, ch, &mt2_splice_kext_ops, &gBtControlState);
-    if (rc == MT2_SPLICE_NOT_READY) return kIOReturnNotReady;
-    if (rc != MT2_SPLICE_OK) return kIOReturnError;
+    int rc = mavericks_splice_install(&kBtControlRow, ch, &mavericks_splice_kext_ops, &gBtControlState);
+    if (rc == MAVERICKS_SPLICE_NOT_READY) return kIOReturnNotReady;
+    if (rc != MAVERICKS_SPLICE_OK) return kIOReturnError;
     gCtrlInterposedChannel = ch;
     IOLog("MT2BTReader: battery control interpose installed (origCb=%p origTgt=%p)\n",
           gBtControlState.saved_cb, gBtControlState.saved_target);
@@ -387,7 +387,7 @@ IOReturn com_schmonz_MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, v
 IOReturn com_schmonz_MT2BTReader::controlRestoreInGate(OSObject * /*owner*/, void *arg0,
                                                        void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
-    mt2_splice_restore(ch, &kBtControlRow, &mt2_splice_kext_ops, &gBtControlState);
+    mavericks_splice_restore(ch, &kBtControlRow, &mavericks_splice_kext_ops, &gBtControlState);
     return kIOReturnSuccess;
 }
 

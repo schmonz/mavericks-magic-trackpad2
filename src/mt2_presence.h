@@ -2,7 +2,7 @@
 #define MT2_PRESENCE_H
 
 /* Pure transport-presence state machine. No IOKit, no Cocoa, no globals.
- * Sibling of mt2_connect_sm (bring-up) and the arbitration concern in mt2_session/mt2_coordinator.
+ * Sibling of mt2_connect_sm (bring-up) and the arbitration concern in mavericks_session/mt2_coordinator.
  * An adapter translates IOKit device edges/timers/poll into presence_event_t, calls these, and
  * interprets the returned action for its consumer (the prefpane renders it; the handoff acts on it). */
 

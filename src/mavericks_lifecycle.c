@@ -1,11 +1,11 @@
-#include "mt2_lifecycle.h"
+#include "mavericks_lifecycle.h"
 
-void mt2_lifecycle_reset(mt2_lifecycle_t *lc) {
+void mavericks_lifecycle_reset(mavericks_lifecycle_t *lc) {
     lc->prev_ids = 0;
     /* last[] need not be cleared: it is only read for ids set in prev_ids. */
 }
 
-void mt2_lifecycle_step(mt2_lifecycle_t *lc, MavericksTouchFrame *frame) {
+void mavericks_lifecycle_step(mavericks_lifecycle_t *lc, MavericksTouchFrame *frame) {
     uint32_t now_ids = 0;
 
     /* Pass 1: state by PRESENCE, not by the device's per-frame state bits. The MT2
@@ -39,7 +39,7 @@ void mt2_lifecycle_step(mt2_lifecycle_t *lc, MavericksTouchFrame *frame) {
     lc->prev_ids = now_ids;
 }
 
-int mt2_lifecycle_flush(mt2_lifecycle_t *lc, MavericksTouchFrame *out) {
+int mavericks_lifecycle_flush(mavericks_lifecycle_t *lc, MavericksTouchFrame *out) {
     out->contact_count = 0;
     out->isPhysicalButtonDown = 0;
     out->timestamp = 0;

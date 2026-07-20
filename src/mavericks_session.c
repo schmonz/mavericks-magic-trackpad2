@@ -1,11 +1,11 @@
-#include "mt2_session.h"
+#include "mavericks_session.h"
 
 /* ===========================================================================
- * mt2_session — the CONDITION stage of the input pipeline.
+ * mavericks_session — the CONDITION stage of the input pipeline.
  *
  * The driver does three jobs; only ONE of them lives here:
  *   TRANSLATE  faithfully reframe the MT2's native frames into the report
- *              Apple's genuine driver expects (mt2_decode -> mt2_session ->
+ *              Apple's genuine driver expects (mt2_decode -> mavericks_session ->
  *              mt1_encode / mt2_usb_bytes). We change FORMAT, never meaning.
  *   CONDITION  the only thing we SHAPE: settle gate, contact lifecycle
  *              (MakeTouch/BreakTouch), liftoff shaping, silence watchdog.
@@ -21,25 +21,25 @@
  * =========================================================================== */
 
 /* The single MT2 conditioning policy — both transports converged to it. */
-const mt2_session_policy_t mt2_policy_default = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
+const mavericks_session_policy_t mt2_policy_default = { MT2_LIFTOFF_ABSENCE_PAIR, /*empties*/0, /*watchdog*/1 };
 
-void mt2_session_connect(mt2_session_t *s, uintptr_t source,
+void mavericks_session_connect(mavericks_session_t *s, uintptr_t source,
                          mt2_transport_mode_t mode,
-                         const mt2_session_policy_t *policy, uint32_t now_ms) {
+                         const mavericks_session_policy_t *policy, uint32_t now_ms) {
     s->active_source = source;
     s->mode = mode;
     s->policy = *policy;
     s->settle_until_ms = now_ms + MT2_SETTLE_MS;
     s->last_button = 0;
-    mt2_lifecycle_reset(&s->lifecycle);      /* next contacts read as new; none pending an end */
+    mavericks_lifecycle_reset(&s->lifecycle);      /* next contacts read as new; none pending an end */
 }
 
 /* Deliver one conditioned frame to Apple's recognizer. If the device's REAL
    physical-button bit changed since the last frame, forward that edge first —
    the mask is a faithful mapping of the hardware button + finger count to Apple's
    primary/secondary click code, NOT a synthesized click. */
-static void emit(mt2_session_t *s, const MavericksTouchFrame *tf,
-                 const mt2_session_sink_t *sink) {
+static void emit(mavericks_session_t *s, const MavericksTouchFrame *tf,
+                 const mavericks_session_sink_t *sink) {
     unsigned mask = 0;
     if (mt2_button_edge((unsigned)tf->isPhysicalButtonDown, tf->contact_count, &s->last_button, &mask))
         sink->post_button_edge(sink->ctx, mask);
@@ -74,7 +74,7 @@ static int frame_all_breaktouch(const MavericksTouchFrame *f) {
    re-checks its flush timeout when a FRAME arrives; with no frame after the lift it never flushes,
    so the click batches onto the NEXT tap's frames as a ~6ms phantom double-click (and a final tap
    with nothing after it drops entirely). Our pipeline goes silent after the lift -- even idle
-   device reports are dropped (contact_count==0 emits nothing in mt2_session_frame) -- so without this
+   device reports are dropped (contact_count==0 emits nothing in mavericks_session_frame) -- so without this
    the recognizer falls into the erratic MTTapDragManager::handleTapsForDrag drag-cycle path. The
    2nd absence gives it the cycle to flush cleanly via MTTapDragManager::sendWaitingClickAtHalfTimeout
    -- one clean click per tap. Verified hands-free: tools/trace_btnstack.d shows every button post
@@ -84,8 +84,8 @@ static int frame_all_breaktouch(const MavericksTouchFrame *f) {
 
    A partial lift still emits the frame as-is (present contacts + the lifting one's TS_END); there
    are still contacts down, so no absence and no full liftoff. Shared path => both transports. */
-static void emit_with_liftoff(mt2_session_t *s, const MavericksTouchFrame *tf,
-                              const mt2_session_sink_t *sink) {
+static void emit_with_liftoff(mavericks_session_t *s, const MavericksTouchFrame *tf,
+                              const mavericks_session_sink_t *sink) {
     if (frame_all_breaktouch(tf)) {
         MavericksTouchFrame empty = {0};
         emit(s, &empty, sink);   /* finalize the path liftoff */
@@ -95,9 +95,9 @@ static void emit_with_liftoff(mt2_session_t *s, const MavericksTouchFrame *tf,
     }
 }
 
-void mt2_session_frame(mt2_session_t *s, uintptr_t source,
+void mavericks_session_frame(mavericks_session_t *s, uintptr_t source,
                        const MavericksTouchFrame *tf, uint32_t now_ms,
-                       const mt2_session_sink_t *sink) {
+                       const mavericks_session_sink_t *sink) {
     if (source != s->active_source) return;                       /* single-active guard */
     if (!mt2_settle_passed(now_ms, s->settle_until_ms)) return;   /* settle gate */
 
@@ -108,7 +108,7 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
        held-replay deceleration is needed. */
     MavericksTouchFrame f = *tf;
     mt2_drop_lifted(&f);                          /* keep only real (size>0) contacts */
-    mt2_lifecycle_step(&s->lifecycle, &f);        /* +START for new, +BreakTouch for vanished */
+    mavericks_lifecycle_step(&s->lifecycle, &f);        /* +START for new, +BreakTouch for vanished */
     if (f.contact_count > 0) {
         if (s->policy.liftoff_shape == MT2_LIFTOFF_ABSENCE_PAIR)
             emit_with_liftoff(s, &f, sink);
@@ -125,14 +125,14 @@ void mt2_session_frame(mt2_session_t *s, uintptr_t source,
         sink->arm_timer(sink->ctx, MT2_IDLE_MS);
 }
 
-void mt2_session_timer(mt2_session_t *s, const mt2_session_sink_t *sink) {
+void mavericks_session_timer(mavericks_session_t *s, const mavericks_session_sink_t *sink) {
     /* Silence watchdog fired: deliver BreakTouch for any contact still marked down.
-       After a reconnect, mt2_session_connect reset the lifecycle (prev_ids = 0), so a
+       After a reconnect, mavericks_session_connect reset the lifecycle (prev_ids = 0), so a
        timer armed for a prior connection flushes nothing -- a harmless no-op.
        NB the flush emits the ABSENCE_PAIR shape regardless of policy.liftoff_shape —
        valid while every arm_watchdog row also uses ABSENCE_PAIR (true for both shipped
        rows; revisit if a row ever arms the watchdog with PASSTHROUGH). */
     MavericksTouchFrame end = {0};
-    if (mt2_lifecycle_flush(&s->lifecycle, &end))
+    if (mavericks_lifecycle_flush(&s->lifecycle, &end))
         emit_with_liftoff(s, &end, sink);
 }

@@ -2,7 +2,7 @@
  * Characterization net for the two transport input pipelines.
  *
  * Pins the EXACT 0x28 CompactV4 frame bytes each reader emits, so the engine unification
- * (both readers feeding one mt2_session; landed 2026-07) could not — and future changes
+ * (both readers feeding one mavericks_session; landed 2026-07) could not — and future changes
  * cannot — silently change what reaches Apple's gesture recognizer. The golden bytes below
  * were CAPTURED from the running build (not hand-derived) and frozen; a byte-level diff
  * fails the test. mt2_usb_to_compactv4, named below in history, is deleted; the USB path
@@ -10,9 +10,9 @@
  *
  * It drives the SAME pure calls the readers use (per docs/mt-stack/reader-seam-map.md):
  *   BT : mt2_bt_decode -> mt2_bt_wire_roundtrip (the VoodooInput wire the satellite emits, drops the
- *        ellipse tail) -> mt2_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN) -> mt1_encode.
+ *        ellipse tail) -> mavericks_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN) -> mt1_encode.
  *        No checksum on the BT feed. The mux owns this terminal on-device (identical policy).
- *   USB: mt2_usb_decode -> mt2_bt_wire_roundtrip (same VoodooInput wire) -> mt2_session_frame
+ *   USB: mt2_usb_decode -> mt2_bt_wire_roundtrip (same VoodooInput wire) -> mavericks_session_frame
  *        (policy row mt2_policy_default) -> mt1_encode. USB is now the synthetic satellite path
  *        (fabricated AMD, NO Apple checksum), symmetric with BT — not the retired genuine kUsbSink.
  *
@@ -25,7 +25,7 @@
  */
 #include "test.h"
 #include "../src/mt2_bt_decode.h"
-#include "../src/mt2_session.h"
+#include "../src/mavericks_session.h"
 #include "../src/mt1_encode.h"
 #include "../src/mt2_usb_decode.h"
 #include "../src/mt2_usb_bytes.h"
@@ -78,17 +78,17 @@ static void bt_feed (void *c, const MavericksTouchFrame *f){
 
 /* Run one raw BT report through decode -> session -> encode; return the fed 0x28 frame. */
 static int bt_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out, int *nfeed) {
-    mt2_session_t s; memset(&s, 0, sizeof s);
+    mavericks_session_t s; memset(&s, 0, sizeof s);
     bt_cap_t cap; memset(&cap, 0, sizeof cap);
-    mt2_session_sink_t sink = { bt_click, bt_feed, bt_arm, &cap };
-    mt2_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_default, /*now*/1000);
+    mavericks_session_sink_t sink = { bt_click, bt_feed, bt_arm, &cap };
+    mavericks_session_connect(&s, /*source*/0xB7, MT2_EVENT_DRIVEN, &mt2_policy_default, /*now*/1000);
     MavericksTouchFrame tf; memset(&tf, 0, sizeof tf);
     if (mt2_bt_decode(raw, rawlen, &tf) != 0) return -1;
     /* Mirror the satellite path: the BT reader now emits through the VoodooInput wire, which drops
      * the ellipse tail (orientation/major/minor). Route the decoded frame through the round-trip so
      * the golden reflects what actually reaches the mux's session on-device. */
     mt2_bt_wire_roundtrip(&tf);
-    mt2_session_frame(&s, 0xB7, &tf, /*now*/1000, &sink);
+    mavericks_session_frame(&s, 0xB7, &tf, /*now*/1000, &sink);
     memcpy(out, cap.buf, cap.len);
     if (nfeed) *nfeed = cap.nfeed;
     return cap.len;
@@ -106,29 +106,29 @@ static void usb_feed (void *c, const MavericksTouchFrame *f){
 
 /* Run one raw USB report through decode -> session (USB row) -> encode+checksum. The session is
  * caller-owned so the SEQ test can carry lifecycle state across reports (one stream). */
-static int usb_pipeline_session(mt2_session_t *s, const uint8_t *raw, size_t rawlen,
+static int usb_pipeline_session(mavericks_session_t *s, const uint8_t *raw, size_t rawlen,
                                 uint32_t ts, uint8_t *out) {
     usb_cap_t cap; memset(&cap, 0, sizeof cap); cap.ts = ts;
-    mt2_session_sink_t sink = { usb_click, usb_feed, usb_arm, &cap };
+    mavericks_session_sink_t sink = { usb_click, usb_feed, usb_arm, &cap };
     MavericksTouchFrame frame;
     if (mt2_usb_decode(raw, rawlen, &frame) != 0) return -1;
     mt2_bt_wire_roundtrip(&frame);   /* USB now emits through the VoodooInput wire too (drops ellipse tail) */
-    mt2_session_frame(s, 0x5B, &frame, /*now*/1000, &sink);
+    mavericks_session_frame(s, 0x5B, &frame, /*now*/1000, &sink);
     if (cap.len <= 0) return -1;
     memcpy(out, cap.buf, (size_t)cap.len);
     return cap.len;
 }
 
 static int usb_pipeline(const uint8_t *raw, size_t rawlen, uint8_t *out) {
-    mt2_session_t s; memset(&s, 0, sizeof s);
-    mt2_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_default, /*now*/1000);
+    mavericks_session_t s; memset(&s, 0, sizeof s);
+    mavericks_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_default, /*now*/1000);
     return usb_pipeline_session(&s, raw, rawlen, USB_TS, out);
 }
 
 /* ---- USB lifecycle SEQUENCE (make -> touch -> break) --------------------------------------------
  * The single-frame USB goldens above each run through a fresh session, so they pin DECODE + encode
- * but not the STATEFUL carry (mt2_drop_lifted + mt2_lifecycle_step) across frames. The engine path
- * carries that state in the shared mt2_session lifecycle (policy row mt2_policy_default), so we freeze
+ * but not the STATEFUL carry (mt2_drop_lifted + mavericks_lifecycle_step) across frames. The engine path
+ * carries that state in the shared mavericks_session lifecycle (policy row mt2_policy_default), so we freeze
  * a full 3-frame run through ONE session: same finger present twice (MakeTouch -> Touching) then
  * lifted (its record size drops to 0, drop_lifted removes it, lifecycle synthesizes BreakTouch at
  * the last position). Fixed timestamp for determinism. */
@@ -258,8 +258,8 @@ static void run_tests(void) {
         make_usb_one(mk, 0x20, 0x06);
         make_usb_one(tc, 0x20, 0x06);
         make_usb_one(br, 0x00, 0x06);   /* size 0 -> lifted -> BreakTouch synthesized */
-        mt2_session_t s; memset(&s, 0, sizeof s);
-        mt2_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_default, /*now*/1000);
+        mavericks_session_t s; memset(&s, 0, sizeof s);
+        mavericks_session_connect(&s, 0x5B, MT2_STREAMING, &mt2_policy_default, /*now*/1000);
         int nm = usb_pipeline_session(&s, mk, 21, USB_SEQ_TS, out);
 #if CHAR_CAPTURE
         dump("USB_SEQ_MAKE", out, nm);

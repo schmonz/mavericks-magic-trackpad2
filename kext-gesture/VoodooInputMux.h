@@ -1,7 +1,7 @@
 #ifndef VOODOO_INPUT_MUX_H
 #define VOODOO_INPUT_MUX_H
 #include <IOKit/IOService.h>
-#include "mt2_session.h"       // mt2_session_t
+#include "mavericks_session.h"       // mavericks_session_t
 #include "mt2_synth_amd.h"     // mt2_synth_amd_ctx (opaque) + feed/button/inject helpers
 class IOWorkLoop; class IOTimerEventSource;
 class com_schmonz_VoodooInput : public IOService {
@@ -17,7 +17,7 @@ private:
     uint32_t            fLogicalMaxX;
     uint32_t            fLogicalMaxY;
     mt2_synth_amd_ctx  *fSynth;
-    mt2_session_t       fSession;
+    mavericks_session_t       fSession;
     IOWorkLoop         *fWL;
     IOTimerEventSource *fIdle;
     IOLock             *fLock;
