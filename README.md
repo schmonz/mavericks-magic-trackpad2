@@ -31,7 +31,8 @@ Two 10.9 quirks we handle, both RE'd (`docs/mt-stack/`):
   covers Bluetooth).
 - Apple's Trackpad **preference pane** only shows the trackpad view for a genuine driver *class*, so a
   userland companion forces the trackpad controller for our fabricated device and keeps it honest as the
-  device connects / disconnects / switches transport.
+  device connects / disconnects / switches transport. The companion ships as a SIMBL plugin (SIMBLAgent
+  injects it into System Preferences); the trackpad itself works without it.
 
 Mavericks loads an unsigned kext as long as it's *not* in `/Library/Extensions` (so it's absent at early
 boot); the `voodooinputmavericks-run` LaunchDaemon kextloads it from `/usr/local/lib`, with a boot
@@ -49,6 +50,8 @@ brick-guard so a load panic can't loop.
       cmake --install mavericks-shared-cmake/build --prefix "$HOME/.local"
 
   The install self-registers in CMake's per-user package registry, so no `CMAKE_PREFIX_PATH` is needed.
+- The Trackpad preference-pane companion needs [SIMBL](https://mavericksforever.com/downloads/SIMBL.pkg)
+  — install it once (the trackpad itself works without it; only the pane's settings/battery/rename need it).
 
 ## Build & install
 
@@ -56,26 +59,24 @@ brick-guard so a load panic can't loop.
     cmake --build build-native --target pkg
     sudo installer -pkg build-native/voodooinputmavericks-<version>.pkg -target /
 
-Or, to install exactly what a release ships (same installer scripts, both prefpane loaders):
+Or, to install exactly what a release ships (same installer scripts, SIMBL-plugin companion):
 
     cmake --build build-native --target install-pkg
 
 ## Uninstall
 
     sudo launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.plist
-    launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.panewatch.plist
     launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist
     sudo kextunload -b com.schmonz.VoodooInputMavericks
     sudo rm -rf /Library/LaunchDaemons/com.schmonz.voodooinputmavericks*.plist \
         /Library/LaunchAgents/com.schmonz.voodooinputmavericks*.plist \
-        /Library/ScriptingAdditions/VoodooInputMavericksPane.osax \
-        /usr/local/libexec/voodooinputmavericks_pane_watch \
+        "/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle" \
         /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
+        /usr/local/libexec/mt2_usb_bt_handoff \
         /usr/local/lib/voodooinputmavericks /usr/local/{var,share}/voodooinputmavericks \
         /var/db/voodooinputmavericks-boot.state
 
-(If you installed the prefpane companion as a SIMBL plugin rather than the standalone osax, also remove
-`~/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle`.)
+(The prefpane companion is the SIMBL plugin removed above; SIMBL itself is a separate install you can keep.)
 
 ## Develop
 
@@ -104,7 +105,7 @@ the shipping product.
 - `third_party/VoodooInput/` — the vendored acidanthera VoodooInput ABI headers (verbatim); the interface
   our framework is built against and meant to merge into.
 - `tools/` — `mt2_reenumerate` ships, as does the Trackpad-pane companion (`voodooinputmavericks_prefpane/`,
-  delivered as a SIMBL plugin or a standalone `.osax` + launch-watcher). `multitouch_*` are generic
+  delivered as a SIMBL plugin). `multitouch_*` are generic
   MultitouchSupport probes; `tools/re` is the RE toolkit; `tools/spikes/` holds one-off probes.
 - `tests/` — host unit + shell tests.
 - `dist/` — the LaunchDaemon/Agent plists, the `voodooinputmavericks-run` boot wrapper, installer scripts.
