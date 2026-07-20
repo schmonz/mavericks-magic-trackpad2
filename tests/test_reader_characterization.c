@@ -12,8 +12,9 @@
  *   BT : mt2_bt_decode -> mt2_bt_wire_roundtrip (the VoodooInput wire the satellite emits, drops the
  *        ellipse tail) -> mt2_session_frame (settle+lifecycle+liftoff, MT2_EVENT_DRIVEN) -> mt1_encode.
  *        No checksum on the BT feed. The mux owns this terminal on-device (identical policy).
- *   USB: mt2_usb_decode -> mt2_session_frame (policy row mt2_policy_default) -> sink feed = mt1_encode
- *        + Apple checksum, exactly MT2USBReader::mt2_usb_handle_report + its registered kUsbSink.
+ *   USB: mt2_usb_decode -> mt2_bt_wire_roundtrip (same VoodooInput wire) -> mt2_session_frame
+ *        (policy row mt2_policy_default) -> mt1_encode. USB is now the synthetic satellite path
+ *        (fabricated AMD, NO Apple checksum), symmetric with BT — not the retired genuine kUsbSink.
  *
  * Real captured raw frames are reused from the existing decode tests:
  *   BT  1F/2F : tests/test_bt_decode.c  (report id 0x31, 4-byte header)
@@ -99,11 +100,8 @@ static void usb_click(void *c, unsigned m){ (void)c; (void)m; }
 static void usb_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
 static void usb_feed (void *c, const mt2_frame *f){
     usb_cap_t *cap = (usb_cap_t *)c;
-    int n = mt1_encode(f, cap->buf, sizeof cap->buf - 2, cap->ts);   /* mirrors usb_sink_feed_frame */
-    if (n < 0) return;
-    cap->buf[n] = cap->buf[n + 1] = 0;
-    mt2_apple_checksum(cap->buf, (size_t)n + 2);
-    cap->len = n + 2;
+    int n = mt1_encode(f, cap->buf, sizeof cap->buf, cap->ts);   /* fabricated-AMD feed: no Apple checksum */
+    if (n > 0) cap->len = n;
 }
 
 /* Run one raw USB report through decode -> session (USB row) -> encode+checksum. The session is
@@ -114,6 +112,7 @@ static int usb_pipeline_session(mt2_session_t *s, const uint8_t *raw, size_t raw
     mt2_session_sink_t sink = { usb_click, usb_feed, usb_arm, &cap };
     mt2_frame frame;
     if (mt2_usb_decode(raw, rawlen, &frame) != 0) return -1;
+    mt2_bt_wire_roundtrip(&frame);   /* USB now emits through the VoodooInput wire too (drops ellipse tail) */
     mt2_session_frame(s, 0x5B, &frame, /*now*/1000, &sink);
     if (cap.len <= 0) return -1;
     memcpy(out, cap.buf, (size_t)cap.len);
@@ -184,25 +183,29 @@ static const uint8_t GOLD_BT_2F[]  = {
     0x28,0x44,0x44,0x04,0xeb,0xa0,0xe8,0x03,0x20,0x20,0x7f,0x81,0x32,
     0xb5,0x7e,0xb9,0x03,0x20,0x20,0x7f,0x82,0x33
 };
+/* USB goldens regenerated 2026-07-19 for the synthetic-satellite unification: USB now emits through
+ * the VoodooInput wire into a fabricated AMD (mt1_encode, NO Apple report checksum) — exactly BT's
+ * path — NOT the retired genuine kUsbSink (mt1_encode + Apple checksum + chain). So each golden is
+ * SHORTER by the 2-byte checksum AND reflects the dropped ellipse tail (orient/major/minor -> const).
+ * Captured from the running build. */
 static const uint8_t GOLD_USB_1F[] = {
-    0x28,0x88,0x88,0x08,0x73,0x22,0xbb,0x03,0x20,0x20,0x7f,0x72,0x32,0xf6,0x03
+    0x28,0x88,0x88,0x08,0x73,0x22,0xbb,0x03,0x20,0x20,0x7f,0x82,0x32
 };
 static const uint8_t GOLD_USB_2F[] = {
     0x28,0x88,0x88,0x08,0xd9,0xa1,0x93,0x03,0x20,0x20,0xff,0x80,0x32,
-    0x5a,0x44,0xa3,0x03,0x20,0x20,0xff,0x76,0x33,0x6d,0x08
+    0x5a,0x44,0xa3,0x03,0x20,0x20,0xff,0x82,0x33
 };
 /* USB make->touch->break sequence (same finger id, size 0x20 twice then 0x00). State nibble at 4+8
- * advances 0x3x (MakeTouch) -> 0x4x (Touching); the break now emits the ABSENCE_PAIR empty frame
- * (BT shape) — a header+checksum with no contact record — instead of a BreakTouch contact.
- * Captured from the current build. */
+ * advances 0x3x (MakeTouch) -> 0x4x (Touching); the break emits the ABSENCE_PAIR empty frame
+ * (BT shape) — a header with no contact record, no checksum. */
 static const uint8_t GOLD_USB_SEQ_MAKE[]  = {
-    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x71,0x32,0x70,0x05
+    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x81,0x32
 };
 static const uint8_t GOLD_USB_SEQ_TOUCH[] = {
-    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x71,0x42,0x80,0x05
+    0x28,0xcd,0xcc,0x0c,0xfb,0xf4,0x12,0x00,0x20,0x20,0xbf,0x81,0x42
 };
 static const uint8_t GOLD_USB_SEQ_BREAK[] = {
-    0x28,0xcc,0xcc,0x0c,0xcc,0x01
+    0x28,0xcc,0xcc,0x0c
 };
 
 static void run_tests(void) {
@@ -235,7 +238,7 @@ static void run_tests(void) {
 #else
     CHECK(n > 0);
     CHECK_EQ(out[0], 0x28);
-    CHECK_EQ(n, 4 + 9 + 2);                        /* header + one contact + 2-byte checksum */
+    CHECK_EQ(n, 4 + 9);                            /* header + one contact (fabricated-AMD feed, no checksum) */
     check_bytes("USB_1F", out, n, GOLD_USB_1F, (int)sizeof GOLD_USB_1F);
 #endif
 
@@ -245,7 +248,7 @@ static void run_tests(void) {
 #else
     CHECK(n > 0);
     CHECK_EQ(out[0], 0x28);
-    CHECK_EQ(n, 4 + 9 + 9 + 2);                    /* header + two contacts + checksum */
+    CHECK_EQ(n, 4 + 9 + 9);                        /* header + two contacts (no checksum) */
     check_bytes("USB_2F", out, n, GOLD_USB_2F, (int)sizeof GOLD_USB_2F);
 #endif
 
@@ -278,7 +281,7 @@ static void run_tests(void) {
         dump("USB_SEQ_BREAK", out, nb);
 #else
         CHECK(nb > 0);
-        CHECK_EQ(nb, 4 + 2);   /* ABSENCE_PAIR: full lift now emits empty frames (BT shape), last captured = header+checksum, no contact */
+        CHECK_EQ(nb, 4);   /* ABSENCE_PAIR: full lift emits an empty frame (BT shape); last captured = header only, no contact, no checksum */
         check_bytes("USB_SEQ_BREAK", out, nb, GOLD_USB_SEQ_BREAK, (int)sizeof GOLD_USB_SEQ_BREAK);
 #endif
     }
