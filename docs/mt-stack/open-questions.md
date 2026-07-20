@@ -1602,3 +1602,33 @@ rationale is "before the AMD probes it" — but in the satellite architecture NO
 the settle may only matter for the enable to take effect before the first read, or be unnecessary now.
 A/B it on-device: load with it (confirm cursor), then remove it and confirm the stream still comes up
 clean.
+
+## USB no-cursor is the WindowServer device-OPEN, not "built-in gating" (RE'd 2026-07-19, deep)
+
+Uniform synthetic-USB shipped code-correct but no cursor on USB (BT identical build works). Exhaustive
+on-device + binary RE located the gate precisely, and it is NOT built-in gating (that KB claim was
+inferred, never verified — this RE contradicts it):
+- **Frames reach the fabricated AMD on USB** (live: 199 `feed x=` lines, smooth drag), AMD is wired
+  (`amd-actuation` STEADY), props BYTE-IDENTICAL to BT (`Transport=Bluetooth`, `MT Built-In=Yes`,
+  `driverType=4 builtIn=1 familyID=129 parser 1000/47`), and `mt_transport` (MTDeviceCreateList)
+  enumerates it identically to BT. So discovery + acceptance are fine.
+- **The cursor requires a userspace consumer (WindowServer's MultitouchSupport) to `IOServiceOpen` an
+  `AppleMultitouchDeviceUserClient` on the AMD.** `AppleMultitouchDevice::handleTouchFrame` (thunk,
+  getWorkLoop null-gate) → `_handleTouchFrame` (vtable 0x980) iterates the open clients at `this+0x90`
+  and dispatches each frame via **`AppleMultitouchDeviceUserClient::enqueueData`**. No open client ⇒
+  enqueueData never called ⇒ no cursor. Live: BT `AppleMultitouchDeviceUserClient=1`, USB `=0`.
+- **The open path has NO built-in/transport filter.** `_mt_DeviceRegisterForHotplugNotifications`
+  registers `IOServiceAddMatchingNotification(IOServiceFirstMatch, {IOPropertyMatch:{"Multitouch ID":V}},
+  _mt_HotPlugMatchingDeviceAdded)`. The added-handler just `IOServiceOpen`s the service **into a single
+  slot IF the slot is empty** (`rbx+0x10==0`, else skip) — zero USB/built-in/transport gating.
+- Falsified this session: Transport string (=Bluetooth, still dead), MT Built-In (=Yes, dead),
+  force-opening the client from a non-WindowServer tool (opens but our process can't post the cursor),
+  removing Apple's co-bound `AppleUSBMultitouchHIDEventDriver` (dead), `killall WindowServer` (inconclusive
+  — did not log out, may not have respawned).
+- **Leading hypothesis:** every test this session was MID-SESSION (reload/replug = the hotplug path).
+  The hotplug open is slot-guarded + may be flaky after heavy BT↔USB churn, OR the `"Multitouch ID"`
+  IOPropertyMatch value `V` (registered at WS startup) doesn't match our USB AMD. The **STARTUP enum path**
+  (device present when WindowServer starts) is a plain MTDeviceCreateList+open that DOES find our USB AMD.
+- **DECISIVE UNTESTED EXPERIMENT: reboot with the MT2 cabled on USB.** Fresh WindowServer, device present
+  at startup, empty slot → should `IOServiceOpen` it → cursor. If it works, uniform-USB is VIABLE and the
+  wall was mid-session hotplug bookkeeping, not a gate. If not, RE the `"Multitouch ID"` match value V.
