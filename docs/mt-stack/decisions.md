@@ -787,7 +787,23 @@ parties (the sample satellite is retired — the BT reader IS the worked example
 - **On-device validated (BT):** cursor, tap-to-click, physical click (1- & 2-finger), 2-finger scroll,
   4-finger swipe, reconnect (BT bounce → BT=2), palm rejection. Characterization equivalence gate passes
   (symbol surface unchanged). Commits `1137282`→`dac1984` on `main` (pushed).
-- **KNOWN + expected, next project:** the BT **prefpane shows NoTrackpad** and battery doesn't render —
-  the injected osax keyed on the fabricated AMD in its OLD location (the reader's nub); the terminal moved
-  under the mux nub, so osax detection no longer finds it. This is the exact seam the **prefpane/battery/
-  name-onto-the-mux** project owns; the in-kext battery publish is already repointed to shrink that step.
+- **prefpane shows NoTrackpad — RE'd LIVE 2026-07-20; the "keyed on old AMD location" claim was WRONG.**
+  The osax detection is NOT location-keyed: the presence observer watches the READER classes
+  (`com_schmonz_MT2{USB,BT}Reader`, unchanged by the refactor) and battery uses class-based
+  `IOServiceMatching("AppleMultitouchDevice")` — both location-independent. Two real causes, found by
+  driving the live pane + reading the osax log:
+  1. **Stale deployed SIMBL payload (FIXED).** `/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle`
+     was a Jul-10 PRE-satellite build that watched the RETIRED `BNBTrackpadDevice`/`AppleUSBMultitouchDriver`
+     classes (not the reader classes). SIMBL wins the single-load claim over the osax, so that stale binary
+     ran → `service_present` always 0 → reconcile saw "no device" → NoTrackpad. Classic
+     [[mt2-dual-loader-install-gotcha]] (reinstall BOTH loaders after a payload change). Rebuilt + redeployed
+     the current bundle+osax → `reconcile bt=0 usb=1 -> action` + `perform: ON_USB` now fire.
+  2. **Deeper, STILL OPEN:** even with `perform: ON_USB` firing, the pane STAYS on NoTrackpad. `perform`'s
+     `loadMainView` re-runs Apple's OWN trackpad detection, which does not recognize our synthetic
+     `AppleMultitouchDevice` (no genuine `AppleUSBMultitouchDriver`/`BNBTrackpadDevice` class present), so it
+     re-selects NoTrackpad; and the magic-action replay skips (`(self,arg) not captured yet` — Apple never
+     fired `deviceConnected` for a device it doesn't see). So the osax's view-force is insufficient in the
+     all-synthetic world. Fix direction (principled, ties to upstreaming): make Apple's pane DETECT our AMD by
+     publishing whatever its `_ioServiceObserver:deviceConnected:` matches — OR force the trackpad controller
+     directly. Needs RE of `Trackpad.prefPane`'s detection. This is downstream-cosmetic ONLY (upstream
+     VoodooInput does no prefpane work — it relies on native MT2 recognition on 10.11+).
