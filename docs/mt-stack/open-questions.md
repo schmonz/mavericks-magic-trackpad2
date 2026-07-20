@@ -437,6 +437,35 @@ was a MYTH.** Full trace, top to bottom, all transport-blind:
 - ⇒ **`kext-gesture/MT2USBReader.cpp` "built-in-only gated" comment is WRONG — delete it.** USB-as-VoodooInput-
   satellite is VIABLE; the two-terminal split was never forced by any OS gate.
 
+**2026-07-20 — toward a GENTLER open than `killall hidd` (goal: never restart hidd).** `killall hidd` is
+blunt (momentary all-HID hiccup) and will bite someday; mapped what a gentle re-open would require.
+- The frames client MUST be opened by **hidd itself** (the working open carries `IOUserClientCreator=hidd`,
+  and only hidd's `MTTrackpadHIDManager` runs recognition on the frames). So "open the UserClient from our
+  own tool" is a DEAD END — the frames would flow to our tool, not hidd's recognizer. The only gentle paths
+  are (1) make a running hidd *notice* our device, or (2) a lighter re-scan trigger than SIGKILL.
+- MultitouchSupport's only re-open mechanism is the per-device hotplug watcher
+  (`_mt_DeviceRegisterForHotplugNotifications`, match dict `{IOPropertyMatch:{Multitouch ID:V}}`, keyed
+  SOLELY on `Multitouch ID`). It fires on re-appearance of an ALREADY-SEEN device. First-discovery of a
+  never-seen device is hidd's own enumeration policy (`MTDeviceCreateList`), NOT in MultitouchSupport — the
+  un-RE'd "large RE".
+- **Model that fits every observation:** BT-bounce works because it re-opens the L2CAP channels WITHOUT
+  destroying our AMD object → same `Multitouch ID` → hidd's watcher fires. A USB replug/`USBDeviceReEnumerate`
+  fully tears down + recreates the AMD → NEW `Multitouch ID` → watcher can't fire, and first-discovery
+  doesn't catch us. This is why "a USB replug did NOT wake the running hidd" (above) yet BT-bounce does.
+- **`Multitouch ID` is NOT ours to pre-set.** RE'd `AppleMultitouchDevice::_cacheDeviceProperties` (@0x3470,
+  `AppleMultitouchDriver`): it DERIVES the id — `0x0100000000000000` base (r13 @+0x139) OR'd with a device
+  nibble from vmethod `*0x138` (`<<52`) OR LocationID/Transport-derived low bits (`_AMDMultitouchLocationIDKey`
+  read @+0x78) — and `setProperty("Multitouch ID", …, 0x40)` UNCONDITIONALLY during `start()`. A value we set
+  first is overwritten. So the lever is the INPUTS (LocationID/Transport), not a direct override.
+- **THE decisive cheap experiment (no code change, no crash risk — `mt2_reenumerate` already ships):** with
+  USB up + gestures dead (`AppleMultitouchDeviceUserClient=0`), (E1) capture the USB AMD's `Multitouch ID`,
+  (E2) run `tools/mt2_reenumerate`, (E3) re-capture `Multitouch ID` + the UserClient count. Outcomes:
+  (a) UserClient 0→1 → a plain re-announce is the gentle fix; swap `killall hidd` for `mt2_reenumerate`.
+  (b) UserClient stays 0 AND `Multitouch ID` UNCHANGED → hidd never registered a watcher for it (first-discovery
+      gap) → the gentle fix needs the large hidd-enumeration RE. (c) stays 0 AND `Multitouch ID` CHANGED →
+  confirms the "new id defeats the watcher" model → gentle fix = make the id stable across re-announce (drive
+  the LocationID/Transport inputs), then re-announce. Until run, `killall hidd` stays.
+
 **RE GOTCHA — the running build ≠ the on-disk file (resolved).** `validateChecksum`'s path-binary branch is
 ABSENT from the on-disk `/S/L/E/AppleUSBMultitouch` (240.10, Jan-11) but PRESENT in the booted build. Proof:
 the reject string at file off `0x9376` is referenced by ZERO instructions in the on-disk binary, but the
