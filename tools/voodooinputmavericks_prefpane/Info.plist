@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.schmonz.MT2PaneRefresh</string>
+	<string>com.schmonz.VoodooInputMavericksPane</string>
 	<key>CFBundleName</key>
-	<string>MT2PaneRefresh</string>
+	<string>VoodooInputMavericksPane</string>
 	<key>CFBundleExecutable</key>
-	<string>MT2PaneRefresh</string>
+	<string>VoodooInputMavericksPane</string>
 	<key>CFBundlePackageType</key>
 	<string>osax</string>
 	<key>CFBundleVersion</key>

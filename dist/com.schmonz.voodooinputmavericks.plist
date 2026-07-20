@@ -3,27 +3,27 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.schmonz.mt2d</string>
+    <string>com.schmonz.voodooinputmavericks</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/sbin/mt2d-run</string>
+        <string>/usr/local/sbin/voodooinputmavericks-run</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
-    <!-- Runs at boot (RunAtLoad -> a no-op behind mt2d-run's /dev/console session guard, so the login
+    <!-- Runs at boot (RunAtLoad -> a no-op behind voodooinputmavericks-run's /dev/console session guard, so the login
          screen stays on Apple's generic HID) AND when the per-user LaunchAgent touches this trigger at
          login (session start -> the guard passes -> full multitouch takeover). -->
     <key>WatchPaths</key>
     <array>
-        <string>/usr/local/var/mt2d/session.trigger</string>
+        <string>/usr/local/var/voodooinputmavericks/session.trigger</string>
     </array>
     <!-- The wrapper loads the kext, confirms health, and exits; the kext runs
          in-kernel on its own. Do NOT respawn. -->
     <key>KeepAlive</key>
     <false/>
     <key>StandardOutPath</key>
-    <string>/var/log/mt2d.log</string>
+    <string>/var/log/voodooinputmavericks.log</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/mt2d.log</string>
+    <string>/var/log/voodooinputmavericks.log</string>
 </dict>
 </plist>

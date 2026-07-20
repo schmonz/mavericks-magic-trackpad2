@@ -1,5 +1,5 @@
 /*
- * mt2_pane_arm — send the 'MT2x'/'load' Apple event that triggers our .osax
+ * voodooinputmavericks_pane_arm — send the 'MT2x'/'load' Apple event that triggers our .osax
  * handler (MT2InjectHandler) inside System Preferences, arming the live USB
  * observer. Run by a per-user LaunchAgent when System Preferences launches.
  *
@@ -9,7 +9,7 @@
  * the app appears.
  *
  * Build: clang -mmacosx-version-min=10.9 -framework ApplicationServices -framework CoreFoundation
- * Usage: mt2_pane_arm [pid]
+ * Usage: voodooinputmavericks_pane_arm [pid]
  */
 
 #include <stdio.h>
@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
 
     AEDesc target = { typeNull, NULL };
     OSStatus err = make_target(&target, pid);
-    if (err != noErr) { fprintf(stderr, "mt2_pane_arm: AECreateDesc target err %d\n", (int)err); return 1; }
+    if (err != noErr) { fprintf(stderr, "voodooinputmavericks_pane_arm: AECreateDesc target err %d\n", (int)err); return 1; }
 
     int i;
     for (i = 0; i < RETRIES; i++) {
@@ -46,11 +46,11 @@ int main(int argc, char **argv) {
             AEDisposeDesc(&reply);
         }
         AEDisposeDesc(&evt);
-        if (err == noErr) { fprintf(stderr, "mt2_pane_arm: armed (try %d)\n", i + 1); break; }
+        if (err == noErr) { fprintf(stderr, "voodooinputmavericks_pane_arm: armed (try %d)\n", i + 1); break; }
         usleep(RETRY_US);
     }
     AEDisposeDesc(&target);
 
-    if (err != noErr) { fprintf(stderr, "mt2_pane_arm: failed after %d tries, last err %d\n", RETRIES, (int)err); return 1; }
+    if (err != noErr) { fprintf(stderr, "voodooinputmavericks_pane_arm: failed after %d tries, last err %d\n", RETRIES, (int)err); return 1; }
     return 0;
 }

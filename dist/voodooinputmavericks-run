@@ -4,25 +4,25 @@
 #
 # The single unsigned kext loads from this loose path: on 10.9, unsigned kexts
 # load from outside /Library/Extensions; it is NEVER placed in /Library/
-# Extensions or the boot caches, so the kernel always boots clean. MavericksVoodooInputHost
+# Extensions or the boot caches, so the kernel always boots clean. VoodooInputMavericks
 # matches IOResources; if loading it ever panics the machine, the guard below
 # stops re-loading it on the next boot so we never get a boot-crash loop.
 #
 # Both transports (Bluetooth L2CAP + cabled USB) now run in-kernel inside
-# MavericksVoodooInputHost: loading the kext is enough — its reader personalities bind the
+# VoodooInputMavericks: loading the kext is enough — its reader personalities bind the
 # device directly. There is no userspace feeder.
 #
-# Sentinel /var/db/mt2d-boot.state:
-#   ok / missing -> load MavericksVoodooInputHost (full gestures).
+# Sentinel /var/db/voodooinputmavericks-boot.state:
+#   ok / missing -> load VoodooInputMavericks (full gestures).
 #   trying       -> a prior boot started full mode but never confirmed healthy
-#                   (likely an MavericksVoodooInputHost load panic); SKIP loading MavericksVoodooInputHost
-#                   until `mt2d-run --reset`. Use another pointing device meanwhile.
+#                   (likely an VoodooInputMavericks load panic); SKIP loading VoodooInputMavericks
+#                   until `voodooinputmavericks-run --reset`. Use another pointing device meanwhile.
 
-STATE_FILE="${MT2D_STATE_FILE:-/var/db/mt2d-boot.state}"
-KEXT_DIR="${MT2D_KEXT_DIR:-/usr/local/lib/mt2d}"
+STATE_FILE="${MT2D_STATE_FILE:-/var/db/voodooinputmavericks-boot.state}"
+KEXT_DIR="${MT2D_KEXT_DIR:-/usr/local/lib/voodooinputmavericks}"
 SBIN="${MT2D_SBIN:-/usr/local/sbin}"
 HEALTHY_DELAY="${MT2D_HEALTHY_DELAY:-20}"
-# Overridable so the recovery loop is unit-testable with mocks (see tests/test_mt2d_run.sh).
+# Overridable so the recovery loop is unit-testable with mocks (see tests/test_voodooinputmavericks_run.sh).
 IOCLASSCOUNT="${MT2D_IOCLASSCOUNT:-ioclasscount}"
 KEXTLOAD="${MT2D_KEXTLOAD:-kextload}"
 KEXTUNLOAD="${MT2D_KEXTUNLOAD:-kextunload}"
@@ -41,7 +41,7 @@ BOUNCE="${MT2D_BOUNCE:-/usr/local/libexec/mt2_usb_bt_handoff --bounce-once}"
 # See docs/mt-stack/open-questions.md "CRACKED: USB gestures ... stale hidd, not transport".
 HIDD_KICK="${MT2D_HIDD_KICK:-killall hidd}"
 
-log() { echo "[mt2d-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+log() { echo "[voodooinputmavericks-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 # recover_full: on a half-open attach (BT<2), exploit the load-after-connect lever -- unload our
 # kext so IOBluetoothHIDDriver re-attaches and opens BOTH L2CAP channels generically, then reload
@@ -51,9 +51,9 @@ recover_full() {
     i=1
     while [ "$i" -le "$RECOVER_TRIES" ]; do
         log "recovery attempt $i/$RECOVER_TRIES: unload -> let generic HID reconnect -> reload"
-        "$KEXTUNLOAD" -b com.schmonz.MavericksVoodooInputHost 2>/dev/null || true
+        "$KEXTUNLOAD" -b com.schmonz.VoodooInputMavericks 2>/dev/null || true
         sleep "$RECONNECT_WAIT"
-        "$KEXTLOAD" "$KEXT_DIR/MavericksVoodooInputHost.kext" 2>/dev/null || true
+        "$KEXTLOAD" "$KEXT_DIR/VoodooInputMavericks.kext" 2>/dev/null || true
         sleep "$HEALTHY_DELAY"
         btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
         usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
@@ -65,7 +65,7 @@ recover_full() {
         fi
         i=$((i+1))
     done
-    "$KEXTUNLOAD" -b com.schmonz.MavericksVoodooInputHost 2>/dev/null || true
+    "$KEXTUNLOAD" -b com.schmonz.VoodooInputMavericks 2>/dev/null || true
     log "RECOVERY EXHAUSTED after $RECOVER_TRIES tries: leaving generic HID (cursor only, no gestures)"
     return 1
 }
@@ -109,7 +109,7 @@ fi
 STAT_CONSOLE="${MT2D_STAT_CONSOLE:-stat -f%Su /dev/console}"
 CONSOLE_USER="$($STAT_CONSOLE 2>/dev/null || echo root)"
 if [ "${MT2D_FORCE_LOAD:-0}" != "1" ] && { [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; }; then
-    log "login screen (console user=${CONSOLE_USER:-none}): leaving the MT2 to Apple's generic HID; not loading MavericksVoodooInputHost"
+    log "login screen (console user=${CONSOLE_USER:-none}): leaving the MT2 to Apple's generic HID; not loading VoodooInputMavericks"
     [ "${MT2D_DRYRUN:-0}" = "1" ] && echo "MODE=skip-nosession"
     exit 0
 fi
@@ -118,8 +118,8 @@ STATE="$(cat "$STATE_FILE" 2>/dev/null || echo ok)"
 
 if [ "$STATE" = "trying" ]; then
     # Prior boot started full mode but never confirmed healthy -> likely a panic
-    # loading MavericksVoodooInputHost. Do NOT reload it; avoid a boot-crash loop.
-    log "prior boot did not confirm healthy; NOT loading MavericksVoodooInputHost (run 'mt2d-run --reset' to retry). Use another pointing device."
+    # loading VoodooInputMavericks. Do NOT reload it; avoid a boot-crash loop.
+    log "prior boot did not confirm healthy; NOT loading VoodooInputMavericks (run 'voodooinputmavericks-run --reset' to retry). Use another pointing device."
     [ "${MT2D_DRYRUN:-0}" = "1" ] && { echo "MODE=skip"; echo "STATE=$(cat "$STATE_FILE" 2>/dev/null)"; }
     exit 0
 fi
@@ -148,7 +148,7 @@ log "attempting full-gesture mode"
 
 # Load the one gesture kext (the IOResources-matching one the guard covers). Its
 # BT + USB reader personalities bind the device on their own.
-"$KEXTLOAD" "$KEXT_DIR/MavericksVoodooInputHost.kext" 2>/dev/null || true
+"$KEXTLOAD" "$KEXT_DIR/VoodooInputMavericks.kext" 2>/dev/null || true
 
 # Force a clean BT takeover. At the session-load we evict Apple's generic HID mid-connection, and our
 # reader tends to win only the CONTROL channel (BT=1, half-open — the device-initiated interrupt channel
@@ -189,7 +189,7 @@ fi
 
 # Anti-brick-loop gate, INLINE (no background subshell, which doesn't survive in
 # the launchd no-TTY context). The brick-guard protects against LOAD-TIME PANICS
-# only: a panic loading MavericksVoodooInputHost reboots the machine before we reach this point,
+# only: a panic loading VoodooInputMavericks reboots the machine before we reach this point,
 # leaving the sentinel 'trying' so the next boot skips. Surviving the settle window
 # is therefore the whole signal — so mark 'ok' UNCONDITIONALLY here, decoupled from
 # whether a transport bound. (Earlier this gated 'ok' on a bound transport, which
@@ -214,7 +214,7 @@ if [ "${usbn:-0}" != "0" ]; then
 fi
 echo ok > "$STATE_FILE" 2>/dev/null || true            # survived load+settle => brick-guard satisfied
 if [ "$cnt" = "0" ]; then
-    log "WARNING: MavericksVoodooInputHost nub absent after load — kext load failed (no panic; will retry next boot)"
+    log "WARNING: VoodooInputMavericks nub absent after load — kext load failed (no panic; will retry next boot)"
 elif [ "$("$0" --health-verdict "$btn" "$usbn" "$cnt")" = "healthy" ]; then
     log "full-gesture mode confirmed healthy (BT=$btn USB=$usbn)"
 elif [ "$btn" = "1" ]; then

@@ -1,4 +1,4 @@
-# MavericksVoodooInputHost.kext — built with the kext toolchain (-fapple-kext), then linked + bundled.
+# VoodooInputMavericks.kext — built with the kext toolchain (-fapple-kext), then linked + bundled.
 # Mirrors kext-gesture/Makefile exactly (see OBJS there). Two compilations of the shared
 # src/*.c exist in this project: mt2core (userland, -std=c99) and HERE (kext, -x c++).
 
@@ -26,7 +26,7 @@ endforeach()
 set(KEXT_LOCAL_CXX_ABS ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp)
 add_executable(mt2gesture_kext ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS} ${KEXT_LOCAL_CXX_ABS})
 set_target_properties(mt2gesture_kext PROPERTIES
-  OUTPUT_NAME MavericksVoodooInputHost
+  OUTPUT_NAME VoodooInputMavericks
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Project-specific include directories (source-local; kernel/IOKit dirs are added by mavericks_kext()).
@@ -49,11 +49,11 @@ set_source_files_properties(
 
 # Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel
 # link options, Kernel/IOKit include dirs, Info.plist configure, and .kext bundle assembly.
-# The public "kext" target name and ${CMAKE_BINARY_DIR}/MavericksVoodooInputHost.kext output path are
+# The public "kext" target name and ${CMAKE_BINARY_DIR}/VoodooInputMavericks.kext output path are
 # established by mavericks_kext() and must not change (reload/pkg/characterize depend on them).
 mavericks_kext(
   TARGET        mt2gesture_kext
-  BUNDLE        MavericksVoodooInputHost
+  BUNDLE        VoodooInputMavericks
   INFO_PLIST_IN ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in
   PUBLIC_TARGET kext)
 
@@ -75,10 +75,10 @@ endif()
 # so the `|| true` tolerance + sequencing stay correct (CMake's COMMAND can't express
 # `a && b || true` without the sh -c space-escaping bug found in Phase 0).
 add_custom_target(kext-load
-  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh load ${CMAKE_BINARY_DIR}/MavericksVoodooInputHost.kext
-  COMMENT "Staging (root:wheel /tmp) + loading MavericksVoodooInputHost.kext")
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh load ${CMAKE_BINARY_DIR}/VoodooInputMavericks.kext
+  COMMENT "Staging (root:wheel /tmp) + loading VoodooInputMavericks.kext")
 add_dependencies(kext-load kext)
 
 add_custom_target(kext-unload
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh unload
-  COMMENT "Unloading MavericksVoodooInputHost.kext")
+  COMMENT "Unloading VoodooInputMavericks.kext")

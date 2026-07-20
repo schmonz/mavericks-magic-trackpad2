@@ -1,8 +1,8 @@
-// Branch A watcher: which launched app should we inject MT2PaneRefresh into?
+// Branch A watcher: which launched app should we inject VoodooInputMavericksPane into?
 #import <Foundation/Foundation.h>
 #include "test.h"
 
-// Defined in tools/mt2_prefpane_refresh/mt2_pane_watch.m (compiled with -DMT2_PANE_WATCH_TEST).
+// Defined in tools/voodooinputmavericks_prefpane/voodooinputmavericks_pane_watch.m (compiled with -DMT2_PANE_WATCH_TEST).
 BOOL mt2_should_inject(NSString *bundleID);
 
 int main(void) {

@@ -8,23 +8,23 @@ set -e
 case "$1" in
   load)
     KEXT="$2"
-    sudo rm -rf /tmp/MavericksVoodooInputHost.kext
+    sudo rm -rf /tmp/VoodooInputMavericks.kext
     sudo cp -R "$KEXT" /tmp/
-    sudo chown -R root:wheel /tmp/MavericksVoodooInputHost.kext
+    sudo chown -R root:wheel /tmp/VoodooInputMavericks.kext
     # Unload any resident copy FIRST: kextload no-ops a same-bundle-id+version kext that is
-    # already loaded (a dev build rarely bumps MT2_VERSION), silently leaving the STALE kext
+    # already loaded (a dev build rarely bumps MAVERICKS_VERSION), silently leaving the STALE kext
     # running — a false green where "loaded" ran old code. Unload-first makes load always
     # replace. (|| true: tolerates "not loaded" and, if busy, the kextload below still reports
     # the real failure rather than a phantom success.)
-    sudo kextunload -b com.schmonz.MavericksVoodooInputHost || true
+    sudo kextunload -b com.schmonz.VoodooInputMavericks || true
     # Apple's multitouch kexts first (best-effort): the genuine paths allocClassWithName
     # AppleUSBMultitouchDriver / BNBTrackpadDevice from these (NULL class otherwise).
     sudo kextload /System/Library/Extensions/AppleUSBMultitouch.kext || true
     sudo kextload /System/Library/Extensions/AppleBluetoothMultitouch.kext || true
-    sudo kextload /tmp/MavericksVoodooInputHost.kext
+    sudo kextload /tmp/VoodooInputMavericks.kext
     ;;
   unload)
-    sudo kextunload -b com.schmonz.MavericksVoodooInputHost || true
+    sudo kextunload -b com.schmonz.VoodooInputMavericks || true
     ;;
   *)
     echo "usage: $0 load <kext_bundle> | unload" >&2; exit 2 ;;

@@ -9,7 +9,7 @@
 # Usage:
 #   mavericks_kext(
 #     TARGET        <cmake-target>          # add_executable target name
-#     BUNDLE        <bundle-stem>           # e.g. MavericksVoodooInputHost -> MavericksVoodooInputHost.kext
+#     BUNDLE        <bundle-stem>           # e.g. VoodooInputMavericks -> VoodooInputMavericks.kext
 #     INFO_PLIST_IN <path/to/Info.plist.in> # configure_file source (@VAR@ tokens)
 #     PUBLIC_TARGET <public-target-name>    # the ALL target that drives the build
 #   )
@@ -55,7 +55,7 @@ function(mavericks_kext)
     -arch x86_64 -mmacosx-version-min=10.9 ${sysroot_flags}
     -nostdlib -Wl,-kext -Wl,-no_uuid ${libdir} -lkmodc++ -lkmod)
 
-  # Stamp version tokens (@MT2_VERSION@, @MT2_VERSION_NUMERIC@) into Info.plist.
+  # Stamp version tokens (@MAVERICKS_VERSION@, @MAVERICKS_VERSION_NUMERIC@) into Info.plist.
   # @ONLY so only @VAR@ tokens are touched, not ${VAR} CMake variables.
   configure_file(${K_INFO_PLIST_IN} ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
 

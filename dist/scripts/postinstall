@@ -1,19 +1,19 @@
 #!/bin/sh
 # Activate: fix kext ownership (kextload requires root:wheel), reset the boot
 # sentinel to ok (a fresh install should attempt full-gesture mode), and
-# start the daemon. The launchd wrapper (mt2d-run) loads the one kext from
+# start the daemon. The launchd wrapper (voodooinputmavericks-run) loads the one kext from
 # /usr/local and re-enumerates the device so the in-kernel readers win their
 # matches. No /Library/Extensions, no kextcache: the unsigned kext only loads
 # from a loose path.
 set -e
 
-GESTURE=/usr/local/lib/mt2d/MavericksVoodooInputHost.kext
-PLIST=/Library/LaunchDaemons/com.schmonz.mt2d.plist
-STATE=/var/db/mt2d-boot.state
+GESTURE=/usr/local/lib/voodooinputmavericks/VoodooInputMavericks.kext
+PLIST=/Library/LaunchDaemons/com.schmonz.voodooinputmavericks.plist
+STATE=/var/db/voodooinputmavericks-boot.state
 
 chown -R root:wheel "$GESTURE"
 chmod -R 755 "$GESTURE"
-chmod +x /usr/local/sbin/mt2d-run
+chmod +x /usr/local/sbin/voodooinputmavericks-run
 
 mkdir -p /var/db
 echo ok > "$STATE"
@@ -30,7 +30,7 @@ launchctl load -w "$PLIST"
 
 # USB->BT handoff daemon: wakes deep-idle Bluetooth on cable unplug (no click). Root LaunchDaemon,
 # runs regardless of GUI session. Best-effort — a UX feature, never fail the install on it.
-HANDOFF=/Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist
+HANDOFF=/Library/LaunchDaemons/com.schmonz.voodooinputmavericks.usbbthandoff.plist
 chmod +x /usr/local/libexec/mt2_usb_bt_handoff 2>/dev/null || true
 launchctl unload "$HANDOFF" 2>/dev/null || true
 launchctl load -w "$HANDOFF" 2>/dev/null || true
@@ -39,11 +39,11 @@ launchctl load -w "$HANDOFF" 2>/dev/null || true
 # has SIMBL (reuse the user's SIMBLAgent -> one less thing for us to load), else our standalone osax
 # + launch-watcher. Exactly one is activated so the payload never double-loads (double-swizzle).
 # Best-effort throughout; never fail the install on the prefpane feature.
-AGENT=/Library/LaunchAgents/com.schmonz.mt2panewatch.plist
+AGENT=/Library/LaunchAgents/com.schmonz.voodooinputmavericks.panewatch.plist
 SIMBL_AGENT="/Library/Application Support/SIMBL/SIMBLAgent.app"
 SIMBL_PLUGINS="/Library/Application Support/SIMBL/Plugins"
-STAGED_BUNDLE=/usr/local/share/mt2d/MT2PaneRefresh.bundle
-chmod +x /usr/local/libexec/mt2_pane_watch 2>/dev/null || true
+STAGED_BUNDLE=/usr/local/share/voodooinputmavericks/VoodooInputMavericksPane.bundle
+chmod +x /usr/local/libexec/voodooinputmavericks_pane_watch 2>/dev/null || true
 CONSOLE_USER=$(stat -f%Su /dev/console 2>/dev/null)
 
 if [ -d "$SIMBL_AGENT" ] || [ -d "$SIMBL_PLUGINS" ]; then
@@ -51,7 +51,7 @@ if [ -d "$SIMBL_AGENT" ] || [ -d "$SIMBL_PLUGINS" ]; then
     # injects it at System Preferences launch. Do NOT load our watcher (would double-inject the same
     # payload). The staged osax on disk stays inert (nothing sends it the load event).
     mkdir -p "$SIMBL_PLUGINS"
-    rm -rf "$SIMBL_PLUGINS/MT2PaneRefresh.bundle"
+    rm -rf "$SIMBL_PLUGINS/VoodooInputMavericksPane.bundle"
     cp -R "$STAGED_BUNDLE" "$SIMBL_PLUGINS/" 2>/dev/null || true
     if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
         sudo -u "$CONSOLE_USER" launchctl unload "$AGENT" 2>/dev/null || true
@@ -74,8 +74,8 @@ fi
 # Scheduled background update check (per-user LaunchAgent). Independent of the prefpane route above.
 # Only meaningful when the updater app was staged (Sparkle-enabled build); load it for the current GUI
 # user so the first daily check can run without a logout. Best-effort — never fail the install on it.
-UPDATE_AGENT=/Library/LaunchAgents/com.schmonz.mt2updatecheck.plist
-UPDATER_APP=/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater
+UPDATE_AGENT=/Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist
+UPDATER_APP=/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater
 if [ -x "$UPDATER_APP" ] && [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
     sudo -u "$CONSOLE_USER" launchctl unload "$UPDATE_AGENT" 2>/dev/null || true
     sudo -u "$CONSOLE_USER" launchctl load -w "$UPDATE_AGENT" 2>/dev/null || true

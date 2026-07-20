@@ -7,7 +7,7 @@
          so USB->BT handoff needs no physical click. Must be a Daemon so it runs regardless of
          GUI session; needs root for IOBluetooth openConnection from outside an Aqua session. -->
     <key>Label</key>
-    <string>com.schmonz.mt2usbbthandoff</string>
+    <string>com.schmonz.voodooinputmavericks.usbbthandoff</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/libexec/mt2_usb_bt_handoff</string>

@@ -13,10 +13,10 @@ set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Target architectures")
 # Single source of truth for the product version. May carry a pre-release suffix
 # (e.g. -pre.1 / -rc.1) that CMake's project(VERSION) can't hold, so keep the full
 # string here and feed project() only the numeric part. The .pkg name + version and
-# CI all derive from MT2_VERSION -- bump it here, tag v<MT2_VERSION> to match.
-set(MT2_VERSION "0.4.5")
-string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MT2_VERSION_NUMERIC "${MT2_VERSION}")
-project(mt2 VERSION ${MT2_VERSION_NUMERIC} LANGUAGES C CXX)
+# CI all derive from MAVERICKS_VERSION -- bump it here, tag v<MAVERICKS_VERSION> to match.
+set(MAVERICKS_VERSION "0.4.5")
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MAVERICKS_VERSION_NUMERIC "${MAVERICKS_VERSION}")
+project(mt2 VERSION ${MAVERICKS_VERSION_NUMERIC} LANGUAGES C CXX)
 
 # Shared mavericks-* build conventions: deployment target 10.9 / x86_64 (10.9 is
 # Intel-only; without the arch pin a modern arm64 host silently bumps the target
@@ -47,7 +47,7 @@ set(MT2_MACOSX_10_9_SDK "" CACHE PATH "MacOSX10.9 SDK root for kext cross-build 
 # Path to a fetched Sparkle 1.27.3 Sparkle.framework (x86_64, 10.9) for the updater helper.
 # Empty by default; set by the caller/CI from the shared fetch script (mavericks-shared-cmake):
 # cmake -DMT2_SPARKLE_FRAMEWORK=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_sparkle.sh").
-set(MT2_SPARKLE_FRAMEWORK "" CACHE PATH "Fetched Sparkle.framework for MavericksTrackpad2Updater.app")
+set(MT2_SPARKLE_FRAMEWORK "" CACHE PATH "Fetched Sparkle.framework for VoodooInputMavericks updater app")
 # Path to a fetched orlp/ed25519 src/ dir (the SAME lib Sparkle vendors) for the native EdDSA signer.
 # Empty by default; set by the caller/CI from the shared fetch script (mavericks-shared-cmake):
 # cmake -DMT2_ED25519_SRC=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_ed25519.sh").
@@ -66,5 +66,5 @@ include(${CMAKE_SOURCE_DIR}/cmake/mavericks_kext.cmake)
 add_subdirectory(kext-gesture)
 add_subdirectory(tests)
 
-include(cmake/mt2_pkg.cmake)
-include(cmake/mt2_dev.cmake)
+include(cmake/voodooinputmavericks_pkg.cmake)
+include(cmake/voodooinputmavericks_dev.cmake)

@@ -1,7 +1,7 @@
 name: release
 
 # One automated build on the latest macOS: cross-build the whole 10.9 product
-# (x86_64 @ 10.9 userland + a real MavericksVoodooInputHost.kext built against a fetched
+# (x86_64 @ 10.9 userland + a real VoodooInputMavericks.kext built against a fetched
 # MacOSX10.9 SDK), gate it, package it, and publish a GitHub Release on v* tags.
 #
 # AUTHENTICITY / CORRECTNESS of the cross-built kext rests on two things, no old
@@ -45,16 +45,16 @@ jobs:
       - name: Install mavericks-shared-cmake
         uses: schmonz/mavericks-shared-cmake/.github/actions/install@312389eb8b3ac24c8f89fad2a78c82bc4eeac8cd  # mavericks-shared-cmake
 
-      - name: Determine version (from CMake MT2_VERSION — single source of truth)
+      - name: Determine version (from CMake MAVERICKS_VERSION — single source of truth)
         id: ver
         run: |
-          VER=$(grep -m1 'set(MT2_VERSION' CMakeLists.txt | sed -E 's/.*"([^"]+)".*/\1/')
-          [ -n "$VER" ] || { echo "::error::could not read MT2_VERSION from CMakeLists.txt"; exit 1; }
+          VER=$(grep -m1 'set(MAVERICKS_VERSION' CMakeLists.txt | sed -E 's/.*"([^"]+)".*/\1/')
+          [ -n "$VER" ] || { echo "::error::could not read MAVERICKS_VERSION from CMakeLists.txt"; exit 1; }
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           # On a tag build, enforce that the tag matches the CMake version so the
           # release name and the pkg version can never drift.
           if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$VER" ]; then
-            echo "::error::tag ${GITHUB_REF_NAME} != v$VER (CMakeLists MT2_VERSION); keep them in sync"
+            echo "::error::tag ${GITHUB_REF_NAME} != v$VER (CMakeLists MAVERICKS_VERSION); keep them in sync"
             exit 1
           fi
           # Release-notes gate: a tagged release MUST ship non-empty notes -- they become the appcast
@@ -117,7 +117,7 @@ jobs:
           cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}" -DMT2_SPARKLE_FRAMEWORK="${{ steps.sparkle.outputs.path }}" -DMT2_ED25519_SRC="${{ steps.ed25519.outputs.path }}"
           cmake --build build
           echo "userland slice:"; lipo -info build/sbin/mt2_reenumerate
-          echo "kext:"; file build/MavericksVoodooInputHost.kext/Contents/MacOS/MavericksVoodooInputHost
+          echo "kext:"; file build/VoodooInputMavericks.kext/Contents/MacOS/VoodooInputMavericks
 
       - name: Kext cross-build equivalence gate (vs native 10.9 reference, fail-closed)
         run: sh cmake/characterize_build.sh compare dist/characterization build
@@ -131,8 +131,8 @@ jobs:
 
       - name: Build .pkg (10.9.5 install floor)
         run: |
-          cmake --build build --target pkg   # version derives from CMake MT2_VERSION
-          echo "floor check:"; pkgutil --expand "build/mt2d-${{ steps.ver.outputs.version }}.pkg" /tmp/pkgx
+          cmake --build build --target pkg   # version derives from CMake MAVERICKS_VERSION
+          echo "floor check:"; pkgutil --expand "build/voodooinputmavericks-${{ steps.ver.outputs.version }}.pkg" /tmp/pkgx
           grep -o 'os-version min="[0-9.]*"' /tmp/pkgx/Distribution
 
       - name: Sign the .pkg + generate the Sparkle appcast
@@ -141,7 +141,7 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          PKG="build/mt2d-$VER.pkg"
+          PKG="build/voodooinputmavericks-$VER.pkg"
           [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
           # Sign with OUR native signer (built above; no Swift dependency). It prints the enclosure
           # attrs (sparkle:edSignature="..." length="...") and self-checks the signature against the
@@ -149,17 +149,17 @@ jobs:
           # rejects. gen_appcast.sh inlines docs/release-notes/vVER.md as the <description>.
           ENCLOSURE=$(build/sbin/mavericks_sign_update -s "$SPARKLE_PRIVATE_KEY" "$PKG")
           echo "enclosure: $ENCLOSURE"
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/mt2d-$VER.pkg"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/voodooinputmavericks-$VER.pkg"
           sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/gen_appcast.sh" "Mavericks Trackpad 2" "$VER" "$URL" "10.9.5" "docs/release-notes/v$VER.md" "$ENCLOSURE" > build/appcast.xml
           echo "=== appcast.xml ==="; cat build/appcast.xml
 
       - name: Upload build artifact (always)
         uses: actions/upload-artifact@v7
         with:
-          name: mt2d-pkg
+          name: voodooinputmavericks-pkg
           if-no-files-found: warn   # appcast.xml is tag-only; the .pkg always exists
           path: |
-            build/mt2d-${{ steps.ver.outputs.version }}.pkg
+            build/voodooinputmavericks-${{ steps.ver.outputs.version }}.pkg
             build/appcast.xml
 
   # All-or-nothing publish: the ONLY job that writes to GitHub Releases, gated on a
@@ -191,5 +191,5 @@ jobs:
           # prerelease" rule, which hid every 0.x release from /latest/ and broke the feed.)
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            dist/mt2d-*.pkg
+            dist/voodooinputmavericks-*.pkg
             dist/appcast.xml

@@ -5,21 +5,21 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleExecutable</key>
-    <string>MavericksVoodooInputHost</string>
+    <string>VoodooInputMavericks</string>
     <key>CFBundleIdentifier</key>
-    <string>com.schmonz.MavericksVoodooInputHost</string>
+    <string>com.schmonz.VoodooInputMavericks</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>MavericksVoodooInputHost</string>
+    <string>VoodooInputMavericks</string>
     <key>CFBundlePackageType</key>
     <string>KEXT</string>
     <key>CFBundleShortVersionString</key>
-    <string>@MT2_VERSION@</string>
+    <string>@MAVERICKS_VERSION@</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleVersion</key>
-    <string>@MT2_VERSION_NUMERIC@</string>
+    <string>@MAVERICKS_VERSION_NUMERIC@</string>
     <key>OSBundleRequired</key>
     <string>Root</string>
     <key>IOKitPersonalities</key>
@@ -27,7 +27,7 @@
         <key>MavericksVoodooInputHost</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MavericksVoodooInputHost</string>
+            <string>com.schmonz.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MavericksVoodooInputHost</string>
             <key>IOProviderClass</key>
@@ -120,7 +120,7 @@
         <key>MT2BTControl</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MavericksVoodooInputHost</string>
+            <string>com.schmonz.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
             <key>IOProviderClass</key>
@@ -139,7 +139,7 @@
         <key>MT2BTInterrupt</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MavericksVoodooInputHost</string>
+            <string>com.schmonz.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
             <key>IOProviderClass</key>
@@ -163,7 +163,7 @@
         <key>MT2USB</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MavericksVoodooInputHost</string>
+            <string>com.schmonz.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2USBReader</string>
             <key>IOProviderClass</key>
@@ -184,10 +184,10 @@
              mavericks_frame_from_voodoo translator into the existing gesture engine (submitFrame).
              Satellite kexts (e.g. VoodooI2C) locate us via the VOODOO_INPUT_IDENTIFIER property
              we set in start(). -->
-        <key>VoodooInputMux</key>
+        <key>VoodooInputMavericks</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MavericksVoodooInputHost</string>
+            <string>com.schmonz.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MavericksVoodooInput</string>
             <key>IOProviderClass</key>

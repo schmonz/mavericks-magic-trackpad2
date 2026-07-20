@@ -5,13 +5,13 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>MT2PaneRefresh</string>
+	<string>VoodooInputMavericksPane</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.schmonz.MT2PaneRefresh</string>
+	<string>com.schmonz.VoodooInputMavericksPane</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>MT2PaneRefresh</string>
+	<string>VoodooInputMavericksPane</string>
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleVersion</key>

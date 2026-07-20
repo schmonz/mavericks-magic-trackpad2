@@ -1,10 +1,10 @@
 #!/bin/sh
-# Tests the mt2d-run boot wrapper's sentinel state machine in dry-run mode.
+# Tests the voodooinputmavericks-run boot wrapper's sentinel state machine in dry-run mode.
 # Dry-run (MT2D_DRYRUN=1) decides MODE and updates the state file but performs
 # no kextload/exec, so the brick-guard logic is testable without a real panic.
 set -u
-WRAPPER="$(dirname "$0")/../dist/mt2d-run"
-TMP="$(mktemp -d -t mt2d_run_test)"
+WRAPPER="$(dirname "$0")/../dist/voodooinputmavericks-run"
+TMP="$(mktemp -d -t voodooinputmavericks_run_test)"
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 
@@ -141,5 +141,5 @@ else
     echo "PASS: no-device boot does NOT kick hidd"
 fi
 
-if [ $fail -eq 0 ]; then echo "ALL mt2d-run TESTS PASS"; else echo "mt2d-run TESTS FAILED"; exit 1; fi
+if [ $fail -eq 0 ]; then echo "ALL voodooinputmavericks-run TESTS PASS"; else echo "voodooinputmavericks-run TESTS FAILED"; exit 1; fi
 exit 0

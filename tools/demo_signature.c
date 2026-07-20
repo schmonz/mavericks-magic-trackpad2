@@ -1,6 +1,6 @@
 /* demo_signature - a deliberate, unmistakable cursor demo driven ONLY through our kext:
  * one finger glides, FREEZES ~1.5s, glides again, lifts. The mid-motion freeze is the
- * tell that this is commanded (nothing random pauses+resumes). mt2d cannot produce this
+ * tell that this is commanded (nothing random pauses+resumes). voodooinputmavericks cannot produce this
  * (it only reacts to physical MT2 touches; baseline with no synth = 0 cursor events). */
 #include "../src/touch_model.h"
 #include "../src/mavericks_amd_terminal_encode.h"

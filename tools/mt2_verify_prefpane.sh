@@ -85,7 +85,7 @@ snapshot() {
     PID=$(sysprefs_pid)
     if [ -z "$PID" ]; then skip "System Preferences not running (open it to check the osax)"
     else
-        log=$(sudo grep -a "$PID" /var/log/system.log 2>/dev/null | grep "MT2PaneRefresh")
+        log=$(sudo grep -a "$PID" /var/log/system.log 2>/dev/null | grep "VoodooInputMavericksPane")
         echo "$log" | grep -q "image loaded into pid" && green "osax injected (pid $PID)" || red "osax NOT injected (watcher/SIMBL race — relaunch System Prefs)"
         echo "$log" | grep -q "swizzled IOBluetoothDevice image" && green "BT-pane MT2 icon: image swizzle installed" || info "icon: swizzle not in yet (open Bluetooth pane)"
         echo "$log" | grep -q "rebound MT2 row icon" && green "BT-pane MT2 icon: row rebound to our art" || info "icon: row not rebound yet (open Bluetooth pane)"

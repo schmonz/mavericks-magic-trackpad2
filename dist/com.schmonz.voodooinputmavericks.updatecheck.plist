@@ -8,10 +8,10 @@
          prompt in the user's Aqua session when an update is found. Short-lived:
          it checks and exits, so no KeepAlive. -->
     <key>Label</key>
-    <string>com.schmonz.mt2updatecheck</string>
+    <string>com.schmonz.voodooinputmavericks.updatecheck</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater</string>
+        <string>/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app/Contents/MacOS/MavericksTrackpad2Updater</string>
         <string>--background</string>
     </array>
     <key>RunAtLoad</key>

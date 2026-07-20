@@ -7,20 +7,20 @@
 set -e
 KEXT="$1"; BT_BOUNCE="$2"; REENUM="$3"
 
-sudo kextunload -b com.schmonz.MavericksVoodooInputHost || true
+sudo kextunload -b com.schmonz.VoodooInputMavericks || true
 echo "reload: waiting for our nub + BNB to drain (async teardown)..."
 for i in $(seq 1 50); do
   ioreg -lw0 | grep -q '"com_schmonz_MavericksVoodooInputHost"=1\|"BNBTrackpadDevice"=1' || break
   sleep 0.1
 done
 
-sudo rm -rf /tmp/MavericksVoodooInputHost.kext
+sudo rm -rf /tmp/VoodooInputMavericks.kext
 sudo cp -R "$KEXT" /tmp/
-sudo chown -R root:wheel /tmp/MavericksVoodooInputHost.kext
+sudo chown -R root:wheel /tmp/VoodooInputMavericks.kext
 # Load Apple's multitouch kexts first (best-effort); the genuine paths manual-start them.
 sudo kextload /System/Library/Extensions/AppleUSBMultitouch.kext || true
 sudo kextload /System/Library/Extensions/AppleBluetoothMultitouch.kext || true
-sudo kextload /tmp/MavericksVoodooInputHost.kext
+sudo kextload /tmp/VoodooInputMavericks.kext
 
 echo "reload: bouncing present transport(s) for a clean re-establish..."
 "$BT_BOUNCE" || true

@@ -35,7 +35,7 @@
  * Build: clang -bundle -mmacosx-version-min=10.9 \
  *        -framework IOKit -framework CoreFoundation -lobjc
  * Loaded via the OSAXHandlers entry in Info.plist (event 'MT2x'/'load' -> MT2InjectHandler),
- * sent by tools/mt2_prefpane_refresh/mt2_pane_arm at System Preferences launch.
+ * sent by tools/voodooinputmavericks_prefpane/voodooinputmavericks_pane_arm at System Preferences launch.
  */
 
 #include <string.h>
@@ -58,11 +58,11 @@
 #include "mavericks_single_load.h"
 #include "../mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
-#define LOG(...) syslog(LOG_NOTICE, "[MT2PaneRefresh] " __VA_ARGS__)
+#define LOG(...) syslog(LOG_NOTICE, "[VoodooInputMavericksPane] " __VA_ARGS__)
 
-/* CMake passes -DMT2_VERSION_STR="X.Y.Z" (lock-step with MT2_VERSION); keep the file self-compilable. */
-#ifndef MT2_VERSION_STR
-#define MT2_VERSION_STR "0.0.0"
+/* CMake passes -DMAVERICKS_VERSION_STR="X.Y.Z" (lock-step with MAVERICKS_VERSION); keep the file self-compilable. */
+#ifndef MAVERICKS_VERSION_STR
+#define MAVERICKS_VERSION_STR "0.0.0"
 #endif
 
 /* Sparkle + the daily auto-check agent read this key from the updater's own prefs domain. */
@@ -90,7 +90,7 @@ static int responds(id obj, SEL s) {
  * on-device 2026-07-06: Autoupdate stuck waiting on a host pid that had already exited). The updater is
  * now a normal foreground app (not LSUIElement), so `open` also brings its Sparkle dialog to the front. */
 static void mt2_launch_updater(void) {
-    const char *app = "/usr/local/lib/mt2d/MavericksTrackpad2Updater.app";
+    const char *app = "/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app";
     if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
     /* --args --user: this is an EXPLICIT summon, so the updater runs its interactive check and reports
      * status. Without it the opt-in updater treats the launch as a silent probe and shows nothing. */
@@ -784,12 +784,12 @@ static id mt2_make_button(CGRect frame, CFStringRef title, SEL action) {
 #define MT2_TAG_AUTOCHECK 55503 /* the "Check automatically" checkbox */
 
 /* The version actually installed on disk = the pkg-updated updater app's CFBundleShortVersionString.
- * The About tab shows THIS (not the compile-baked MT2_VERSION_STR) so it reflects reality after an update
+ * The About tab shows THIS (not the compile-baked MAVERICKS_VERSION_STR) so it reflects reality after an update
  * even though this osax binary may be older. Returns a +1 CFString (caller releases) or NULL -> fall back
  * to compile-baked. CF-only (no ObjC syntax) so it stays GC-neutral. */
 static CFStringRef mt2_installed_version_copy(void) {
     CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
-        CFSTR("/usr/local/lib/mt2d/MavericksTrackpad2Updater.app/Contents/Info.plist"),
+        CFSTR("/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app/Contents/Info.plist"),
         kCFURLPOSIXPathStyle, false);
     if (!url) return NULL;
     CFReadStreamRef s = CFReadStreamCreateWithFile(kCFAllocatorDefault, url);
@@ -818,14 +818,14 @@ static void mt2_version_cstr(char *buf, unsigned long n) {
     CFStringRef iv = mt2_installed_version_copy();
     if (iv && CFStringGetCString(iv, buf, (CFIndex)n, kCFStringEncodingUTF8)) { CFRelease(iv); return; }
     if (iv) CFRelease(iv);
-    snprintf(buf, n, "%s", MT2_VERSION_STR);
+    snprintf(buf, n, "%s", MAVERICKS_VERSION_STR);
 }
 
 static char gAboutVer[48] = "";   /* version currently shown in the About link (change-detect for refresh) */
 
 /* Build the About tab's container view + its controls, CENTERED. Big bold title on top, the update
  * controls + GitHub hyperlink centered, and the version tucked in the lower-right corner. Version from
- * MT2_VERSION_STR (compile time); the checkbox reflects SUEnableAutomaticChecks (default OFF). */
+ * MAVERICKS_VERSION_STR (compile time); the checkbox reflects SUEnableAutomaticChecks (default OFF). */
 static id mt2_build_about_view(void) {
     Class viewCls = objc_getClass("NSView");
     id v = ((id (*)(Class, SEL))objc_msgSend)(viewCls, sel_registerName("alloc"));

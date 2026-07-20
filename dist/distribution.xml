@@ -17,11 +17,11 @@
     </allowed-os-versions>
     <options customize="never" require-scripts="true"/>
     <choices-outline>
-        <line choice="default"><line choice="com.schmonz.mt2d"/></line>
+        <line choice="default"><line choice="com.schmonz.voodooinputmavericks"/></line>
     </choices-outline>
     <choice id="default"/>
-    <choice id="com.schmonz.mt2d" visible="false">
-        <pkg-ref id="com.schmonz.mt2d"/>
+    <choice id="com.schmonz.voodooinputmavericks" visible="false">
+        <pkg-ref id="com.schmonz.voodooinputmavericks"/>
     </choice>
-    <pkg-ref id="com.schmonz.mt2d" version="0" onConclusion="none">mt2d-component.pkg</pkg-ref>
+    <pkg-ref id="com.schmonz.voodooinputmavericks" version="0" onConclusion="none">voodooinputmavericks-component.pkg</pkg-ref>
 </installer-gui-script>
