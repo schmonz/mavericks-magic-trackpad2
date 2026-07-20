@@ -582,9 +582,9 @@ sub_kexts() {  # ["name regex"]
   kextstat 2>/dev/null | grep -iE "$pat|^Index" | grep -ivE "grep"
 }
 
-sub_mt_contacts() {  # stream recognizer contacts (builds tools/mt_contacts)
-  root=$(cd "$(dirname "$0")/.." && pwd); bin=$root/tools/mt_contacts
-  [ -x "$bin" ] || clang -o "$bin" "$root/tools/mt_contacts.c" \
+sub_mt_contacts() {  # stream recognizer contacts (builds tools/multitouch_contacts)
+  root=$(cd "$(dirname "$0")/.." && pwd); bin=$root/tools/multitouch_contacts
+  [ -x "$bin" ] || clang -o "$bin" "$root/tools/multitouch_contacts.c" \
     -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation \
     || { echo "build failed" >&2; return 1; }
   sudo "$bin"
@@ -599,9 +599,9 @@ sub_mt2_name() {  # READ-ONLY: dump on-device HID DeviceName Feature reports (bu
   "$bin" "$@"
 }
 
-sub_mt_devices() {  # list MultitouchSupport devices (builds tools/mt_transport)
-  root=$(cd "$(dirname "$0")/.." && pwd); bin=$root/tools/mt_transport
-  [ -x "$bin" ] || clang -o "$bin" "$root/tools/mt_transport.c" \
+sub_mt_devices() {  # list MultitouchSupport devices (builds tools/multitouch_transport)
+  root=$(cd "$(dirname "$0")/.." && pwd); bin=$root/tools/multitouch_transport
+  [ -x "$bin" ] || clang -o "$bin" "$root/tools/multitouch_transport.c" \
     -F/System/Library/PrivateFrameworks -framework MultitouchSupport -framework CoreFoundation \
     || { echo "build failed" >&2; return 1; }
   sudo "$bin"

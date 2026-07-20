@@ -19,21 +19,21 @@ kext-gesture/*.o
 
 # root tool binaries (compiled from tools/*.c by `make`)
 /mt2d
-/mt_listen
+/multitouch_listen
 /sbin/
 
 # tools/ compiled helpers (the .c sources + the `re` toolkit are tracked; these built binaries aren't)
 tools/feed_probe
-tools/mt_contacts
-tools/mt_cursorpos
-tools/mt_transport
+tools/multitouch_contacts
+tools/multitouch_cursorpos
+tools/multitouch_transport
 tools/synth_feed
 tools/synth_tap
 tools/click_monitor
 tools/kc_lzss
 tools/kc_carve
 tools/macho_rebase
-tools/mt_frames_probe
+tools/multitouch_frames_probe
 
 # transient working dirs
 /docs/superpowers/

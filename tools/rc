@@ -9,7 +9,7 @@
 #   rc pane trackpad|bluetooth|sound|quit   set System Prefs frontmost pane (sound = an "unrelated" pane)
 #   rc shot <label>                         screencapture -> /tmp/rc-<label>.png (prints the path to Read)
 #   rc state                                our device IOKit instance counts + recognizer's cached geometry
-#   rc svc start|stop|<N>                   mt_svc_observe notification logger: start/stop, or tail last N lines
+#   rc svc start|stop|<N>                   multitouch_svc_observe notification logger: start/stop, or tail last N lines
 #   rc mark <label>                         write a "==== CELL: <label> ====" marker into the svc log
 #   rc off                                  device TERMINATE: unload our kext (manual-started Apple driver dies)
 #   rc on                                   device FIRST-MATCH: load our kext + re-establish (reenumerate/bounce)
@@ -46,11 +46,11 @@ case "${1:-}" in
     OUT="/tmp/rc-${2:-shot}.png"; screencapture -x "$OUT" && echo "$OUT";;
   state)
     ioreg -lw0 2>/dev/null | grep -aoE '"(com_schmonz_MT2USBReader|com_schmonz_MT2BTReader|BNBTrackpadDevice|AppleMultitouchDevice)"=[0-9]+' | sort -u
-    "$HERE/mt_transport" 2>/dev/null | grep -iE "surfaceW|familyID|sensorRows" | head -1;;
+    "$HERE/multitouch_transport" 2>/dev/null | grep -iE "surfaceW|familyID|sensorRows" | head -1;;
   svc)
     case "${2:-tail}" in
-      start) pkill -f mt_svc_observe 2>/dev/null; "$HERE/mt_svc_observe" > "$SVCLOG" 2>&1 & sleep 1; echo "svc -> $SVCLOG"; tail -2 "$SVCLOG";;
-      stop)  pkill -f mt_svc_observe 2>/dev/null; echo "svc stopped";;
+      start) pkill -f multitouch_svc_observe 2>/dev/null; "$HERE/multitouch_svc_observe" > "$SVCLOG" 2>&1 & sleep 1; echo "svc -> $SVCLOG"; tail -2 "$SVCLOG";;
+      stop)  pkill -f multitouch_svc_observe 2>/dev/null; echo "svc stopped";;
       *)     tail -n "${2:-14}" "$SVCLOG" 2>/dev/null;;
     esac;;
   mark)  printf '==== CELL: %s ====\n' "${2:-?}" >> "$SVCLOG"; echo "marked: ${2:-?}";;
