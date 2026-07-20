@@ -47,6 +47,7 @@ static dispatch_source_t g_reconnect_timer;   /* file-static: keep the timer ali
  * (absent from the 10.9 toolchain). The dispatch_sync barrier in quiesce_for_shutdown publishes it. */
 static volatile sig_atomic_t g_terminating = 0;
 static io_connect_t g_pm_root = MACH_PORT_NULL;   /* IORegisterForSystemPower root-port for IOAllowPowerChange */
+static mavericks_presence_observer_t *g_obs;   /* the shared presence SM: single source of "are we on USB?" */
 
 /* Serial queue for ALL paging. openConnection blocks ~5s on page timeout when the device is off,
  * so it must never run on the main runloop (which drives the presence observer). Serialized so
@@ -63,10 +64,15 @@ static dispatch_queue_t reconnect_queue(void) {
  * `why` labels the trigger in the log. Generalizes the old wake_bt_mt2. */
 static void reconnect_matched(const char *why) {
     if (g_terminating) return;   /* shutdown/restart in progress — never touch the BT controller */
+    /* Ask the shared presence SM whether we're currently on USB. If so, DO NOT page BT: the MT2 is
+     * single-transport, so a successful BT page flips it off USB and kills the stream (the periodic USB
+     * cursor stalls, root-caused 2026-07-20). g_obs is NULL in the one-shot CLI modes (no observer) ->
+     * PRESENCE_NONE -> usb_present=0 -> those deliberate wakes/bounces page as before. */
+    int usb_present = (presence_observer_state(g_obs) == PRESENCE_USB);
     @autoreleasepool {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         for (IOBluetoothDevice *d in devs) {
-            if (!mt2_reconnect_should_page([d getClassOfDevice], [d isConnected])) continue;
+            if (!mt2_reconnect_should_page([d getClassOfDevice], [d isConnected], usb_present)) continue;
             IOReturn ro = [d openConnection];   /* synchronous baseband re-establish */
             NSLog(@"mt2_usb_bt_handoff: [%s] openConnection %@ -> 0x%08x", why, [d addressString], ro);
         }
@@ -189,9 +195,12 @@ int main(int argc, const char *argv[]) {
          * and reports each transition; we act only on the USB_REMOVE edge (see on_presence). The
          * observer drains its initial iterators without firing, so no spurious wake at startup just
          * because USB happens to be plugged in now. */
-        mavericks_presence_observer_t *obs =
-            presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
-        if (!obs) { NSLog(@"mt2_usb_bt_handoff: presence_observer_create failed"); return 1; }
+        g_obs = presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
+        if (!g_obs) { NSLog(@"mt2_usb_bt_handoff: presence_observer_create failed"); return 1; }
+        /* The observer drains its initial iterators WITHOUT firing, so an already-present USB reader at
+         * launch produces no USB_APPEAR edge -> the SM would sit at PRESENCE_NONE and the keeper would
+         * page BT off USB. Reconcile once against live truth so the SM knows we're on USB from the start. */
+        presence_observer_reconcile(g_obs);
 
         /* Connection-keeper: a repeating timer on the paging queue re-attempts our matched device
          * whenever it might be reachable — the login-screen wake at boot (first fire ~1s after launch,
