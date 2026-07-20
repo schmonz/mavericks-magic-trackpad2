@@ -34,7 +34,7 @@ set(OSAX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_prefpane)
 
 # The payload packaged as a SIMBL plugin bundle (SIMBLAgent injects it at launch —
 # the current working loader). Same -bundle binary, SIMBL-Info.plist, .bundle dir.
-add_library(VoodooInputMavericksPane_simbl MODULE ${OSAX_DIR}/voodooinputmavericks_prefpane_refresh.c ${OSAX_DIR}/mavericks_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c ${CMAKE_SOURCE_DIR}/src/mavericks_single_load.c)
+add_library(VoodooInputMavericksPane_simbl MODULE ${OSAX_DIR}/voodooinputmavericks_prefpane_refresh.c ${OSAX_DIR}/mavericks_presence_observer.c ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c)
 target_include_directories(VoodooInputMavericksPane_simbl PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(VoodooInputMavericksPane_simbl PRIVATE MAVERICKS_VERSION_STR="${MAVERICKS_VERSION}")
 # Own output subdir: the bundle binary is unprefixed/unsuffixed "VoodooInputMavericksPane"; keep it

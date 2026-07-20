@@ -53,7 +53,6 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include "mavericks_presence.h"
 #include "mavericks_presence_observer.h"
-#include "mavericks_single_load.h"
 #include "../mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
 #define LOG(...) syslog(LOG_NOTICE, "[VoodooInputMavericksPane] " __VA_ARGS__)
@@ -1562,16 +1561,12 @@ static void install_swizzle(void) {
 
 /* THE single activation choke point — the whole-payload owner decision, no per-swizzle granularity.
  * The payload loads once, as a SIMBL plugin, via its [bundle load] constructor, which reaches here and
- * claims process-wide ownership via mavericks_claim_single_load(). The single-load guard is kept as cheap
- * insurance: if the bundle were ever injected twice into one process, the second image finds the claim
- * taken and stays FULLY inert. Idempotent within one image (gActivated). */
+ * installs the swizzles. There is exactly ONE loader now (SIMBL; the standalone osax was retired), and
+ * SIMBL injects a plugin once per process, so no cross-loader arbitration is needed — gActivated alone
+ * keeps activation idempotent within the image. */
 static int gActivated = 0;
 static void mavericks_activate(const char *via) {
     if (gActivated) return;                    /* already active in THIS image (idempotent) */
-    if (!mavericks_claim_single_load()) {            /* another image already owns this process */
-        LOG("payload: lost the single-load claim (via %s) — staying inert", via);
-        return;
-    }
     gActivated = 1;
     LOG("payload active in pid %d (via %s)", getpid(), via);
     install_swizzle();

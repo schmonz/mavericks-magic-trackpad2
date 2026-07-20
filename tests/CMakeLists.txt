@@ -9,7 +9,7 @@ endfunction()
 
 foreach(t test_model test_decode test_bt_decode test_encode test_pipeline test_lifecycle
           test_session test_session_characterization test_connect_sm test_presence test_conn_trace test_usb_bytes test_splice test_genuine_host test_coordinator
-          test_battery test_single_load test_synth_report test_synth_teardown)
+          test_battery test_synth_report test_synth_teardown)
   mt2_ctest(${t})
 endforeach()
 

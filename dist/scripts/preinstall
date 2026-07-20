@@ -22,4 +22,15 @@ rm -f /usr/local/sbin/mt2_gesture_feed 2>/dev/null || true
 rm -f /usr/local/bin/mt2d /usr/local/bin/mt2_reenumerate /usr/local/bin/mt2d-run 2>/dev/null || true
 rm -f /usr/local/sbin/mt2d /usr/local/sbin/mt2d-run 2>/dev/null || true
 rm -rf /usr/local/lib/mt2d 2>/dev/null || true
+# Retire the standalone-osax prefpane loader (the pane companion now ships ONLY as a SIMBL plugin).
+# The single-load arbitration that let the osax + SIMBL payloads coexist without double-swizzling is
+# gone, so a stale osax MUST NOT be left able to co-load into System Preferences. Unload + remove its
+# launch-watcher LaunchAgent and the osax bundle + watcher binary. Best-effort (they may be absent).
+CONSOLE_USER=$(stat -f%Su /dev/console 2>/dev/null)
+if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+    sudo -u "$CONSOLE_USER" launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.panewatch.plist 2>/dev/null || true
+fi
+rm -f /Library/LaunchAgents/com.schmonz.voodooinputmavericks.panewatch.plist 2>/dev/null || true
+rm -rf /Library/ScriptingAdditions/VoodooInputMavericksPane.osax 2>/dev/null || true
+rm -f /usr/local/libexec/voodooinputmavericks_pane_watch 2>/dev/null || true
 exit 0
