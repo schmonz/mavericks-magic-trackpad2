@@ -1399,6 +1399,29 @@ static void aux_tick_start(void) {
     dispatch_resume(gAuxTick);
 }
 
+/* Force the trackpad view for our all-synthetic (Voodoo satellite) AMD. Apple's `-[Trackpad loadMainView]`
+ * detect is CLASS-based: it sets `mFoundBTTrackpad` only for a genuine `BNBTrackpadDevice`/
+ * `AppleUSBMultitouchDriver` (RE'd — decisions.md "pane detect is CLASS-based"), then picks the nib
+ * "MTTrackpadController" iff that ivar is set, else the NoTrackpad base nib. Our fabricated
+ * `AppleMultitouchDevice` matches none, so the pane would show NoTrackpad. We are the sole presence
+ * authority (the reader classes via `gObs`); when a device is present, remap any non-trackpad nib request
+ * to "MTTrackpadController" so the pane instantiates the real trackpad controller. This is DOWNSTREAM of
+ * loadMainView's detect (the ivar it read is already spent), so nothing overwrites it. The ① fabricate-AMD
+ * terminal loses identity above the AMD by design; this is that terminal's pane-force (decisions.md
+ * "Terminal design space"). */
+static id (*gOrigControlerForNIB)(id, SEL, id) = NULL;
+static id my_controlerForNIB(id self, SEL _cmd, id nibName) {
+    if (nibName && gObs && presence_observer_state(gObs) != PRESENCE_NONE) {
+        signed char isMT = ((signed char (*)(id, SEL, id))objc_msgSend)(
+            nibName, sel_registerName("isEqualToString:"), (id)CFSTR("MTTrackpadController"));
+        if (!isMT) {
+            LOG("controlerForNIB: device present -> forcing MTTrackpadController (was other nib)");
+            nibName = (id)CFSTR("MTTrackpadController");
+        }
+    }
+    return gOrigControlerForNIB(self, _cmd, nibName);
+}
+
 /* ============================================================================================
  * 9. PANE CAPTURE + NAVIGATION SWIZZLES
  * ============================================================================================ */
@@ -1434,6 +1457,18 @@ static void capture_pane(id self) {
             LOG("swizzled MTTrackpadController _magicTrackpadAction:deviceConnected: (own selector; suppress autonomous)");
         } else {
             LOG("MTTrackpadController _magicTrackpadAction: not found (suppression disabled) getClass=%p", c);
+        }
+    }
+    if (!gOrigControlerForNIB) {
+        Class c = object_getClass(self);
+        SEL sel = sel_registerName("_controlerForNIBName:");
+        Method m = class_getInstanceMethod(c, sel);
+        if (m) {
+            gOrigControlerForNIB = (id (*)(id, SEL, id))method_getImplementation(m);
+            method_setImplementation(m, (IMP)my_controlerForNIB);
+            LOG("swizzled _controlerForNIBName: (force trackpad view for synthetic AMD)");
+        } else {
+            LOG("_controlerForNIBName: not found (trackpad-view force disabled)");
         }
     }
     install_battery_timer_swizzle("capture");   /* belt; willSelect installs it earlier (no flash) */
