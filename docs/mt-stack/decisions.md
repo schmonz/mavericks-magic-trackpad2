@@ -308,6 +308,30 @@ IOKit msg `kIOMessageVoodooInputMessage`=12345), so one device targets both eras
 our manual-start — does it work on 10.9? (Has teeth: catalogue residue, built-in gating, the un-started
 `IOHIDDevice` panic above.)
 
+### Two design follow-ups asked + answered 2026-07-20 — both are NO-CHANGE, for structural reasons
+Raised while cleaning up the SIMBL-only prefpane cut. Recorded so they aren't re-litigated.
+
+- **"Does the USB `hidd` kick also cover BT, so we can drop the BT baseband bounce?" → NO.** The two are
+  ORTHOGONAL, not redundant. The BT bounce (`mt2_usb_bt_handoff --bounce-once`) re-opens BOTH L2CAP
+  channels so our reader binds them (BT=1→2, the **data** path); without it BT is half-open and there are
+  no frames at all. The `killall hidd` kick only re-opens the gesture **frames client**
+  (`AppleMultitouchDeviceUserClient`) for an AMD that appeared into an already-running hidd — it cannot
+  bind an L2CAP channel. On BT the bounce ALSO makes the AMD re-appear so the running hidd catches it, so
+  BT gets the frames-client open "for free"; USB never had that, which is why USB alone needs the kick
+  (see open-questions.md "CRACKED: USB gestures … stale hidd"). Dropping the bounce would kill BT data
+  entirely. On least-disruptive: `killall hidd` is blunt (one momentary all-HID hiccup, fired once at USB
+  bring-up, guarded to USB-bound-non-BT); a gentler path (fire the exact DeviceAdded notification our USB
+  appearance misses) is known but unRE'd — the kick is empirically sufficient, so it stays.
+- **"Does upstream VoodooInput make each driver free itself from Apple's generic HID? If so, do likewise." → upstream does NOT, and "do likewise" is INAPPLICABLE.** Upstream's satellites (VoodooPS2/I2C)
+  translate *non-Apple* hardware on the I2C/PS2/SMBus buses, which Apple's generic USB/BT HID drivers never
+  claim — so there is nothing to evict (the VoodooInput mux binds Apple's MT HID to a *virtual* nub; see
+  the VoodooInput paragraph above). OUR MT2 is a genuine USB/BT **HID** device that Apple's
+  `IOUSBHIDDriver`/`IOBluetoothHIDDriver` natively claim, so we MUST out-bid them or we get nothing. That
+  eviction is already declarative (`IOProbeScore=100000` in the personalities, reference.md) and inherently
+  per-transport (USB matches `IOUSBInterface`, BT matches `IOBluetoothL2CAPChannel` — different
+  `IOProviderClass`, so they cannot collapse into one personality). There is no duplicated imperative
+  eviction logic to centralize; each satellite just carries a high probe score, the standard IOKit idiom.
+
 ### Override the cached `ClassOfDevice` to fix the Bluetooth-pane picture — *not functioning*
 The pane's device picture is chosen from the device's Class-of-Device via `IOBluetoothDeviceImageVault`
 (see explanation.md "Bluetooth prefpane device identity"). We hoped to override the MT2's CoD in
