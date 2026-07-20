@@ -26,13 +26,27 @@
 #import <Foundation/Foundation.h>
 #import <IOBluetooth/IOBluetooth.h>
 #import <IOKit/IOKitLib.h>
+#import <IOKit/pwr_mgt/IOPMLib.h>
+#import <IOKit/IOMessage.h>
 #include <string.h>
+#include <signal.h>
 #include "mavericks_presence_observer.h"
 #include "mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 #include "mt2_reconnect_policy.h"   /* mt2_reconnect_should_page — page iff ours-by-class AND disconnected */
 
 #define RECONNECT_CADENCE_SEC 15          /* how often the keeper re-attempts while disconnected; tunable */
 static dispatch_source_t g_reconnect_timer;   /* file-static: keep the timer alive for the process lifetime */
+
+/* Shutdown/restart quiesce (root-caused 2026-07-20): the keeper's synchronous openConnection blocks ~5s
+ * paging an absent MT2, keeping the Broadcom BT controller busy. On a WARM restart that mid-page state
+ * carried into EFI's boot-time Bluetooth init (the EFIBluetoothDelay NVRAM setting makes firmware wait on
+ * BT) and HUNG before video — a cold power-cycle was the only recovery (twice, 2026-07-20). g_terminating
+ * makes the keeper get out of the BT controller's way the instant the system begins to power off/restart. */
+/* Single-writer latch: set only on the main thread (SIGTERM source + power callback are serialized there),
+ * read on the serial paging queue. volatile sig_atomic_t gives the needed visibility without C11 atomics
+ * (absent from the 10.9 toolchain). The dispatch_sync barrier in quiesce_for_shutdown publishes it. */
+static volatile sig_atomic_t g_terminating = 0;
+static io_connect_t g_pm_root = MACH_PORT_NULL;   /* IORegisterForSystemPower root-port for IOAllowPowerChange */
 
 /* Serial queue for ALL paging. openConnection blocks ~5s on page timeout when the device is off,
  * so it must never run on the main runloop (which drives the presence observer). Serialized so
@@ -48,6 +62,7 @@ static dispatch_queue_t reconnect_queue(void) {
  * (skips connected devices -> a quiet no-op when nothing needs waking) and safe on any trigger.
  * `why` labels the trigger in the log. Generalizes the old wake_bt_mt2. */
 static void reconnect_matched(const char *why) {
+    if (g_terminating) return;   /* shutdown/restart in progress — never touch the BT controller */
     @autoreleasepool {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         for (IOBluetoothDevice *d in devs) {
@@ -112,6 +127,35 @@ static void on_presence(presence_action_t action, presence_event_t event, void *
     if (event == PRESENCE_EV_USB_REMOVE) reconnect_matched_async("usb-remove");
 }
 
+/* Quiesce the keeper for a power-off/restart: stop new pages (cancel the timer + latch g_terminating) and
+ * BARRIER-drain the serial paging queue so any in-flight openConnection (bounded by the ~5s page timeout)
+ * has finished before we return. That leaves the BT controller idle for the OS's own clean teardown and,
+ * critically, for the next warm boot's EFI Bluetooth init. Idempotent; safe to call from SIGTERM or the
+ * system-power callback. */
+static void quiesce_for_shutdown(const char *why) {
+    if (g_terminating) return;   /* already quiescing (both callers run serialized on the main thread) */
+    g_terminating = 1;
+    if (g_reconnect_timer) dispatch_source_cancel(g_reconnect_timer);
+    dispatch_sync(reconnect_queue(), ^{});               /* wait out any in-flight page (~5s max) */
+    NSLog(@"mt2_usb_bt_handoff: quiesced BT for %s — keeper stopped, controller left idle for warm restart", why);
+}
+
+/* System power callback (IORegisterForSystemPower). The MT2 box has EFIBluetoothDelay set, so firmware
+ * touches the BT controller on every boot; we MUST hand it over clean. Quiesce on the will-restart /
+ * will-power-off edges (our bug is warm restart); allow every transition promptly so we never stall
+ * shutdown/sleep. Sleep is intentionally NOT terminal (the keeper must survive wake). */
+static void pm_callback(void *ctx, io_service_t svc, natural_t msgType, void *msgArg) {
+    (void)ctx; (void)svc;
+    switch (msgType) {
+        case kIOMessageSystemWillRestart:   quiesce_for_shutdown("will-restart");   IOAllowPowerChange(g_pm_root, (long)msgArg); break;
+        case kIOMessageSystemWillPowerOff:  quiesce_for_shutdown("will-power-off");  IOAllowPowerChange(g_pm_root, (long)msgArg); break;
+        case kIOMessageCanSystemPowerOff:
+        case kIOMessageCanSystemSleep:
+        case kIOMessageSystemWillSleep:     IOAllowPowerChange(g_pm_root, (long)msgArg); break;   /* not our bug; don't delay it */
+        default: break;
+    }
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         /* One-shot mode: wake the deep-idle BT MT2 exactly once and exit — NO notification, NO run
@@ -161,7 +205,25 @@ int main(int argc, const char *argv[]) {
         dispatch_source_set_event_handler(g_reconnect_timer, ^{ reconnect_matched("timer"); });
         dispatch_resume(g_reconnect_timer);
 
-        NSLog(@"mt2_usb_bt_handoff: armed — %ds reconnect keeper + USB-removal wake", RECONNECT_CADENCE_SEC);
+        /* Register for system power notifications so we quiesce Bluetooth BEFORE the machine powers off or
+         * restarts (the warm-restart EFI hang fix). Add its port to the same runloop the observer uses. */
+        IONotificationPortRef pmPort = NULL;
+        io_object_t pmNotifier = 0;
+        g_pm_root = IORegisterForSystemPower(NULL, &pmPort, pm_callback, &pmNotifier);
+        if (g_pm_root != MACH_PORT_NULL && pmPort) {
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), IONotificationPortGetRunLoopSource(pmPort), kCFRunLoopCommonModes);
+        } else {
+            NSLog(@"mt2_usb_bt_handoff: WARNING IORegisterForSystemPower failed — warm-restart BT quiesce unavailable");
+        }
+
+        /* SIGTERM (launchctl unload + the shutdown daemon-reap): quiesce then stop the runloop for a clean
+         * exit. Ignore the default disposition so the GCD source is the sole handler. */
+        signal(SIGTERM, SIG_IGN);
+        dispatch_source_t termSrc = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
+        dispatch_source_set_event_handler(termSrc, ^{ quiesce_for_shutdown("sigterm"); CFRunLoopStop(CFRunLoopGetCurrent()); });
+        dispatch_resume(termSrc);
+
+        NSLog(@"mt2_usb_bt_handoff: armed — %ds reconnect keeper + USB-removal wake + shutdown quiesce", RECONNECT_CADENCE_SEC);
         CFRunLoopRun();
     }
     return 0;
