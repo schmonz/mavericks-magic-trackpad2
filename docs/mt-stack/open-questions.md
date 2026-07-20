@@ -1551,3 +1551,54 @@ experience is now: instant basic cursor at the login screen (Apple's IOBluetooth
 moment you log in (our reader, warm-takeover forced to BT=2 by the bounce). Both transports (BT verified; USB analogous
 via re-enumerate). The long-standing "dead/slow trackpad at first login" is SOLVED. Remaining polish (optional): the
 one-time disconnect glyph on the in-session takeover; the single-0xF1 enable tidy-up (not needed).
+
+## VoodooInput's scope vs. our framework's layers — what the satellite architecture does and does NOT own (2026-07-19)
+
+Prompted by "does going all-in on VoodooInput strand our hard-won wins?" Answer: no — VoodooInput
+standardizes exactly ONE thing, the **contact-event stream** (`VoodooInputEvent` = contact_count +
+transducers; plus relative-pointer/scroll/trackpoint structs — verified in the vendored header). It
+carries NO battery, charging, name, pairing, or matching. Everything else lives in orthogonal layers
+we own, and always did:
+
+| Concern | Layer (ours) | In VoodooInput? |
+|---|---|---|
+| Contact events | the wire (`VoodooInputEvent`) | ✅ |
+| Device **matching** (which devices we drive) | IOKit personalities + high probe score, per device | ❌ |
+| Device **metadata** (battery/charge/name) | node properties + reader read/write | ❌ |
+| Transport **orchestration** (pair/handoff) | presence observer + `mt2_usb_bt_handoff` daemon | ❌ |
+| Multi-device **coexistence** | per-provider match → per-mux-instance AMD | ❌ |
+
+**Battery / name / charging — reachable, out-of-band, not stranded.** The reader (front-half, still
+owns the transport) polls battery (BT `GET_REPORT 0x90`), reads/writes the persistent name (vendor
+Feature report `0x55`), and publishes them as IOKit node properties the pane/osax read. The only
+satellite-era wrinkle: the terminal AMD node moved under the mux, so the publish target moves too — BT
+battery already repointed (`gBtMux->synthCtx()`); USB + full pane wiring = the prefpane-onto-mux project.
+Charging state = never surfaced; same pattern if we want it (reader reads, publishes a property).
+
+**Auto-pair / USB↔BT handoff — reader/daemon layer, intact.** Connection lifecycle, not contact events.
+The presence observer + handoff daemon key on our reader classes (`com_schmonz_MT2BTReader`/`MT2USBReader`),
+which persist unchanged as satellites — so the machinery survives. Pre-existing (NOT satellite-caused)
+gaps remain: deep-idle BT wake / `openConnection` not 100% reliable; the "plug in once → auto-pair →
+unplug to go wireless" OOB idea designed-not-built (see the handoff sections above).
+
+**Matching for arbitrary future devices — plain IOKit, NOT VoodooInput.** Each device = a personality
+(match dict) + high probe score binding our reader; the reader emits `VoodooInputEvent`s. That IS the
+"new device = a config file" ideal (match dict + decode/geometry config). VoodooInput assumes a satellite
+is already bound; it never governs how.
+
+**Multi-device behavior:**
+- *Multiple us-devices* (e.g. two MT2s): each transport → own reader → own mux instance → own fabricated
+  AMD (per-provider ownership from the coexistence fix). Kernel/input: coexist fine. **Prefpane: OPEN
+  DESIGN GAP** — Apple's Trackpad pane isn't multi-device-aware; our osax paints one. Settle in the pane
+  project.
+- *Non-us + us devices* (e.g. a real MT1 + our MT2): coexist cleanly because our personalities match ONLY
+  our identity (VID/PID/CoD) at high score; we never touch the co-resident Apple stack
+  ([[mt2-dont-perturb-coconnected-apple-devices]]). This scoping is also WHY we chose synthetic-USB over
+  the owned name-claim (which would be global + could break a co-resident device's driver).
+
+**Settle revalidation (USB, queued for the Task 6 device pass).** The 50ms enable→settle's recorded
+rationale is "before the AMD probes it" — but in the satellite architecture NOTHING probes the device
+(the mux owns the AMD, fed via `messageClient`; no getReport probe). So that rationale is likely stale;
+the settle may only matter for the enable to take effect before the first read, or be unnecessary now.
+A/B it on-device: load with it (confirm cursor), then remove it and confirm the stream still comes up
+clean.
