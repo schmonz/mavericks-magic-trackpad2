@@ -109,5 +109,37 @@ else
     echo "FAIL: no-device boot (state=$nod_state, recovery in out? — out: $nod_out)"; fail=1
 fi
 
+# USB gesture-open: a USB-bound boot must KICK hidd (fresh hidd opens our AMD's frames client) exactly
+# once; a BT-only / no-device boot must NOT (proven 2026-07-20; see open-questions.md "CRACKED"). We stub
+# MT2D_HIDD_KICK to a marker so no real hidd is touched.
+usbk="$TMP/usbk"; mkdir -p "$usbk/sbin"
+cat > "$usbk/ioclasscount" <<EOF
+#!/bin/sh
+case "\$1" in
+  com_schmonz_MT2BTReader)  echo "x 0" ;;
+  com_schmonz_MT2USBReader) echo "x 1" ;;
+  com_schmonz_MT2Gesture)   echo "x 1" ;;
+esac
+EOF
+chmod +x "$usbk/ioclasscount"
+printf '#!/bin/sh\nexit 0\n' > "$usbk/kextload";   chmod +x "$usbk/kextload"
+printf '#!/bin/sh\nexit 0\n' > "$usbk/kextunload"; chmod +x "$usbk/kextunload"
+echo ok > "$usbk/state"
+usbk_out="$(MT2D_STATE_FILE="$usbk/state" MT2D_IOCLASSCOUNT="$usbk/ioclasscount" \
+    MT2D_KEXTLOAD="$usbk/kextload" MT2D_KEXTUNLOAD="$usbk/kextunload" MT2D_SBIN="$usbk/sbin" \
+    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 MT2D_FORCE_LOAD=1 MT2D_BOUNCE=: \
+    MT2D_HIDD_KICK="touch $usbk/kicked" "$WRAPPER" 2>&1)"
+if [ -f "$usbk/kicked" ] && echo "$usbk_out" | grep -q "kicked hidd"; then
+    echo "PASS: USB-bound boot -> kicks hidd once (gesture-open)"
+else
+    echo "FAIL: USB-bound boot hidd kick (kicked? $([ -f "$usbk/kicked" ] && echo yes || echo no); out: $usbk_out)"; fail=1
+fi
+# And the no-device boot above must NOT have kicked hidd (usbn=0). Reuse its output.
+if echo "$nod_out" | grep -q "kicked hidd"; then
+    echo "FAIL: no-device boot kicked hidd (should not)"; fail=1
+else
+    echo "PASS: no-device boot does NOT kick hidd"
+fi
+
 if [ $fail -eq 0 ]; then echo "ALL mt2d-run TESTS PASS"; else echo "mt2d-run TESTS FAILED"; exit 1; fi
 exit 0

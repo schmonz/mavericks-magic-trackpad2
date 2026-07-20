@@ -32,6 +32,14 @@ RECOVER_TRIES="${MT2D_RECOVER_TRIES:-3}"
 # reader wins them (BT=2). Overridable so the unit test can stub it. Runs at the session-takeover, where
 # our reader otherwise binds half-open (BT=1) evicting Apple's generic HID mid-connection.
 BOUNCE="${MT2D_BOUNCE:-/usr/local/libexec/mt2_usb_bt_handoff --bounce-once}"
+# hidd kick (USB gesture-open). Our USB AMD appears into an already-running hidd that never opens its
+# multitouch frames UserClient, so scroll/swipe/tap are dead (cursor + physical/2-finger click still work
+# via the kernel AppleMultitouchHIDEventDriver — which is why it looks like "gestures only"). A fresh hidd
+# enumerates the present device and opens the client. Proven 2026-07-20: `killall hidd` flips
+# AppleMultitouchDeviceUserClient 0->1 and gestures engage on USB. This is the USB analog of the BT baseband
+# bounce (BT reconnect re-triggers hidd; USB never had an equivalent). Overridable so the unit test stubs it.
+# See docs/mt-stack/open-questions.md "CRACKED: USB gestures ... stale hidd, not transport".
+HIDD_KICK="${MT2D_HIDD_KICK:-killall hidd}"
 
 log() { echo "[mt2d-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
@@ -197,6 +205,13 @@ cnt="$("$IOCLASSCOUNT" com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
 btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
 usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
 log "transport readers bound: BT=$btn USB=$usbn (gesture nub=$cnt)"
+# USB gesture-open: kick hidd so a fresh instance opens our just-appeared USB AMD's frames client.
+# USB only — BT gestures are already engaged by the baseband bounce above; a BT-only or no-device boot
+# must NOT restart hidd. hidd respawns instantly via launchd (one momentary all-HID hiccup, at bring-up).
+if [ "${usbn:-0}" != "0" ]; then
+    $HIDD_KICK >/dev/null 2>&1 || true
+    log "USB reader bound; kicked hidd to open the multitouch frames client (gestures)"
+fi
 echo ok > "$STATE_FILE" 2>/dev/null || true            # survived load+settle => brick-guard satisfied
 if [ "$cnt" = "0" ]; then
     log "WARNING: MT2Gesture nub absent after load — kext load failed (no panic; will retry next boot)"

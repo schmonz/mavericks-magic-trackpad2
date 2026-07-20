@@ -87,7 +87,13 @@ bool com_schmonz_MT2USBReader::start(IOService *provider) {
     setProperty("VoodooInputSupported", kOSBooleanTrue);
     setProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
     setProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
-    setProperty("MT2 Transport", "USB");   /* mux builds a USB-transport fabricated AMD (Task 3) */
+    /* We don't advertise Transport=USB here, so the mux defaults the fabricated AMD to Bluetooth transport.
+     * This is NOT because of any "USB built-in gating" — that earlier belief was a MYTH (disproven
+     * 2026-07-20, open-questions.md "CRACKED: USB gestures"). Every layer (kernel AMD, MultitouchSupport,
+     * MultitouchHID.plugin) is transport-blind; USB gestures were dead only because our AMD appears into an
+     * already-running hidd that never opens its frames client — fixed by kicking hidd once at bring-up
+     * (mt2d-run HIDD_KICK). Advertising Transport=USB (for correct osax-pane presentation) is a safe
+     * follow-up to re-test now that the real gate is understood. */
 
     IOLog("MT2USBReader: VoodooInput satellite up (LMAX %u x %u)\n",
           (unsigned)MT2_SPAN_X, (unsigned)MT2_SPAN_Y);
