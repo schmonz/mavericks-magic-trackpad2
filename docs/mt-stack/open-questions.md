@@ -404,6 +404,39 @@ to a Multitouch ID captured when the device was first seen; it is NOT the initia
   `AppleMultitouchDeviceUserClient` count transition (0→1?), which the earlier confounded "no cursor
   mid-session" tests never isolated.
 
+**2026-07-20 — ★★★ CRACKED: USB gestures work; the gate was a STALE hidd, NOT transport. "Built-in gating"
+was a MYTH.** Full trace, top to bottom, all transport-blind:
+- The gesture frames client (`AppleMultitouchDeviceUserClient`) is opened by **hidd** (`IOUserClientCreator =
+  "pid N, hidd"` on the open client), via the **`MultitouchHID.plugin`** hidd loads for our AMD through its
+  `IOCFPlugInTypes` property (confirmed: `sudo vmmap hidd` maps both `MultitouchHID.plugin` +
+  `MultitouchSupport` when gestures work).
+- `MultitouchHID.plugin` is **100% transport-blind** (disasm): `MultitouchHIDClass::probe` accepts any
+  non-null service (no filter); `::start` calls `MTDeviceStart` (opens `IOServiceOpen`) then dispatches a HID
+  manager purely by `parserType` — `1000` (0x3e8) lands in the `[0x3e8..0x7cf]` range → **`MTTrackpadHIDManager`**
+  (the gesture manager) on BOTH transports; `::open` just wires the frames runloop. No transport/built-in
+  branch decides whether to open.
+- MultitouchSupport `MTDeviceStart` (@0x179d) opens unconditionally; `MTDeviceCreateList` enumerates
+  driverTypes {0,1,2,4,3}, ours is type-4 → class `AppleMultitouchDevice`, found on both; `mthid`
+  (`__mthid_copyAvailableDevicesInfo`) matches `{IOPropertyMatch:{MTHIDDevice}}`, includes ours on both.
+  (HIToolbox's use of the `DeviceAdded` distributed notification is HANDWRITING input-source enablement —
+  `_TrackpadDeviceConfigChanged` — a RED HERRING, not the scroll/swipe path.)
+- **THE BUG:** our USB AMD appears into an ALREADY-RUNNING hidd (hidd had the plugin loaded from a prior BT
+  session) but that hidd never opens our USB device's frames client → `AppleMultitouchDeviceUserClient` = 0 →
+  no scroll/swipe/tap (cursor + physical/2-finger click still work via the KERNEL `AppleMultitouchHIDEventDriver`,
+  which is why the failure looked like "gestures only"). A USB *replug* did NOT wake the running hidd either.
+- **PROOF / CRACK:** `sudo killall hidd` (launchd respawns it) with the USB device present → fresh hidd
+  enumerates it → `AppleMultitouchDeviceUserClient` **0→1** → **scroll/swipe/tap-to-click all work on USB**
+  (user-confirmed). Same synthetic satellite AMD, no device change — only hidd restarted.
+- **WHY BT worked all along:** BT reconnects via the session-takeover bounce (`3f828de`), which makes the AMD
+  re-appear in a way the running hidd DOES catch; USB never had an equivalent kick. So this is the exact
+  USB analog of the BT login-bounce, not a transport limitation.
+- **FIX (shape, proven):** after our USB device is up, KICK hidd so it re-enumerates and opens the frames
+  client — e.g. `mt2d-run` runs a one-shot hidd restart on USB bring-up (momentary all-HID hiccup, once).
+  A gentler alternative (fire the exact device-added notification our appearance misses) needs more RE; the
+  hidd kick is empirically sufficient.
+- ⇒ **`kext-gesture/MT2USBReader.cpp` "built-in-only gated" comment is WRONG — delete it.** USB-as-VoodooInput-
+  satellite is VIABLE; the two-terminal split was never forced by any OS gate.
+
 **RE GOTCHA — the running build ≠ the on-disk file (resolved).** `validateChecksum`'s path-binary branch is
 ABSENT from the on-disk `/S/L/E/AppleUSBMultitouch` (240.10, Jan-11) but PRESENT in the booted build. Proof:
 the reject string at file off `0x9376` is referenced by ZERO instructions in the on-disk binary, but the
