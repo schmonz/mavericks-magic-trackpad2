@@ -7,6 +7,7 @@
 #include "voodoo_wire.h"           // wire VoodooInputEvent + kIOMessage* + key macros
 #include "mt2_voodoo_translate.h"  // mt2_frame_from_voodoo (extern "C")
 #include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSString.h>
 
 OSDefineMetaClassAndStructors(com_schmonz_VoodooInput, IOService)
 
@@ -55,8 +56,12 @@ bool com_schmonz_VoodooInput::start(IOService *provider) {
               fLogicalMaxX, fLogicalMaxY);
 
     fSynth = 0; fWL = 0; fIdle = 0; fLock = IOLockAlloc();
-    fSynth = mt2_synth_amd_build(this, MT2_SYNTH_XPORT_BT);   /* under the mux nub itself; fail-soft.
-        External satellites report no transport here; keep the prior Bluetooth default (own concern). */
+    /* Build the fabricated AMD with the satellite's advertised transport (BT default when unset,
+     * e.g. an external VoodooInput satellite that reports none). */
+    mt2_synth_transport_t xport = MT2_SYNTH_XPORT_BT;
+    OSString *tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
+    if (tp && tp->isEqualTo("USB")) xport = MT2_SYNTH_XPORT_USB;
+    fSynth = mt2_synth_amd_build(this, xport);   /* under the mux nub itself; fail-soft */
     if (!fSynth) IOLog("VoodooInputMux: WARNING synthetic AMD build failed; no cursor\n");
     fWL = IOWorkLoop::workLoop();
     fIdle = fWL ? IOTimerEventSource::timerEventSource(this, &idleTick) : 0;

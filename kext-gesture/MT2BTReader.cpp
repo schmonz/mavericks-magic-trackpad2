@@ -179,6 +179,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         self->setProperty("VoodooInputSupported", kOSBooleanTrue);
         self->setProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
         self->setProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
+        self->setProperty("MT2 Transport", "BT");   /* mux builds a BT-transport fabricated AMD */
         /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> messageClient.
          * listenAt is safe here because no BNB races us for this channel (no manual-start). */
         self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
