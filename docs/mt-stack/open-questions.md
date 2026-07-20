@@ -965,7 +965,7 @@ User rebooted on BT; **no cursor at the login screen even after clicking**, then
 | | clean boot 16:46 (self-healed) | failed boot 21:48 |
 |---|---|---|
 | BT controller up (`[HCI]`) | 16:46:13 | 21:48:05 |
-| `MT2Gesture: nub up` | 16:46:15 | 21:48:08 |
+| `MavericksVoodooInputHost: nub up` | 16:46:15 | 21:48:08 |
 | **`[blud]*MT2*` link key saved** (= BT connect completes) | **16:46:20 (+7s)** | **21:48:15 (+10s)** |
 | `AppleUSBMultitouchDriver` present? | **no** — pure BT self-reconnect | **yes, at 21:48:15** (the USB plug) |
 
@@ -1421,7 +1421,7 @@ retry-until-loaded fix. Genuine trackpads DO work at the 10.9 login screen, so a
 login screen — via Apple's own `IOBluetoothHIDDriver`, which OUR reader evicts.** Two on-device tests settled it:
 (1) A diagnostic kext that only SKIPPED `SET_PROTOCOL` did NOT rescue basic HID — the device still sent no `0x02`, only
 `0x90` then `0x31` after 18 enables (~17s). That was a FLAWED test: our reader was still loaded, still evicting Apple's
-HID driver, still driving the connection. (2) The RIGHT test: `kextunload com.schmonz.MT2Gesture` + bounce →
+HID driver, still driving the connection. (2) The RIGHT test: `kextunload com.schmonz.MavericksVoodooInputHost` + bounce →
 **`IOBluetoothHIDDriver` attaches (count 1) and the user confirms a working basic cursor + click (no gestures)**.
 So the dead-cursor-at-login is NOT a device limitation and NOT the slow `0xF1` enable per se — it is that our owned
 reader (`MT2BTControl`/`MT2BTInterrupt`, IOProbeScore=100000, no match category) **evicts Apple's `IOBluetoothHIDDriver`
@@ -1506,7 +1506,7 @@ because the runtime CoD didn't carry the discoverable bit then.
 **2026-07-19 — ★ connect/disconnect BEZEL GLYPH trigger CONFIRMED on-device: it fires on APPLE `IOBluetoothHIDDriver`
 attach/detach (ownership transitions), NOT on our reader's own connect/disconnect.** Two A/B triggers with the user
 watching: Case 1 = owned-mode `--disconnect-once`+`--reconnect-once` (our reader stays, `IOBluetoothHIDDriver` = 0
-instances) → NO glyph. Case 2 = `kextunload MT2Gesture`+bounce (Apple HID attaches) → CONNECT glyph; then reload+bounce
+instances) → NO glyph. Case 2 = `kextunload MavericksVoodooInputHost`+bounce (Apple HID attaches) → CONNECT glyph; then reload+bounce
 (Apple HID detaches, our reader re-owns) → DISCONNECT/"connection lost" glyph. Explains the long-standing "we can't
 predict when it appears" (mt2-connect-disconnect-bezel-hud): in steady OWNED operation the poster
 (`IOBluetoothHIDDriver::deviceConnectTimerFired` / `sendDeviceDisconnectNotifications`, device-identity-map.md §Bezel HUD)
@@ -1549,7 +1549,7 @@ our 10.9 owned-stack enable is the bug. The ~14s/3.6s timers in 10.9's IOAppleBl
 HERRING — 10.9 predates native MT2 support, so its "genuine" BT-multitouch path was never a real MT2 driver. Do NOT
 conclude "device-level / accept it". Corrected dig (next session):
 1. **Reliable repro (no reboot):** the cold state must be reproduced by getting the MT2 into Apple-HID BASIC mode first
-   (`kextunload MT2Gesture` + `mt2_usb_bt_handoff --bounce-once` → confirm `IOBluetoothHIDDriver`=1), THEN reload our
+   (`kextunload MavericksVoodooInputHost` + `mt2_usb_bt_handoff --bounce-once` → confirm `IOBluetoothHIDDriver`=1), THEN reload our
    kext + bounce + `debug.mt2_log=2` and time from load to the first `MT2: BT shim saw report id 0x31`. (First attempt
    was confounded: after unload, Apple HID needs a bounce to actually attach; and a stale "multitouch confirmed" from a
    prior boot matched the grep — use a fresh log marker.)
@@ -1560,7 +1560,7 @@ conclude "device-level / accept it". Corrected dig (next session):
    path works locally — check whether USB multitouch is instant vs BT slow, then diff the two enable paths.
 
 **2026-07-19 — enable-lag dig, sharpened: device ACKs the enable (SUCCESS) but delays streaming; prime suspect = OUR
-re-enable spam.** Built a reliable no-reboot repro: `kextunload MT2Gesture` → `mt2_usb_bt_handoff --bounce-once`
+re-enable spam.** Built a reliable no-reboot repro: `kextunload MavericksVoodooInputHost` → `mt2_usb_bt_handoff --bounce-once`
 (confirm `IOBluetoothHIDDriver`=1, Apple-HID basic) → reload our kext → bounce → touch → time to `multitouch confirmed
 (first frame after N enables)`. Instrumented `controlData` (throwaway, reverted) to log control-channel replies:
 **the device answers every one of our control writes (SET_PROTOCOL / SET_IDLE / 0xF1) with `CTRL-IN len=1 [00]` = HIDP

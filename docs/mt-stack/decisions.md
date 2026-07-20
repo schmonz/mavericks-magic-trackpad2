@@ -320,13 +320,13 @@ hooking/patching `IOBluetoothUI` in the BT-UI processes (System Prefs / `Bluetoo
 extra) or a binary patch of the framework (feasible only because 10.9 has no SIP). Cosmetic; deferred.
 Contrast: the **name** has the `displayName` user-override key → clean, persistent fix (do that).
 
-### CMake-built MT2Gesture.kext validated on-device — parity with the Makefile build (2026-06-29)
+### CMake-built MavericksVoodooInputHost.kext validated on-device — parity with the Makefile build (2026-06-29)
 Project A (CMake/ctest migration) replaced the Makefile build alongside the existing one in `cmake-build/`.
 Before retiring the Makefiles we proved parity of the load-bearing artifact: the CMake kext binary has the
 **same 594 symbols (identical type+name set)** as the Makefile kext (`nm` name+type diff empty; only
 addresses differ from link order), both `MH_KEXTBUNDLE` x86_64 `NOUNDEFS`. Then the real gate: unloaded the
 running kext, staged the CMake kext root-owned in `/tmp`, `kextload`ed it (resolved deps `<120 88 37 30 5 4
-3 1>`, nub `com_schmonz_MT2Gesture` registered/matched/active/busy 0), and the user exercised the full
+3 1>`, nub `com_schmonz_MavericksVoodooInputHost` registered/matched/active/busy 0), and the user exercised the full
 gesture set — **confirmed working on both USB and BT**. The CMake kext is behavior-equivalent to the
 Makefile build. (The installed boot copy under `/usr/local/lib/mt2d` was untouched; this was a runtime swap.)
 
@@ -601,7 +601,7 @@ if the installed one is >= the pkg's**. Our kext was hardcoded `CFBundleVersion 
 life, and `1.0.0` sorts **above** every `0.4.x`, so the installer skipped the kext on *every* install —
 the driver itself never updated for anyone who already had it (we only missed it because dev
 hand-reloads the kext). Proven in `/var/log/install.log` during the 0.4.4 dogfood:
-`PackageKit: Skipping component "com.schmonz.MT2Gesture" (0.4.4-…) because the version 1.0.0-… is
+`PackageKit: Skipping component "com.schmonz.MavericksVoodooInputHost" (0.4.4-…) because the version 1.0.0-… is
 already installed`. Even after stamping the real version (`0b9dc5f`), a numeric regression (1.0.0 → 0.4.x)
 still skips.
 
@@ -658,7 +658,7 @@ Validated across the full matrix (0 skips every row).
 ### MT2 → synthetic terminal — deliberate re-open point (queued 2026-07-12)
 Sub-project 2 revived the synthetic terminal consumer (fabricated `AppleMultitouchDevice` + `MT2HIDShell`,
 `kext-gesture/mt2_synth_amd.*`) as the delivery target for VoodooInput satellites, exposed as a swappable
-`kSynthSink` registered via `MT2Gesture::beginSyntheticTerminal`. Because the readers-engine unification
+`kSynthSink` registered via `MavericksVoodooInputHost::beginSyntheticTerminal`. Because the readers-engine unification
 already made the terminal a `mt2_transport_sink_t`, routing the **MT2 itself** through this synthetic
 terminal is now a one-line, per-reader flip: register `&kSynthSink` in a transport's
 `connectionEstablished` instead of the genuine sink. **Decision (deferred, not now):** once the synthetic
@@ -673,7 +673,7 @@ flip a working, shipped transport before the terminal is proven (make-it-cheap-t
 *flag-gated* synthetic terminal on the **BT** path so the A/B is measurable on real hardware.
 `sysctl debug.mt2_bt_synth` (int, default `0`=genuine → **shipped behaviour byte-unchanged**; `1`=synthetic),
 registered alongside `debug.mt2_log`/`debug.mt2_batt` (`kext-gesture/mt2_log.*`, extern `gMT2BtSynth`).
-When set, `MT2BTReader` builds its OWN fabricated AMD (`mt2_synth_amd_build` under the `MT2Gesture` nub)
+When set, `MT2BTReader` builds its OWN fabricated AMD (`mt2_synth_amd_build` under the `MavericksVoodooInputHost` nub)
 and registers `kBtSynthSink` (parallel to `kBtSink`; same `mt1_encode`/`handleTouchFrame`) at
 `connectionEstablished` instead of BNB's genuine AMD; build-fail falls back to genuine so the MT2 is never
 left dead. Teardown mirrors the genuine ordering EXACTLY: NULL `gBtSynthCtx` before `quiesceDelivery()`

@@ -25,7 +25,7 @@
 #   characterize_build.sh compare <reference-dir> <build-dir>
 #
 # Gated artifact under <build-dir>:
-#   MT2Gesture.kext/Contents/MacOS/MT2Gesture   (+ Contents/Info.plist)
+#   MavericksVoodooInputHost.kext/Contents/MacOS/MavericksVoodooInputHost   (+ Contents/Info.plist)
 set -eu
 
 # Deterministic, locale-independent collation so `sort` byte-orders identically on
@@ -72,8 +72,8 @@ emit_binary() {   # <mach-o> <out-prefix> <want-defined:0|1>
 emit() {   # <build-dir> <out-dir>
   em_bd=$1; em_out=$2
   mkdir -p "$em_out/kext"
-  em_kbin="$em_bd/MT2Gesture.kext/Contents/MacOS/MT2Gesture"
-  em_kplist="$em_bd/MT2Gesture.kext/Contents/Info.plist"
+  em_kbin="$em_bd/MavericksVoodooInputHost.kext/Contents/MacOS/MavericksVoodooInputHost"
+  em_kplist="$em_bd/MavericksVoodooInputHost.kext/Contents/Info.plist"
   emit_binary "$em_kbin" "$em_out/kext/macho" 1
   # Kext KPI dependencies + bundle id = the load-time contract (GATED, mandatory).
   [ -f "$em_kplist" ] || die "missing kext Info.plist $em_kplist"

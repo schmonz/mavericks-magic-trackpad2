@@ -21,7 +21,7 @@ void mt2_drop_lifted(MavericksTouchFrame *frame);
    *last_button, writing a faithful mapping of that real hardware button + finger
    count to Apple's click mask (0 release / 0x1 primary / 0x2 two-finger secondary).
    Translation of a hardware button, NOT a synthesized click.
-   (Ported from MT2Gesture::feedFrame.) */
+   (Ported from MavericksVoodooInputHost::feedFrame.) */
 int mt2_button_edge(unsigned button, int nfingers, unsigned *last_button,
                       unsigned *out_mask);
 

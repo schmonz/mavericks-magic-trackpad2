@@ -4,18 +4,18 @@
 #
 # The single unsigned kext loads from this loose path: on 10.9, unsigned kexts
 # load from outside /Library/Extensions; it is NEVER placed in /Library/
-# Extensions or the boot caches, so the kernel always boots clean. MT2Gesture
+# Extensions or the boot caches, so the kernel always boots clean. MavericksVoodooInputHost
 # matches IOResources; if loading it ever panics the machine, the guard below
 # stops re-loading it on the next boot so we never get a boot-crash loop.
 #
 # Both transports (Bluetooth L2CAP + cabled USB) now run in-kernel inside
-# MT2Gesture: loading the kext is enough — its reader personalities bind the
+# MavericksVoodooInputHost: loading the kext is enough — its reader personalities bind the
 # device directly. There is no userspace feeder.
 #
 # Sentinel /var/db/mt2d-boot.state:
-#   ok / missing -> load MT2Gesture (full gestures).
+#   ok / missing -> load MavericksVoodooInputHost (full gestures).
 #   trying       -> a prior boot started full mode but never confirmed healthy
-#                   (likely an MT2Gesture load panic); SKIP loading MT2Gesture
+#                   (likely an MavericksVoodooInputHost load panic); SKIP loading MavericksVoodooInputHost
 #                   until `mt2d-run --reset`. Use another pointing device meanwhile.
 
 STATE_FILE="${MT2D_STATE_FILE:-/var/db/mt2d-boot.state}"
@@ -51,13 +51,13 @@ recover_full() {
     i=1
     while [ "$i" -le "$RECOVER_TRIES" ]; do
         log "recovery attempt $i/$RECOVER_TRIES: unload -> let generic HID reconnect -> reload"
-        "$KEXTUNLOAD" -b com.schmonz.MT2Gesture 2>/dev/null || true
+        "$KEXTUNLOAD" -b com.schmonz.MavericksVoodooInputHost 2>/dev/null || true
         sleep "$RECONNECT_WAIT"
-        "$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
+        "$KEXTLOAD" "$KEXT_DIR/MavericksVoodooInputHost.kext" 2>/dev/null || true
         sleep "$HEALTHY_DELAY"
         btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
         usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
-        cnt="$("$IOCLASSCOUNT" com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
+        cnt="$("$IOCLASSCOUNT" com_schmonz_MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')"
         if [ "$("$0" --health-verdict "$btn" "$usbn" "$cnt")" = "healthy" ]; then
             echo ok > "$STATE_FILE" 2>/dev/null || true
             log "recovery succeeded on attempt $i: BT=$btn USB=$usbn nub=$cnt — full-gesture healthy"
@@ -65,7 +65,7 @@ recover_full() {
         fi
         i=$((i+1))
     done
-    "$KEXTUNLOAD" -b com.schmonz.MT2Gesture 2>/dev/null || true
+    "$KEXTUNLOAD" -b com.schmonz.MavericksVoodooInputHost 2>/dev/null || true
     log "RECOVERY EXHAUSTED after $RECOVER_TRIES tries: leaving generic HID (cursor only, no gestures)"
     return 1
 }
@@ -109,7 +109,7 @@ fi
 STAT_CONSOLE="${MT2D_STAT_CONSOLE:-stat -f%Su /dev/console}"
 CONSOLE_USER="$($STAT_CONSOLE 2>/dev/null || echo root)"
 if [ "${MT2D_FORCE_LOAD:-0}" != "1" ] && { [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; }; then
-    log "login screen (console user=${CONSOLE_USER:-none}): leaving the MT2 to Apple's generic HID; not loading MT2Gesture"
+    log "login screen (console user=${CONSOLE_USER:-none}): leaving the MT2 to Apple's generic HID; not loading MavericksVoodooInputHost"
     [ "${MT2D_DRYRUN:-0}" = "1" ] && echo "MODE=skip-nosession"
     exit 0
 fi
@@ -118,8 +118,8 @@ STATE="$(cat "$STATE_FILE" 2>/dev/null || echo ok)"
 
 if [ "$STATE" = "trying" ]; then
     # Prior boot started full mode but never confirmed healthy -> likely a panic
-    # loading MT2Gesture. Do NOT reload it; avoid a boot-crash loop.
-    log "prior boot did not confirm healthy; NOT loading MT2Gesture (run 'mt2d-run --reset' to retry). Use another pointing device."
+    # loading MavericksVoodooInputHost. Do NOT reload it; avoid a boot-crash loop.
+    log "prior boot did not confirm healthy; NOT loading MavericksVoodooInputHost (run 'mt2d-run --reset' to retry). Use another pointing device."
     [ "${MT2D_DRYRUN:-0}" = "1" ] && { echo "MODE=skip"; echo "STATE=$(cat "$STATE_FILE" 2>/dev/null)"; }
     exit 0
 fi
@@ -148,7 +148,7 @@ log "attempting full-gesture mode"
 
 # Load the one gesture kext (the IOResources-matching one the guard covers). Its
 # BT + USB reader personalities bind the device on their own.
-"$KEXTLOAD" "$KEXT_DIR/MT2Gesture.kext" 2>/dev/null || true
+"$KEXTLOAD" "$KEXT_DIR/MavericksVoodooInputHost.kext" 2>/dev/null || true
 
 # Force a clean BT takeover. At the session-load we evict Apple's generic HID mid-connection, and our
 # reader tends to win only the CONTROL channel (BT=1, half-open — the device-initiated interrupt channel
@@ -189,7 +189,7 @@ fi
 
 # Anti-brick-loop gate, INLINE (no background subshell, which doesn't survive in
 # the launchd no-TTY context). The brick-guard protects against LOAD-TIME PANICS
-# only: a panic loading MT2Gesture reboots the machine before we reach this point,
+# only: a panic loading MavericksVoodooInputHost reboots the machine before we reach this point,
 # leaving the sentinel 'trying' so the next boot skips. Surviving the settle window
 # is therefore the whole signal — so mark 'ok' UNCONDITIONALLY here, decoupled from
 # whether a transport bound. (Earlier this gated 'ok' on a bound transport, which
@@ -198,7 +198,7 @@ fi
 # and skip-loading the next boot. Device binding is a FUNCTIONALITY concern below,
 # never a sentinel gate.)
 sleep "$HEALTHY_DELAY"
-cnt="$("$IOCLASSCOUNT" com_schmonz_MT2Gesture 2>/dev/null | awk '{print $NF}')"
+cnt="$("$IOCLASSCOUNT" com_schmonz_MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')"
 # Reader counts are diagnostics + the recovery trigger, not a sentinel gate. The nub
 # (cnt) is IOResources-matched so it loads with the kext regardless of device; BT>0
 # means MT2BTReader bound the L2CAP channels, USB>0 means MT2USBReader bound interface 1.
@@ -214,7 +214,7 @@ if [ "${usbn:-0}" != "0" ]; then
 fi
 echo ok > "$STATE_FILE" 2>/dev/null || true            # survived load+settle => brick-guard satisfied
 if [ "$cnt" = "0" ]; then
-    log "WARNING: MT2Gesture nub absent after load — kext load failed (no panic; will retry next boot)"
+    log "WARNING: MavericksVoodooInputHost nub absent after load — kext load failed (no panic; will retry next boot)"
 elif [ "$("$0" --health-verdict "$btn" "$usbn" "$cnt")" = "healthy" ]; then
     log "full-gesture mode confirmed healthy (BT=$btn USB=$usbn)"
 elif [ "$btn" = "1" ]; then

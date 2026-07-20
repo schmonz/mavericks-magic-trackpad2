@@ -65,7 +65,7 @@ case "\$1" in
     n="\$(cat "$rec/btcalls" 2>/dev/null || echo 0)"; n=\$((n+1)); echo "\$n" > "$rec/btcalls"
     if [ "\$n" -le 1 ]; then echo "x 1"; else echo "x 2"; fi ;;
   com_schmonz_MT2USBReader) echo "x 0" ;;
-  com_schmonz_MT2Gesture)   echo "x 1" ;;
+  com_schmonz_MavericksVoodooInputHost)   echo "x 1" ;;
 esac
 EOF
 chmod +x "$rec/ioclasscount"
@@ -91,7 +91,7 @@ cat > "$nod/ioclasscount" <<EOF
 case "\$1" in
   com_schmonz_MT2BTReader)  echo "x 0" ;;
   com_schmonz_MT2USBReader) echo "x 0" ;;
-  com_schmonz_MT2Gesture)   echo "x 1" ;;
+  com_schmonz_MavericksVoodooInputHost)   echo "x 1" ;;
 esac
 EOF
 chmod +x "$nod/ioclasscount"
@@ -118,7 +118,7 @@ cat > "$usbk/ioclasscount" <<EOF
 case "\$1" in
   com_schmonz_MT2BTReader)  echo "x 0" ;;
   com_schmonz_MT2USBReader) echo "x 1" ;;
-  com_schmonz_MT2Gesture)   echo "x 1" ;;
+  com_schmonz_MavericksVoodooInputHost)   echo "x 1" ;;
 esac
 EOF
 chmod +x "$usbk/ioclasscount"

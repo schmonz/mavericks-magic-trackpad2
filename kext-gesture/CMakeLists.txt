@@ -1,10 +1,10 @@
-# MT2Gesture.kext — built with the kext toolchain (-fapple-kext), then linked + bundled.
+# MavericksVoodooInputHost.kext — built with the kext toolchain (-fapple-kext), then linked + bundled.
 # Mirrors kext-gesture/Makefile exactly (see OBJS there). Two compilations of the shared
 # src/*.c exist in this project: mt2core (userland, -std=c99) and HERE (kext, -x c++).
 
 # Kext-local C++ sources (incl. mt2_log + mt2_diag, which are kext-only).
 set(KEXT_LOCAL_CPP
-  MT2Gesture.cpp MT2GestureUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
+  MavericksVoodooInputHost.cpp MavericksVoodooInputHostUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mt2_log.cpp mt2_diag.cpp mavericks_splice_kext.cpp
   MavericksVoodooInput.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mt2_amd_probe.cpp)
 
@@ -26,7 +26,7 @@ endforeach()
 set(KEXT_LOCAL_CXX_ABS ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp)
 add_executable(mt2gesture_kext ${KEXT_LOCAL_CPP} ${KEXT_SHARED_SRCS} ${KEXT_LOCAL_CXX_ABS})
 set_target_properties(mt2gesture_kext PROPERTIES
-  OUTPUT_NAME MT2Gesture
+  OUTPUT_NAME MavericksVoodooInputHost
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Project-specific include directories (source-local; kernel/IOKit dirs are added by mavericks_kext()).
@@ -49,11 +49,11 @@ set_source_files_properties(
 
 # Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel
 # link options, Kernel/IOKit include dirs, Info.plist configure, and .kext bundle assembly.
-# The public "kext" target name and ${CMAKE_BINARY_DIR}/MT2Gesture.kext output path are
+# The public "kext" target name and ${CMAKE_BINARY_DIR}/MavericksVoodooInputHost.kext output path are
 # established by mavericks_kext() and must not change (reload/pkg/characterize depend on them).
 mavericks_kext(
   TARGET        mt2gesture_kext
-  BUNDLE        MT2Gesture
+  BUNDLE        MavericksVoodooInputHost
   INFO_PLIST_IN ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in
   PUBLIC_TARGET kext)
 
@@ -75,10 +75,10 @@ endif()
 # so the `|| true` tolerance + sequencing stay correct (CMake's COMMAND can't express
 # `a && b || true` without the sh -c space-escaping bug found in Phase 0).
 add_custom_target(kext-load
-  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh load ${CMAKE_BINARY_DIR}/MT2Gesture.kext
-  COMMENT "Staging (root:wheel /tmp) + loading MT2Gesture.kext")
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh load ${CMAKE_BINARY_DIR}/MavericksVoodooInputHost.kext
+  COMMENT "Staging (root:wheel /tmp) + loading MavericksVoodooInputHost.kext")
 add_dependencies(kext-load kext)
 
 add_custom_target(kext-unload
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_kext.sh unload
-  COMMENT "Unloading MT2Gesture.kext")
+  COMMENT "Unloading MavericksVoodooInputHost.kext")

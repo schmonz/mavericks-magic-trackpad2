@@ -6,8 +6,8 @@
 #include "mt2_amd_probe.h"
 #include "MavericksAMDTerminal.h"
 
-class com_schmonz_MT2Gesture;
-extern com_schmonz_MT2Gesture *gActiveMT2Gesture;   /* engine nub (defined in MT2Gesture.cpp) */
+class com_schmonz_MavericksVoodooInputHost;
+extern com_schmonz_MavericksVoodooInputHost *gActiveMavericksVoodooInputHost;   /* engine nub (defined in MavericksVoodooInputHost.cpp) */
 
 static mavericks_amd_terminal_ctx *gProbeCtx = 0;
 static int gProbeVal = 0;
@@ -25,7 +25,7 @@ static int probe_amd_count(void) {
 }
 
 static void probe_run(int n) {
-    IOService *nub = (IOService *)gActiveMT2Gesture;
+    IOService *nub = (IOService *)gActiveMavericksVoodooInputHost;
     if (!nub) { IOLog("mt2_amd_probe: no engine nub; ignoring\n"); return; }
     if (n == 1) {
         if (gProbeCtx) { IOLog("mt2_amd_probe: already up\n"); return; }

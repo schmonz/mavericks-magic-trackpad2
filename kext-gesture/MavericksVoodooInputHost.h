@@ -1,5 +1,5 @@
-#ifndef MT2GESTURE_H
-#define MT2GESTURE_H
+#ifndef MAVERICKSVOODOOINPUTHOST_H
+#define MAVERICKSVOODOOINPUTHOST_H
 #include <IOKit/IOService.h>
 #include "mavericks_session.h"
 #include "amd_shim.h"
@@ -8,7 +8,7 @@
  * Apple's genuine driver does (BNBTrackpadDevice over BT, AppleUSBMultitouchDriver over USB). The
  * in-kernel readers (MT2BTReader, MT2USBReader) submit decoded frames through
  * connectionEstablished()/submitFrame(); the session conditions them and the ACTIVE reader's
- * registered transport sink delivers to Apple's genuine consumer. See MT2Gesture.cpp. */
+ * registered transport sink delivers to Apple's genuine consumer. See MavericksVoodooInputHost.cpp. */
 class IOTimerEventSource;
 class IOWorkLoop;
 
@@ -27,8 +27,8 @@ typedef struct {
     void *ctx;
 } mt2_transport_sink_t;
 
-class com_schmonz_MT2Gesture : public IOService {
-    OSDeclareDefaultStructors(com_schmonz_MT2Gesture)
+class com_schmonz_MavericksVoodooInputHost : public IOService {
+    OSDeclareDefaultStructors(com_schmonz_MavericksVoodooInputHost)
     mavericks_session_t fSession;               /* pure functional core: owns all post-decode logic */
     mavericks_session_sink_t fSink;             /* effects seam handed to the session: trampolines below */
     mt2_transport_sink_t fXport;          /* the ACTIVE reader's delivery, registered at

@@ -170,7 +170,7 @@ set on a self-allocated `AppleMultitouchDevice` (`allocClassWithName`) published
 | `IOCFPlugInTypes` | UUID `0516B563-B15B-11DA-96EB-0014519758EF` → `AppleMultitouchDriver.kext/Contents/PlugIns/MultitouchHID.plugin` | required or `hidd` never instantiates the plugin / opens the user client |
 | seeded prefs key | `MultitouchPreferences` (NOT `TrackpadUserPreferences`) | `determineHIDManagerSettings` reads `TrackpadUserPreferences` first, falls back to `MultitouchPreferences`; seeding the wrong one permanently shadows the live prefs push |
 
-Synthetic Info.plist personalities (also deleted): **`MT2Gesture`** (IOResources nub publisher) and
+Synthetic Info.plist personalities (also deleted): **`MavericksVoodooInputHost`** (IOResources nub publisher) and
 **`MT2HIDEventDriver`** (Apple's `AppleMultitouchHIDEventDriver` `IOClass`, keyed VID 1452 / PID 782 /
 source 2 — bound the `MT2HIDShell`). The kept cursor-actuation personality for genuine BT is
 **`MT2HIDEventDriverBNB`** (VID 76 / PID 613 / source 1) — see "Cursor actuation personalities" above.

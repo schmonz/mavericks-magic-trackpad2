@@ -5,7 +5,7 @@
 # CFBundleVersion 1.0.0. PackageKit's default (BundleIsVersionChecked=true) compares the pkg's
 # bundle version against what's on disk and SKIPS the component if the installed one is >= the
 # pkg's. With the on-disk kext at "1.0.0" and the pkg's at "0.4.4", it read 1.0.0 > 0.4.4 and
-# logged: PackageKit: Skipping component "com.schmonz.MT2Gesture" ... because the version 1.0.0
+# logged: PackageKit: Skipping component "com.schmonz.MavericksVoodooInputHost" ... because the version 1.0.0
 # is already installed. Net effect: the KEXT (the driver itself) never updated via the installer.
 #
 # Setting BundleIsVersionChecked=false on every component makes the installer always overwrite with

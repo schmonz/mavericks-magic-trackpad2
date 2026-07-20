@@ -120,7 +120,7 @@ genuine BNB), NOT our interrupt-channel shim. So finish it in `kext-gesture/MT2B
    Trackpad pane on BT → the number appears.
 
 Gotchas learned this session:
-- A plain `kext-load` **no-ops if a stale `com.schmonz.MT2Gesture` is still resident** → do `kext-unload`
+- A plain `kext-load` **no-ops if a stale `com.schmonz.MavericksVoodooInputHost` is still resident** → do `kext-unload`
   then `kext-load`; confirm with `kextstat | grep schmonz` (index changes).
 - `debug.mt2_log` **resets to 0 on every kext reload** — `sudo sysctl -w debug.mt2_log=1` after loading.
 - `MT2_DLOG(1)` is gated on that sysctl; `mt2_diag_report_id`'s seen-bitmap can mark ids while logging is off,

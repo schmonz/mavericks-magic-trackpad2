@@ -1,7 +1,7 @@
 /*
  * mavericks_amd_terminal — fabricated AppleMultitouchDevice build/teardown.
  *
- * Recovered from 2c900e9^:kext-gesture/MT2Gesture.cpp (the AMD construction that
+ * Recovered from 2c900e9^:kext-gesture/MavericksVoodooInputHost.cpp (the AMD construction that
  * shipped pre-2026-06-24 synthetic-removal). Refactored into standalone build/teardown
  * functions taking the provider nub; get/set stubs now thin glue over the host-tested
  * mavericks_synth_report instead of the old inline g_reg[] echo + mt2_fill_geometry_report.

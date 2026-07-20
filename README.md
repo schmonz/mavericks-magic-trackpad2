@@ -54,7 +54,7 @@ honest as the device connects, disconnects, or switches transport.
     sudo launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist
     launchctl unload /Library/LaunchAgents/com.schmonz.mt2panewatch.plist
     launchctl unload /Library/LaunchAgents/com.schmonz.mt2updatecheck.plist
-    sudo kextunload -b com.schmonz.MT2Gesture
+    sudo kextunload -b com.schmonz.MavericksVoodooInputHost
     sudo rm -rf /Library/LaunchDaemons/com.schmonz.mt2d.plist \
         /Library/LaunchAgents/com.schmonz.mt2panewatch.plist \
         /Library/LaunchAgents/com.schmonz.mt2updatecheck.plist \
@@ -82,9 +82,9 @@ honest as the device connects, disconnects, or switches transport.
   arbitration), and `touch_model.h`. `mt2_presence` is the pure transport-presence
   state machine behind the prefpane refresh. `vhid_mt1` is a kextless research path kept
   for reference.
-- `kext-gesture/` — `MT2Gesture`, the one shipped kext: the `MT2USBReader` and
+- `kext-gesture/` — `MavericksVoodooInputHost`, the one shipped kext: the `MT2USBReader` and
   `MT2BTReader` transport readers that manual-start + interpose Apple's genuine
-  drivers, and the `MT2Gesture` nub that hosts the shared session and feeds the
+  drivers, and the `MavericksVoodooInputHost` nub that hosts the shared session and feeds the
   conditioned stream to Apple's spawned `AppleMultitouchDevice`.
 - `tools/` — dev/diagnostic helpers. `mt2_reenumerate` ships,
   as does the prefpane-refresh component in `mt2_prefpane_refresh/` (the

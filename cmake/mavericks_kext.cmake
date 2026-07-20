@@ -9,7 +9,7 @@
 # Usage:
 #   mavericks_kext(
 #     TARGET        <cmake-target>          # add_executable target name
-#     BUNDLE        <bundle-stem>           # e.g. MT2Gesture -> MT2Gesture.kext
+#     BUNDLE        <bundle-stem>           # e.g. MavericksVoodooInputHost -> MavericksVoodooInputHost.kext
 #     INFO_PLIST_IN <path/to/Info.plist.in> # configure_file source (@VAR@ tokens)
 #     PUBLIC_TARGET <public-target-name>    # the ALL target that drives the build
 #   )

@@ -7,7 +7,7 @@ total) / `CROSS-CUTTING`, plus its intended target module. No code was moved; th
 guides the later extraction tasks.
 
 > **RESOLVED (2026-07-07, engine unification).** The "still duplicated" finding below is
-> fixed: both readers now feed ONE `mt2_session` via `MT2Gesture::submitFrame`, with the
+> fixed: both readers now feed ONE `mt2_session` via `MavericksVoodooInputHost::submitFrame`, with the
 > three per-transport behavior deltas expressed as a policy row (`mt2_session_policy_t`:
 > liftoff shape / emit-empties / watchdog; rows `mt2_policy_bt` / `mt2_policy_usb` in
 > `src/mt2_session.c`, which later — 2026-07-08 — converged into one `mt2_policy_default`)
@@ -50,7 +50,7 @@ guides the later extraction tasks.
 |---|---|---|---|
 | 1–42 | file header + includes + VTC_ALLOC macros | CROSS-CUTTING | split by content; keep transport includes in reader, engine includes move with engine |
 | 44–56 | geometry slot-index + battery-cadence `#define`s | PER-TRANSPORT | stays (BT geometry-vtable + battery are BT-only) |
-| 58–59 | `extern gActiveMT2Gesture` | SHARED-ENGINE | engine (the session/sink owner) |
+| 58–59 | `extern gActiveMavericksVoodooInputHost` | SHARED-ENGINE | engine (the session/sink owner) |
 | 61 | `OSDefineMetaClassAndStructors` | PER-TRANSPORT | stays |
 | 63–103 | statics/globals: `gGenuineBnb`, `gInterruptReader`, interpose state (`gOrigCb/gOrigTarget/gInterposedChannel`), control-interpose (`gCtrl*`), `gBnbVtableClone/gBnbVtableCloned` | PER-TRANSPORT | stays (BT L2CAP-delegate + BNB-geometry machinery; USB has no equivalent) |
 | 105–139 | `mt2_bnb_get_multitouch_report` / `_info` (geometry D-report answerers) | PER-TRANSPORT | stays (BT-only; USB seeds geometry via the init dict instead) |
@@ -105,15 +105,15 @@ Both readers today run **decode → lifecycle → `mt1_encode` → feed**, and b
 `mt1_encode` producing report `0x28`. But the seam is placed differently, and the two
 paths do NOT share the wiring:
 
-### BT — seam already exists (decode in reader, engine in MT2Gesture)
+### BT — seam already exists (decode in reader, engine in MavericksVoodooInputHost)
 - **`bt_interpose_shim`** (MT2BTReader.cpp:220–266).
 - Decode: **line 239** `int drc = mt2_bt_decode(rep, rlen, &tf);` → produces
   `touch_frame_t tf`. The `drc != 0` drop is line 243.
 - **The seam is `tf`** — the decoded contact-set. It crosses into the engine at
-  **line 264** `gActiveMT2Gesture->submitFrame(gInterruptReader, &tf)`.
-- Downstream (already shared, in `MT2Gesture.cpp`): `submitFrame` → `mt2_session_frame`
+  **line 264** `gActiveMavericksVoodooInputHost->submitFrame(gInterruptReader, &tf)`.
+- Downstream (already shared, in `MavericksVoodooInputHost.cpp`): `submitFrame` → `mt2_session_frame`
   (settle gate + `mt2_lifecycle` via `fSession.lifecycle` + liftoff watchdog) → sink →
-  `mt1_encode` (MT2Gesture.cpp:61) → `handleTouchFrame(mt1,n)` on BNB's AMD
+  `mt1_encode` (MavericksVoodooInputHost.cpp:61) → `handleTouchFrame(mt1,n)` on BNB's AMD
   (`fBnbTarget`, set via `setBnbTarget` at line 263). No checksum on this path.
 - So BT's decode/engine split is CLEAN today; the boundary object is `touch_frame_t`.
   The refactor named that boundary `mt2_frame` (see the note above).
@@ -161,7 +161,7 @@ and — crucially — the **pure conditioning/encode primitives** `mt2_lifecycle
 **Still duplicated / the refactor's real target:** those pure primitives are **wired up
 twice, differently**. BT threads decode → `submitFrame` → `mt2_session` (settle +
 lifecycle + liftoff) → `mt1_encode` → `handleTouchFrame` (no checksum), living in
-`MT2Gesture.cpp`. USB threads decode → `mt2_drop_lifted` + a private static
+`MavericksVoodooInputHost.cpp`. USB threads decode → `mt2_drop_lifted` + a private static
 `mt2_lifecycle g_lc` (NO session, NO settle, NO liftoff — the absence-pump substitutes)
 → `mt1_encode` → checksum → `handleReport`. So the two readers do NOT share a single
 "consume a contact-set and drive Apple's driver" engine — they share leaf functions but
@@ -172,6 +172,6 @@ separate feed ABIs (`handleTouchFrame` vs `handleReport`+checksum).
 framing, **only USB fuses the whole pipeline** (inside `mt2_usb_to_compactv4`); **BT
 already has a clean decode/engine seam** (`touch_frame_t` handed to a separate class).
 The extraction is therefore asymmetric: BT mostly needs its downstream engine (the
-`MT2Gesture` session path) *named* as the shared engine and its lifecycle state unified
+`MavericksVoodooInputHost` session path) *named* as the shared engine and its lifecycle state unified
 with USB's; USB needs `mt2_usb_to_compactv4` *un-fused* so the reader hands a
 `touch_frame_t` to that same engine. `touch_frame_t` is already the `mt2_frame`.

@@ -32,8 +32,8 @@ static void snd(int on, int x, int y) {
 
 int main(void) {
     io_service_t s = IOServiceGetMatchingService(kIOMasterPortDefault,
-        IOServiceMatching("com_schmonz_MT2Gesture"));
-    if (!s) { fprintf(stderr, "MT2Gesture service not found\n"); return 1; }
+        IOServiceMatching("com_schmonz_MavericksVoodooInputHost"));
+    if (!s) { fprintf(stderr, "MavericksVoodooInputHost service not found\n"); return 1; }
     IOServiceOpen(s, mach_task_self(), 0, &c); IOObjectRelease(s);
 
     int x = -1800;

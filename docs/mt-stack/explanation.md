@@ -151,7 +151,7 @@ behaviour matches BT — not a regression).
   `MultitouchSupport` caches geometry at first attach.
 - **Our `com_schmonz_MT2BTReader`** — wins the BT L2CAP channels, manually starts the genuine BNB,
   interposes a translation shim, and injects geometry + the button gate.
-- **Our `com_schmonz_MT2Gesture`** — the session/conditioning nub (shared MT2→MT1 pipeline) and the
+- **Our `com_schmonz_MavericksVoodooInputHost`** — the session/conditioning nub (shared MT2→MT1 pipeline) and the
   click sink; also owns the `debug.mt2_log` sysctl.
 
 ## End-to-end data flow (full-BNB — RETIRED genuine-BNB era, NOT current)
@@ -275,7 +275,7 @@ Healthy sequence (observable via CONNTRACE): `CONTROL_UP → INTERRUPT_BOUND →
 > `MT2HIDShell` machinery below was **recovered from git history and revived** as the *terminal
 > consumer* for **VoodooInput satellites** (sub-project 2 of the VoodooInput interface work). A
 > satellite has no Apple MT hardware to reuse, so a fabricated AMD is the only way its frames reach
-> the recognizer. It is stood up **on-demand** (`MT2Gesture::beginSyntheticTerminal` → `mt2_synth_amd.*`),
+> the recognizer. It is stood up **on-demand** (`MavericksVoodooInputHost::beginSyntheticTerminal` → `mt2_synth_amd.*`),
 > driven by the VoodooInput mux (production) or the test user client (`tools/mt2_synth_inject`), and
 > fed via `kSynthSink` (`mt1_encode` → `handleTouchFrame`) — never at load, so it does NOT collide
 > with the genuine MT2 BT/USB paths. The RE below (IsFake-strict cast, `MT2HIDShell` identity
@@ -290,7 +290,7 @@ several of these findings are reusable for the "97% API" mission and were not ob
 
 **The fabricated AMD nub (the strict-cast story).** We `allocClassWithName("AppleMultitouchDevice")`,
 `init`'d it with **`IsFake=false`**, installed an enable stub + geometry handler, then `attach`+`start`
-under our `com_schmonz_MT2Gesture` nub. `AppleMultitouchDevice::start` reads `getProperty("IsFake")`:
+under our `com_schmonz_MavericksVoodooInputHost` nub. `AppleMultitouchDevice::start` reads `getProperty("IsFake")`:
 - **`IsFake=true`** → LENIENT: best-effort event-service lookup, always continues `start()`.
 - **`IsFake=false`** → STRICT: walks the IOService plane to the parent provider and **requires it cast
   to `AppleMultitouchHIDEventDriverV2`/`…EventDriver`/`…EventService`**, else logs "Could not cast our
@@ -377,7 +377,7 @@ We already have **three instances of this one capability**, differing only in th
 | Path | translate | target consumer | the seam (where we feed) |
 |---|---|---|---|
 | BT (shipped) | MT2 `0x31` → MT1 `0x28` | genuine BNB's spawned AMD | L2CAP delegate-callback slot `channel+0x110` |
-| Synthetic-USB (retired) | MT2 USB `0x02` → MT1 | our own `MT2Gesture` nub | `submitFrame` (no interpose; we own the nub) |
+| Synthetic-USB (retired) | MT2 USB `0x02` → MT1 | our own `MavericksVoodooInputHost` nub | `submitFrame` (no interpose; we own the nub) |
 | Genuine-USB (new) | MT2 USB `0x02` → Apple CompactV4 path-binary | genuine `AppleUSBMultitouchDriver` | its `handleReport` (vtable slot `0x117`), instance-clone interpose |
 
 **The point for the future:** *other* multitouch devices that want to ride a genuine Apple driver

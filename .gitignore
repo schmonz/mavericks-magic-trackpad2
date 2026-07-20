@@ -14,7 +14,7 @@ cmake-build-debug/
 # CMakePresets native/cross build dirs (mavericks-shared-cmake convention)
 build-native/
 build-cross/
-kext-gesture/MT2Gesture.kext/
+kext-gesture/MavericksVoodooInputHost.kext/
 kext-gesture/*.o
 
 # root tool binaries (compiled from tools/*.c by `make`)

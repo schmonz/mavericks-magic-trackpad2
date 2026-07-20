@@ -1,10 +1,10 @@
-/* synth_feed - inject SYNTHETIC moving contacts into our MT2Gesture device, with no
+/* synth_feed - inject SYNTHETIC moving contacts into our MavericksVoodooInputHost device, with no
  * real trackpad. One finger sweeps horizontally (x low->high) at the surface midline,
  * ~60 Hz, with monotonically increasing timestamps. Lets us test the actuation gate
  * (does hidd turn clean moving contacts into cursor motion?) decoupled from the flaky
  * USB feeder and from any MT2->MT1 coordinate-mapping doubts.
  *
- * Run as root with /tmp/MT2Gesture.kext loaded. Watch the cursor (and mt_contacts).
+ * Run as root with /tmp/MavericksVoodooInputHost.kext loaded. Watch the cursor (and mt_contacts).
  */
 #include "../src/touch_model.h"
 #include "../src/mavericks_amd_terminal_encode.h"
@@ -40,8 +40,8 @@ int main(int argc, char **argv) {
     const int LO = -2500, HI = 2500;
 
     io_service_t svc = IOServiceGetMatchingService(kIOMasterPortDefault,
-        IOServiceMatching("com_schmonz_MT2Gesture"));
-    if (!svc) { fprintf(stderr, "MT2Gesture service not found (kext loaded?)\n"); return 1; }
+        IOServiceMatching("com_schmonz_MavericksVoodooInputHost"));
+    if (!svc) { fprintf(stderr, "MavericksVoodooInputHost service not found (kext loaded?)\n"); return 1; }
     kern_return_t kr = IOServiceOpen(svc, mach_task_self(), 0, &g_conn);
     IOObjectRelease(svc);
     if (kr != KERN_SUCCESS) { fprintf(stderr, "IOServiceOpen 0x%x\n", kr); return 1; }

@@ -79,8 +79,8 @@ int main(int argc, char **argv) {
     int y          = (argc > 4) ? atoi(argv[4]) : 0;
 
     io_service_t svc = IOServiceGetMatchingService(kIOMasterPortDefault,
-        IOServiceMatching("com_schmonz_MT2Gesture"));
-    if (!svc) { fprintf(stderr, "MT2Gesture service not found (kext loaded?)\n"); return 1; }
+        IOServiceMatching("com_schmonz_MavericksVoodooInputHost"));
+    if (!svc) { fprintf(stderr, "MavericksVoodooInputHost service not found (kext loaded?)\n"); return 1; }
     kern_return_t kr = IOServiceOpen(svc, mach_task_self(), 0, &g_conn);
     IOObjectRelease(svc);
     if (kr != KERN_SUCCESS) { fprintf(stderr, "IOServiceOpen 0x%x\n", kr); return 1; }

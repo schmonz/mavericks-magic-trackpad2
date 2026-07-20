@@ -1,5 +1,5 @@
 /* replay_capture - replay recorded REAL MT2 frames through the full translation chain
- * (mt2_usb_decode -> mavericks_amd_construct_report -> MT2Gesture kext), to verify the pipeline end-to-end on
+ * (mt2_usb_decode -> mavericks_amd_construct_report -> MavericksVoodooInputHost kext), to verify the pipeline end-to-end on
  * genuine hardware frames without needing the live trackpad.
  *
  *   replay_capture <capture.txt>            # decode + PRINT each frame (no kext, non-disruptive)
@@ -45,8 +45,8 @@ int main(int argc, char **argv) {
     io_connect_t conn = IO_OBJECT_NULL;
     if (feed) {
         io_service_t s = IOServiceGetMatchingService(kIOMasterPortDefault,
-            IOServiceMatching("com_schmonz_MT2Gesture"));
-        if (!s) { fprintf(stderr, "MT2Gesture service not found (kext loaded?)\n"); return 1; }
+            IOServiceMatching("com_schmonz_MavericksVoodooInputHost"));
+        if (!s) { fprintf(stderr, "MavericksVoodooInputHost service not found (kext loaded?)\n"); return 1; }
         if (IOServiceOpen(s, mach_task_self(), 0, &conn) != KERN_SUCCESS) {
             fprintf(stderr, "IOServiceOpen failed\n"); return 1; }
         IOObjectRelease(s);

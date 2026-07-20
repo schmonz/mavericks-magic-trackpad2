@@ -186,7 +186,7 @@ one `AppleMultitouchDevice`; USB interface `0x613` present/plugged for power; `c
 
 - **Apple's `com.apple.driver.AppleUSBMultitouch (240.10)` IS resident** — loaded, but **refcount 0** and
   **`AppleUSBMultitouchDriver` = 0 instances**. Loaded-and-idle, bound to nothing. Our running kext
-  (`MT2Gesture 0.4.5`) does NOT list it as an `OSBundleLibrary` dep (dep set `<125 90 37 32 5 4 3 1>`), and
+  (`MavericksVoodooInputHost 0.4.5`) does NOT list it as an `OSBundleLibrary` dep (dep set `<125 90 37 32 5 4 3 1>`), and
   the genuine-USB `allocClassWithName` path did not run this session (USB reader never instantiated) — so it
   is most likely **speculatively loaded by IOKit while probing the MT2's `0x613` USB interface** and left
   resident (kextd doesn't auto-unload leaf drivers).

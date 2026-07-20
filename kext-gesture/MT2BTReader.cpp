@@ -23,7 +23,7 @@
 #include <libkern/c++/OSBoolean.h>
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
-#include "MT2Gesture.h"
+#include "MavericksVoodooInputHost.h"
 #include "amd_shim.h"          /* AppleMultitouchDevice (used by mt2_maybe_publish_battery) */
 
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve

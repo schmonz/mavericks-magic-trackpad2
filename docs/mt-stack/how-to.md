@@ -30,11 +30,11 @@ cmake --build cmake-build --target reload
   (the genuine paths `allocClassWithName` `AppleUSBMultitouchDriver` / `BNBTrackpadDevice` from those —
   NULL class otherwise). The booted deploy does the same in `dist/mt2d-run`.
 - **Always verify the loaded binary contains your edit** before trusting a test (stale object has
-  burned us): `strings cmake-build/MT2Gesture.kext/Contents/MacOS/MT2Gesture | grep '<your string>'`
+  burned us): `strings cmake-build/MavericksVoodooInputHost.kext/Contents/MacOS/MavericksVoodooInputHost | grep '<your string>'`
 - **`dmesg` accumulates across reloads** — mark the line count (`sudo dmesg | grep -c CONNTRACE`)
   before a run so you read only new lines.
 - If a load fails with **kextload error 71**, it's usually an unresolved symbol / missing
-  `OSBundleLibraries` entry (`sudo kextutil -n -t /tmp/MT2Gesture.kext` shows which).
+  `OSBundleLibraries` entry (`sudo kextutil -n -t /tmp/MavericksVoodooInputHost.kext` shows which).
 
 ## Trackpad prefpane live-refresh (standalone osax loader — no SIMBL)
 

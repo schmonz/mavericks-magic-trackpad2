@@ -5,13 +5,13 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleExecutable</key>
-    <string>MT2Gesture</string>
+    <string>MavericksVoodooInputHost</string>
     <key>CFBundleIdentifier</key>
-    <string>com.schmonz.MT2Gesture</string>
+    <string>com.schmonz.MavericksVoodooInputHost</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>MT2Gesture</string>
+    <string>MavericksVoodooInputHost</string>
     <key>CFBundlePackageType</key>
     <string>KEXT</string>
     <key>CFBundleShortVersionString</key>
@@ -24,16 +24,16 @@
     <string>Root</string>
     <key>IOKitPersonalities</key>
     <dict>
-        <key>MT2Gesture</key>
+        <key>MavericksVoodooInputHost</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MT2Gesture</string>
+            <string>com.schmonz.MavericksVoodooInputHost</string>
             <key>IOClass</key>
-            <string>com_schmonz_MT2Gesture</string>
+            <string>com_schmonz_MavericksVoodooInputHost</string>
             <key>IOProviderClass</key>
             <string>IOResources</string>
             <key>IOMatchCategory</key>
-            <string>com_schmonz_MT2Gesture</string>
+            <string>com_schmonz_MavericksVoodooInputHost</string>
             <key>IOResourceMatch</key>
             <string>IOKit</string>
         </dict>
@@ -120,7 +120,7 @@
         <key>MT2BTControl</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MT2Gesture</string>
+            <string>com.schmonz.MavericksVoodooInputHost</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
             <key>IOProviderClass</key>
@@ -139,7 +139,7 @@
         <key>MT2BTInterrupt</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MT2Gesture</string>
+            <string>com.schmonz.MavericksVoodooInputHost</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
             <key>IOProviderClass</key>
@@ -163,7 +163,7 @@
         <key>MT2USB</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MT2Gesture</string>
+            <string>com.schmonz.MavericksVoodooInputHost</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2USBReader</string>
             <key>IOProviderClass</key>
@@ -187,7 +187,7 @@
         <key>VoodooInputMux</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.MT2Gesture</string>
+            <string>com.schmonz.MavericksVoodooInputHost</string>
             <key>IOClass</key>
             <string>com_schmonz_MavericksVoodooInput</string>
             <key>IOProviderClass</key>

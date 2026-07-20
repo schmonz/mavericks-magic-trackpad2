@@ -6,7 +6,7 @@ Can we replace the prefpane MT1 assets at runtime?
 
 For each of our userland tools, is it necessary for our purposes or is it belt-and-suspenders we can stop needing?
 
-NAME (decided 2026-06-17): **Mavericks Trackpad 2** — the "Magic"->"Mavericks" substitution on the real product name; descriptive (conveys what+which-OS) with a subtle pun, no "tragic"=broken downside, sidesteps the "Magic" trademark. Tagline: "your Magic Trackpad 2, fully native on OS X Mavericks (USB + Bluetooth)." Slugs: repo `mavericks-trackpad-2`, `MavericksTrackpad2.kext`, bundle id `com.schmonz.MavericksTrackpad2`. FOLLOW-UP (on-console, deploy-affecting, NOT yet done): migrate the `mt2d` artifacts — `com.schmonz.mt2d` launchd label, `mt2d-run`, `/usr/local/lib/mt2d`, `/var/db/mt2d-boot.state`, `MT2Gesture` kext id, README, pkg id — to the new name.
+NAME (decided 2026-06-17): **Mavericks Trackpad 2** — the "Magic"->"Mavericks" substitution on the real product name; descriptive (conveys what+which-OS) with a subtle pun, no "tragic"=broken downside, sidesteps the "Magic" trademark. Tagline: "your Magic Trackpad 2, fully native on OS X Mavericks (USB + Bluetooth)." Slugs: repo `mavericks-trackpad-2`, `MavericksTrackpad2.kext`, bundle id `com.schmonz.MavericksTrackpad2`. FOLLOW-UP (on-console, deploy-affecting, NOT yet done): migrate the `mt2d` artifacts — `com.schmonz.mt2d` launchd label, `mt2d-run`, `/usr/local/lib/mt2d`, `/var/db/mt2d-boot.state`, `MavericksVoodooInputHost` kext id, README, pkg id — to the new name.
 
 Is the README short and sweet?
 

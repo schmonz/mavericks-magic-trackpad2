@@ -20,7 +20,7 @@ BUILD=$1
 PLISTS="
 $BUILD/MT2PaneRefresh.osax/Contents/Info.plist
 $BUILD/MT2PaneRefresh.bundle/Contents/Info.plist
-$BUILD/MT2Gesture.kext/Contents/Info.plist
+$BUILD/MavericksVoodooInputHost.kext/Contents/Info.plist
 $BUILD/MavericksTrackpad2Updater.app/Contents/Info.plist
 "
 

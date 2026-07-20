@@ -5,7 +5,7 @@
  *   sudo sysctl debug.mt2_log=2   # verbose (per-report geometry, per-edge clicks)
  *   sudo sysctl debug.mt2_log=0   # silence
  * Errors/failures use IOLog directly (always visible); MT2_DLOG is for non-error observability.
- * The sysctl is registered in com_schmonz_MT2Gesture::start and unregistered in stop (single
+ * The sysctl is registered in com_schmonz_MavericksVoodooInputHost::start and unregistered in stop (single
  * instance), so the oid never outlives the kext. */
 
 #include <IOKit/IOLib.h>

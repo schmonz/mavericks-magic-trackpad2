@@ -4,11 +4,11 @@
 # due to signing).
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist 2>/dev/null || true
-kextunload -b com.schmonz.MT2Gesture 2>/dev/null || true
+kextunload -b com.schmonz.MavericksVoodooInputHost 2>/dev/null || true
 kextunload -b com.schmonz.MT2USBClaim 2>/dev/null || true
 kextunload -b com.schmonz.MT2Claim 2>/dev/null || true   # legacy id from pre-rename installs
 rm -rf /Library/Extensions/MT2USBClaim.kext /Library/Extensions/MT2Claim.kext 2>/dev/null || true
-# Both transports now run in-kernel inside MT2Gesture: the USB-claim + legacy claim
+# Both transports now run in-kernel inside MavericksVoodooInputHost: the USB-claim + legacy claim
 # kexts and the userspace feeder are retired. Remove them from the loose load dir so
 # a re-install over an older layout doesn't leave them behind.
 rm -rf /usr/local/lib/mt2d/MT2USBClaim.kext /usr/local/lib/mt2d/MT2Claim.kext 2>/dev/null || true

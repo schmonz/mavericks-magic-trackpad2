@@ -1,5 +1,5 @@
 /*
- * MT2Gesture — the transport nub + session/conditioning core for the MT2 stack.
+ * MavericksVoodooInputHost — the transport nub + session/conditioning core for the MT2 stack.
  *
  * For the MT2 itself it does NOT create a multitouch device of its own — Apple's genuine driver
  * does that: over BT a manually-started BNBTrackpadDevice spawns its own AppleMultitouchDevice
@@ -23,11 +23,11 @@
 #include <kern/clock.h>
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOWorkLoop.h>
-#include "MT2Gesture.h"
+#include "MavericksVoodooInputHost.h"
 #include "mt2_log.h"           /* gMT2LogLevel, MT2_DLOG, sysctl register/unregister */
 #include "mt2_amd_probe.h"    /* debug.mt2_amd_probe oracle (build/teardown/churn + live-AMD count) */
 
-OSDefineMetaClassAndStructors(com_schmonz_MT2Gesture, IOService)
+OSDefineMetaClassAndStructors(com_schmonz_MavericksVoodooInputHost, IOService)
 
 /* Kernel uptime in milliseconds — the clock the session reads through the shell. */
 static uint32_t uptime_ms(void) {
@@ -40,22 +40,22 @@ static uint32_t uptime_ms(void) {
 /* Sink trampolines: dispatch each session effect to the ACTIVE reader's registered transport
  * sink (fXport). NULL-guarded so a watchdog fire after connectionClosed() is a no-op. Encode
  * and delivery are the READER's business now — this shell owns only session + lock + timer. */
-void com_schmonz_MT2Gesture::sink_post_button_edge(void *ctx, unsigned mask) {
-    com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
+void com_schmonz_MavericksVoodooInputHost::sink_post_button_edge(void *ctx, unsigned mask) {
+    com_schmonz_MavericksVoodooInputHost *self = (com_schmonz_MavericksVoodooInputHost *)ctx;
     if (self->fXport.post_button_edge) self->fXport.post_button_edge(self->fXport.ctx, mask);
 }
-void com_schmonz_MT2Gesture::sink_feed_frame(void *ctx, const MavericksTouchFrame *frame) {
-    com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
+void com_schmonz_MavericksVoodooInputHost::sink_feed_frame(void *ctx, const MavericksTouchFrame *frame) {
+    com_schmonz_MavericksVoodooInputHost *self = (com_schmonz_MavericksVoodooInputHost *)ctx;
     if (self->fXport.feed_frame) self->fXport.feed_frame(self->fXport.ctx, frame);
 }
 /* Sink: (re)arm the silence-watchdog timer. */
-void com_schmonz_MT2Gesture::sink_arm_timer(void *ctx, uint32_t ms) {
-    com_schmonz_MT2Gesture *self = (com_schmonz_MT2Gesture *)ctx;
+void com_schmonz_MavericksVoodooInputHost::sink_arm_timer(void *ctx, uint32_t ms) {
+    com_schmonz_MavericksVoodooInputHost *self = (com_schmonz_MavericksVoodooInputHost *)ctx;
     if (self->fIdleTimer) self->fIdleTimer->setTimeoutMS(ms);
 }
 
 /* A reader announces its transport: register its policy row + delivery sink, reset the session. */
-void com_schmonz_MT2Gesture::connectionEstablished(IOService *source, mt2_transport_mode_t mode,
+void com_schmonz_MavericksVoodooInputHost::connectionEstablished(IOService *source, mt2_transport_mode_t mode,
                                                    const mavericks_session_policy_t *policy,
                                                    const mt2_transport_sink_t *sink) {
     if (fSessionLock) IOLockLock(fSessionLock);
@@ -63,20 +63,20 @@ void com_schmonz_MT2Gesture::connectionEstablished(IOService *source, mt2_transp
     fXport = *sink;
     mavericks_session_connect(&fSession, (uintptr_t)source, mode, policy, uptime_ms());
     if (fSessionLock) IOLockUnlock(fSessionLock);
-    IOLog("MT2Gesture: connection established (src=%p mode=%d)\n", source, (int)mode);
+    IOLog("MavericksVoodooInputHost: connection established (src=%p mode=%d)\n", source, (int)mode);
 }
 
 /* Deregister: after this returns no sink callback of this reader's runs. Under the same lock
  * submitFrame and the timer serialize on; a racing frame either completes first or is dropped
  * by the single-active guard; the lifecycle reset makes a late timer flush produce nothing. */
-void com_schmonz_MT2Gesture::connectionClosed(IOService *source) {
+void com_schmonz_MavericksVoodooInputHost::connectionClosed(IOService *source) {
     if (fSessionLock) IOLockLock(fSessionLock);
     if ((uintptr_t)source == fSession.active_source) {
         if (fIdleTimer) fIdleTimer->cancelTimeout();
         fXport.feed_frame = 0; fXport.post_button_edge = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
         fSession.active_source = 0;
         mavericks_lifecycle_reset(&fSession.lifecycle);
-        IOLog("MT2Gesture: connection closed (src=%p)\n", source);
+        IOLog("MavericksVoodooInputHost: connection closed (src=%p)\n", source);
     }
     if (fSessionLock) IOLockUnlock(fSessionLock);
 }
@@ -84,14 +84,14 @@ void com_schmonz_MT2Gesture::connectionClosed(IOService *source) {
 /* See header. Deliberately does NOT clear fXport or the session: the caller is not the
  * registered source (that's connectionClosed's job) — it only needs in-flight delivery drained
  * + a memory barrier for its target-clearing stores. */
-void com_schmonz_MT2Gesture::quiesceDelivery(void) {
+void com_schmonz_MavericksVoodooInputHost::quiesceDelivery(void) {
     if (!fSessionLock) return;
     IOLockLock(fSessionLock);
     IOLockUnlock(fSessionLock);
 }
 
 /* A reader submits one decoded frame; the session decides what reaches the device. */
-void com_schmonz_MT2Gesture::submitFrame(IOService *source, const MavericksTouchFrame *tf) {
+void com_schmonz_MavericksVoodooInputHost::submitFrame(IOService *source, const MavericksTouchFrame *tf) {
     if (fSessionLock) IOLockLock(fSessionLock);
     mavericks_session_frame(&fSession, (uintptr_t)source, tf, uptime_ms(), &fSink);
     if (fSessionLock) IOLockUnlock(fSessionLock);
@@ -102,7 +102,7 @@ void com_schmonz_MT2Gesture::submitFrame(IOService *source, const MavericksTouch
  * NotReady when no transport (or one without inject support) is registered. Improvement over the
  * old fBnbTarget guard: inject now works as soon as the AMD spawns, not only after the first touch
  * frame cached it — hands-free testing needs no priming touch. */
-IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *bytes, unsigned int len) {
+IOReturn com_schmonz_MavericksVoodooInputHost::feedFrame(const unsigned char *bytes, unsigned int len) {
     IOReturn rc = kIOReturnNotReady;
     if (fSessionLock) IOLockLock(fSessionLock);
     if (fXport.inject_encoded) rc = fXport.inject_encoded(fXport.ctx, bytes, len);
@@ -110,8 +110,8 @@ IOReturn com_schmonz_MT2Gesture::feedFrame(const unsigned char *bytes, unsigned 
     return rc;
 }
 /* The silence-watchdog timer fired; let the session flush any outstanding BreakTouch. */
-void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /*s*/) {
-    com_schmonz_MT2Gesture *self = OSDynamicCast(com_schmonz_MT2Gesture, owner);
+void com_schmonz_MavericksVoodooInputHost::idleTimeout(OSObject *owner, IOTimerEventSource * /*s*/) {
+    com_schmonz_MavericksVoodooInputHost *self = OSDynamicCast(com_schmonz_MavericksVoodooInputHost, owner);
     if (!self) return;
     if (self->fSessionLock) IOLockLock(self->fSessionLock);
     mavericks_session_timer(&self->fSession, &self->fSink);
@@ -121,9 +121,9 @@ void com_schmonz_MT2Gesture::idleTimeout(OSObject *owner, IOTimerEventSource * /
 /* The active gesture nub, published for the in-kernel readers (MT2BTReader and
  * MT2USBReader) to feed via submitFrame() — same kext, so no user client / IPC.
  * Single instance. */
-com_schmonz_MT2Gesture *gActiveMT2Gesture = 0;
+com_schmonz_MavericksVoodooInputHost *gActiveMavericksVoodooInputHost = 0;
 
-bool com_schmonz_MT2Gesture::start(IOService *provider) {
+bool com_schmonz_MavericksVoodooInputHost::start(IOService *provider) {
     if (!IOService::start(provider)) {
         return false;
     }
@@ -134,7 +134,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
      * 0x28 frames (selector 0 -> feedFrame -> handleTouchFrame) for hands-free on-device
      * testing without a physical trackpad (tools/synth_tap, synth_feed). Read path only;
      * the in-kernel readers remain the production input. */
-    setProperty("IOUserClientClass", "com_schmonz_MT2GestureUserClient");
+    setProperty("IOUserClientClass", "com_schmonz_MavericksVoodooInputHostUserClient");
 
     /* Functional-core init + the sink that drives IOKit, plus the silence-watchdog
      * timer the session arms. The session owns all post-decode logic; this shell only
@@ -147,9 +147,9 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
                                           a reader's connectionEstablished installs its real row;
                                           the default row keeps the struct initialized. */
     mavericks_lifecycle_reset(&fSession.lifecycle);
-    fSink.post_button_edge = &com_schmonz_MT2Gesture::sink_post_button_edge;
-    fSink.feed_frame = &com_schmonz_MT2Gesture::sink_feed_frame;
-    fSink.arm_timer  = &com_schmonz_MT2Gesture::sink_arm_timer;
+    fSink.post_button_edge = &com_schmonz_MavericksVoodooInputHost::sink_post_button_edge;
+    fSink.feed_frame = &com_schmonz_MavericksVoodooInputHost::sink_feed_frame;
+    fSink.arm_timer  = &com_schmonz_MavericksVoodooInputHost::sink_arm_timer;
     fSink.ctx = this;
     fXport.feed_frame = 0; fXport.post_button_edge = 0; fXport.inject_encoded = 0; fXport.ctx = 0;
     fSessionLock = IOLockAlloc();   /* serializes timer vs submitFrame fSession access */
@@ -157,7 +157,7 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
     fIdleTimer = 0;
     if (fPipeWL) {
         fIdleTimer = IOTimerEventSource::timerEventSource(
-            this, &com_schmonz_MT2Gesture::idleTimeout);
+            this, &com_schmonz_MavericksVoodooInputHost::idleTimeout);
         if (fIdleTimer && fPipeWL->addEventSource(fIdleTimer) != kIOReturnSuccess) {
             fIdleTimer->release(); fIdleTimer = 0;
         }
@@ -174,17 +174,17 @@ bool com_schmonz_MT2Gesture::start(IOService *provider) {
 
     /* Publish LAST: readers may call connectionEstablished the moment this is visible, so every
      * engine invariant (session fields, lock, timer, sink slots) must already hold. */
-    gActiveMT2Gesture = this;
+    gActiveMavericksVoodooInputHost = this;
 
-    IOLog("MT2Gesture: nub up — genuine AMD drives input + owns the pane\n");
+    IOLog("MavericksVoodooInputHost: nub up — genuine AMD drives input + owns the pane\n");
     return true;
 }
 
-void com_schmonz_MT2Gesture::stop(IOService *provider) {
+void com_schmonz_MavericksVoodooInputHost::stop(IOService *provider) {
     /* Unpublish FIRST (mirror of start()'s publish-last), then drain: a reader that loaded the
      * pointer before the clear is either inside a locked engine call (drained here) or will
      * NULL-check and skip. Only then is it safe to tear the lock and timer down. */
-    if (gActiveMT2Gesture == this) gActiveMT2Gesture = 0;
+    if (gActiveMavericksVoodooInputHost == this) gActiveMavericksVoodooInputHost = 0;
     quiesceDelivery();
     /* Tear the watchdog timer down next so a late fire can't drive the sink during teardown. */
     if (fIdleTimer) {
@@ -206,7 +206,7 @@ extern "C" {
 #include <mach/kmod.h>
 extern kern_return_t _start(kmod_info_t *ki, void *data);
 extern kern_return_t _stop(kmod_info_t *ki, void *data);
-KMOD_EXPLICIT_DECL(com.schmonz.MT2Gesture, "1.0.0", _start, _stop)
+KMOD_EXPLICIT_DECL(com.schmonz.MavericksVoodooInputHost, "1.0.0", _start, _stop)
 __private_extern__ kmod_start_func_t *_realmain = 0;
 __private_extern__ kmod_stop_func_t  *_antimain = 0;
 __private_extern__ int _kext_apple_cc = __APPLE_CC__;

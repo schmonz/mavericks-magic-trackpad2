@@ -65,13 +65,13 @@ static const uint8_t USB_2F[] = {
 #define BT_TS  0x11111u
 #define USB_TS 0x22222u
 
-/* ---- BT sink: capture the mavericks_amd_construct_report output MT2Gesture::sink_feed_frame would feed ------------- */
+/* ---- BT sink: capture the mavericks_amd_construct_report output MavericksVoodooInputHost::sink_feed_frame would feed ------------- */
 typedef struct { uint8_t buf[64]; int len; int nfeed; } bt_cap_t;
 static void bt_click(void *c, unsigned m){ (void)c; (void)m; }
 static void bt_arm  (void *c, uint32_t ms){ (void)c; (void)ms; }
 static void bt_feed (void *c, const MavericksTouchFrame *f){
     bt_cap_t *cap = (bt_cap_t *)c;
-    int n = mavericks_amd_construct_report(f, cap->buf, sizeof cap->buf, BT_TS);   /* mirrors MT2Gesture.cpp:61 */
+    int n = mavericks_amd_construct_report(f, cap->buf, sizeof cap->buf, BT_TS);   /* mirrors MavericksVoodooInputHost.cpp:61 */
     if (n > 0) { cap->len = n; }
     cap->nfeed++;
 }

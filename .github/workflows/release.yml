@@ -1,7 +1,7 @@
 name: release
 
 # One automated build on the latest macOS: cross-build the whole 10.9 product
-# (x86_64 @ 10.9 userland + a real MT2Gesture.kext built against a fetched
+# (x86_64 @ 10.9 userland + a real MavericksVoodooInputHost.kext built against a fetched
 # MacOSX10.9 SDK), gate it, package it, and publish a GitHub Release on v* tags.
 #
 # AUTHENTICITY / CORRECTNESS of the cross-built kext rests on two things, no old
@@ -117,7 +117,7 @@ jobs:
           cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}" -DMT2_SPARKLE_FRAMEWORK="${{ steps.sparkle.outputs.path }}" -DMT2_ED25519_SRC="${{ steps.ed25519.outputs.path }}"
           cmake --build build
           echo "userland slice:"; lipo -info build/sbin/mt2_reenumerate
-          echo "kext:"; file build/MT2Gesture.kext/Contents/MacOS/MT2Gesture
+          echo "kext:"; file build/MavericksVoodooInputHost.kext/Contents/MacOS/MavericksVoodooInputHost
 
       - name: Kext cross-build equivalence gate (vs native 10.9 reference, fail-closed)
         run: sh cmake/characterize_build.sh compare dist/characterization build

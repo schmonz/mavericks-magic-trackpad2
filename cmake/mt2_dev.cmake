@@ -4,7 +4,7 @@
 # to keep the sequencing readable and faithful to the old recipe.
 add_custom_target(reload
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_reload.sh
-          ${CMAKE_BINARY_DIR}/MT2Gesture.kext
+          ${CMAKE_BINARY_DIR}/MavericksVoodooInputHost.kext
           $<TARGET_FILE:mt2_bt_bounce> $<TARGET_FILE:mt2_reenumerate>
   COMMENT "Reload: unload -> drain -> load -> bounce present transport")
 add_dependencies(reload kext mt2_bt_bounce mt2_reenumerate)
