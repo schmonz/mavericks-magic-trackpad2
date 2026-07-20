@@ -1,101 +1,116 @@
-# Magic Trackpad 2 on Mac OS X Mavericks
+# VoodooInputMavericks
 
-Native gestures with Apple's Magic Trackpad 2 on Mac OS X 10.9.
+Native gestures with Apple's Magic Trackpad 2 on Mac OS X 10.9 — built as a **VoodooInput-shaped
+trackpad framework** with a small device-specific satellite. The Magic Trackpad 2 driver is ~200
+lines; the reusable machinery is named and structured to merge back into
+[acidanthera/VoodooInput](https://github.com/acidanthera/VoodooInput).
 
 ## How it works
 
-A kernel extension reuses Apple's own genuine multitouch drivers and feeds them a translated stream, so 10.9's existing recognizer does all the gesture/cursor/click work:
+The Magic Trackpad 2 speaks a wire format 10.9 doesn't understand. Instead of reusing Apple's genuine
+drivers, we present the device to the OS through the **VoodooInput** interface, then let Apple's own
+recognizer do the gesture work against a device we fabricate:
 
-1. `MT2USBReader` and `MT2BTReader` out-bid `IOUSBHIDDriver` and
-   `IOBluetoothHIDDriver` to win the Magic Trackpad 2, then **manually
-   start Apple's genuine driver** on the same transport —
-   `AppleUSBMultitouchDriver` over USB, `BNBTrackpadDevice` over
-   Bluetooth — and **interpose its input seam** (`handleReport` over
-   USB; the L2CAP delegate callback over BT).
-2. Each raw MT2 frame is decoded (`mt2_decode` plus the
-   `mt2_usb_decode`/`mt2_bt_decode` transport wrappers), conditioned by
-   the shared `mt2_session` (settle gate, contact lifecycle, liftoff),
-   and translated to the report Apple's driver expects (`mt1_encode` to
-   the MT1 `0x28` report over BT; a CompactV4 reframe over USB). We also
-   inject the two things Apple's path can't read off this device's wire
-   — sensor **geometry** and the **device-button gate** — so the genuine
-   `AppleMultitouchDevice` drives the cursor, gestures, and the Trackpad
-   preference pane. See `docs/mt-stack/` for the full architecture.
+1. **Satellite readers** (`mt2_*`, the ~3% that is device-specific) — `MT2USBReader` / `MT2BTReader`
+   out-bid `IOUSBHIDDriver` / `IOBluetoothHIDDriver` to win the trackpad, open its interrupt pipe /
+   L2CAP channels, enable multitouch, and decode each raw frame (`mt2_decode` + the
+   `mt2_usb_decode`/`mt2_bt_decode` transport wrappers) into a `MavericksTouchFrame`. Each satellite
+   advertises `VoodooInputSupported` + its coordinate span and `registerService()`s — the whole
+   satellite contract.
+2. **The mux** (`MavericksVoodooInput`, our reimplementation of upstream's `VoodooInput`) attaches to
+   each satellite, receives `VoodooInputEvent`s, and conditions the stream — settle gate, contact
+   lifecycle, liftoff, click logic (`mavericks_session` / `mavericks_pipeline` / `mavericks_lifecycle`).
+3. **The terminal** (`MavericksAMDTerminal`) fabricates its **own** `AppleMultitouchDevice`, seeds it
+   with genuine sensor geometry and the device-button gate, and feeds it MT1 `0x28` frames
+   (`mavericks_amd_construct_report`). Apple's recognizer, `hidd`, and gesture engine then drive the
+   cursor / gestures / clicks against our fabricated device — **no Apple driver is hosted or interposed.**
 
-Mavericks will load an unsigned kext as long as it's _not_ in
-`/Library/Extensions` and therefore not present at early boot. Once
-loaded, we reenumerate the device if needed and attach.
+Two 10.9 quirks we handle, both RE'd (`docs/mt-stack/`):
+- `hidd` only opens the multitouch **frames client** when the device appears while it is freshly
+  enumerating, so the boot wrapper kicks `hidd` once when the USB reader binds (the BT reconnect bounce
+  covers Bluetooth).
+- Apple's Trackpad **preference pane** only shows the trackpad view for a genuine driver *class*, so a
+  userland companion forces the trackpad controller for our fabricated device and keeps it honest as the
+  device connects / disconnects / switches transport.
 
-A small userland companion keeps the **Trackpad preference pane**
-honest as the device connects, disconnects, or switches transport.
+Mavericks loads an unsigned kext as long as it's *not* in `/Library/Extensions` (so it's absent at early
+boot); the `voodooinputmavericks-run` LaunchDaemon kextloads it from `/usr/local/lib`, with a boot
+brick-guard so a load panic can't loop.
 
 ## Requirements
 
 - Mac OS X 10.9
 - Command Line Tools (clang) + CMake (≥3.10).
-- [mavericks-shared-cmake](https://github.com/schmonz/mavericks-shared-cmake)
-  installed once — the build finds it via `find_package`:
+- [mavericks-shared-cmake](https://github.com/schmonz/mavericks-shared-cmake) installed once — the build
+  finds it via `find_package`:
 
       git clone https://github.com/schmonz/mavericks-shared-cmake
       cmake -S mavericks-shared-cmake -B mavericks-shared-cmake/build
       cmake --install mavericks-shared-cmake/build --prefix "$HOME/.local"
 
-  The install self-registers in CMake's per-user package registry, so no
-  `CMAKE_PREFIX_PATH` is needed afterward.
+  The install self-registers in CMake's per-user package registry, so no `CMAKE_PREFIX_PATH` is needed.
 
 ## Build & install
 
-    cmake -S . -B cmake-build
-    cmake --build cmake-build --target pkg
-    sudo installer -pkg cmake-build/mt2d-1.0.0.pkg -target /
+    cmake --preset native
+    cmake --build build-native --target pkg
+    sudo installer -pkg build-native/voodooinputmavericks-<version>.pkg -target /
+
+Or, to install exactly what a release ships (same installer scripts, both prefpane loaders):
+
+    cmake --build build-native --target install-pkg
 
 ## Uninstall
 
-    sudo launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist
-    launchctl unload /Library/LaunchAgents/com.schmonz.mt2panewatch.plist
-    launchctl unload /Library/LaunchAgents/com.schmonz.mt2updatecheck.plist
-    sudo kextunload -b com.schmonz.MavericksVoodooInputHost
-    sudo rm -rf /Library/LaunchDaemons/com.schmonz.mt2d.plist \
-        /Library/LaunchAgents/com.schmonz.mt2panewatch.plist \
-        /Library/LaunchAgents/com.schmonz.mt2updatecheck.plist \
-        /Library/ScriptingAdditions/MT2PaneRefresh.osax \
-        /usr/local/libexec/mt2_pane_watch \
-        /usr/local/sbin/mt2d-run /usr/local/sbin/mt2_reenumerate \
-        /usr/local/lib/mt2d /var/db/mt2d-boot.state /var/log/mt2d.log
+    sudo launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.plist
+    launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.panewatch.plist
+    launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist
+    sudo kextunload -b com.schmonz.VoodooInputMavericks
+    sudo rm -rf /Library/LaunchDaemons/com.schmonz.voodooinputmavericks*.plist \
+        /Library/LaunchAgents/com.schmonz.voodooinputmavericks*.plist \
+        /Library/ScriptingAdditions/VoodooInputMavericksPane.osax \
+        /usr/local/libexec/voodooinputmavericks_pane_watch \
+        /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
+        /usr/local/lib/voodooinputmavericks /usr/local/{var,share}/voodooinputmavericks \
+        /var/db/voodooinputmavericks-boot.state
+
+(If you installed the prefpane companion as a SIMBL plugin rather than the standalone osax, also remove
+`~/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle`.)
 
 ## Develop
 
-    cmake -S . -B cmake-build                      # configure (once)
-    cmake --build cmake-build                      # build everything (tools + kext)
-    cmake --build cmake-build --target kext        # just the kernel extension
-    ctest --test-dir cmake-build --output-on-failure   # run unit + shell + bats tests
-    cmake --build cmake-build --target reload      # hot-reload the running kext
+    cmake --preset native                                  # configure (once; use `cross` to cross-build)
+    cmake --build build-native                             # tools + kext
+    cmake --build build-native --target kext               # just the kernel extension
+    ctest --test-dir build-native --output-on-failure      # unit + shell + bats tests
+    cmake --build build-native --target reload             # hot-reload the running kext
 
 ## Layout
 
-- `src/` — the shared frame decode/encode + session core, compiled into the kext
-  and exercised by the userspace unit tests: `mt2_decode` (shared core) with the
-  thin `mt2_usb_decode`/`mt2_bt_decode` transport wrappers, `mt1_encode`,
-  `mt2_pipeline`/`mt2_session`/`mt2_lifecycle` (settle / lift-drop / decel /
-  click logic), `mt2_geometry` + `mt2_usb_bytes` (injected sensor geometry
-  and USB byte-format helpers — Apple checksum + click report), `mt2_coordinator`/`mt2_connect_sm` (transport
-  arbitration), and `touch_model.h`. `mt2_presence` is the pure transport-presence
-  state machine behind the prefpane refresh. `vhid_mt1` is a kextless research path kept
-  for reference.
-- `kext-gesture/` — `MavericksVoodooInputHost`, the one shipped kext: the `MT2USBReader` and
-  `MT2BTReader` transport readers that manual-start + interpose Apple's genuine
-  drivers, and the `MavericksVoodooInputHost` nub that hosts the shared session and feeds the
-  conditioned stream to Apple's spawned `AppleMultitouchDevice`.
-- `tools/` — dev/diagnostic helpers. `mt2_reenumerate` ships,
-  as does the prefpane-refresh component in `mt2_prefpane_refresh/` (the
-  `MT2PaneRefresh.osax` + `mt2_pane_watch` agent); the rest are reverse-engineering
-  probes (`tools/re` is the RE toolkit). `tools/spikes/` holds one-off probes.
-- `tests/` — unit tests.
-- `dist/` — LaunchDaemon plist, the `mt2d-run` boot wrapper, and installer scripts.
-- `captures/` — recorded MT2 frames used as test fixtures.
-- `docs/` — design specs and reverse-engineering findings.
-- `reference/` — `hid-magicmouse.c` from Linux, the basis for the decode/encode
-  layouts (see the license note below).
+Four namespaces, by provenance: **`mt2_*`** = the device satellite · **`mavericks_*` / `Mavericks*`** =
+our reusable framework · **`VoodooInput*`** = the vendored upstream ABI · **`VoodooInputMavericks`** =
+the shipping product.
 
-GPL-2.0-or-later (the decode/encode layouts derive from Linux
-`hid-magicmouse.c`).
+- `src/` — the framework core + the device decode, compiled into the kext and exercised by the host unit
+  tests. Device (`mt2_*`): `mt2_decode` with the `mt2_usb_decode`/`mt2_bt_decode` wrappers, `mt2_geometry`
+  + `mt2_usb_bytes`, `mt2_battery`, `mt2_coord_range`. Framework (`mavericks_*`): `MavericksTouchFrame`,
+  `mavericks_voodoo_translate` (frame ↔ `VoodooInputEvent`), `mavericks_session`/`_pipeline`/`_lifecycle`
+  (conditioning), `mavericks_amd_construct_report` (the terminal's report builder), `mavericks_presence`/
+  `_connect_sm`/`_coordinator` (transport SMs). `mavericks_vhid_mt1` is a kextless research path kept for
+  reference.
+- `kext-gesture/` — the one shipped kext (`VoodooInputMavericks.kext`): the `MT2USBReader` / `MT2BTReader`
+  satellites, the `MavericksVoodooInput` mux, the `MavericksAMDTerminal` + `MavericksHIDShell` terminal,
+  and the `MavericksVoodooInputHost` nub (an always-present `IOResources` sentinel for the boot brick-guard).
+- `third_party/VoodooInput/` — the vendored acidanthera VoodooInput ABI headers (verbatim); the interface
+  our framework is built against and meant to merge into.
+- `tools/` — `mt2_reenumerate` ships, as does the Trackpad-pane companion (`voodooinputmavericks_prefpane/`,
+  delivered as a SIMBL plugin or a standalone `.osax` + launch-watcher). `multitouch_*` are generic
+  MultitouchSupport probes; `tools/re` is the RE toolkit; `tools/spikes/` holds one-off probes.
+- `tests/` — host unit + shell tests.
+- `dist/` — the LaunchDaemon/Agent plists, the `voodooinputmavericks-run` boot wrapper, installer scripts.
+- `captures/` — recorded MT2 frames used as test fixtures.
+- `docs/` — design specs and reverse-engineering findings (`docs/mt-stack/` is the durable knowledge base).
+- `reference/` — `hid-magicmouse.c` from Linux, the basis for the decode/encode layouts.
+
+GPL-2.0-or-later (the decode/encode layouts derive from Linux `hid-magicmouse.c`; the vendored VoodooInput
+ABI is GPLv2, compatible).
