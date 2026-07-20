@@ -83,3 +83,13 @@ add_custom_target(pkg
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
   DEPENDS kext mt2_reenumerate MT2PaneRefresh MT2PaneRefresh_simbl mt2_pane_watch mt2_usb_bt_handoff ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
+
+# Dev "install exactly what a user gets": build the release .pkg and install it locally through the SAME
+# installer flow (scripts, component versions, BOTH prefpane loaders) a real user runs. Use THIS during dev
+# instead of hand-copying individual pieces — that divergence is what left a STALE SIMBL payload (watching
+# retired classes) running on-device while the repo source was current (2026-07-20). Requires sudo (the pkg
+# writes /usr/local + /Library); the target owns its own privilege, mirroring kext-load.
+add_custom_target(install-pkg
+  COMMAND sudo installer -pkg ${PKG_OUT} -target /
+  DEPENDS pkg
+  COMMENT "Installing ${PKG_OUT} to / (release-identical local install)")

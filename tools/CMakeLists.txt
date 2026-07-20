@@ -100,9 +100,12 @@ foreach(_cg MT2PaneRefresh MT2PaneRefresh_simbl)
   mavericks_compat_guard(${_cg})
 endforeach()
 
-# Aggregate convenience target (mirrors the Makefile `prefpane-refresh`: osax + dylib + arm).
-add_custom_target(prefpane-refresh DEPENDS MT2PaneRefresh MT2PaneRefresh_dylib mt2_pane_arm)
-add_custom_target(prefpane-refresh-simbl DEPENDS MT2PaneRefresh_simbl)
+# Aggregate convenience target: ALL prefpane-loader variants (osax + dylib + SIMBL bundle) + arm. Building
+# just one loader while a stale copy of another stays deployed is the dual-loader footgun (a stale SIMBL
+# bundle watching retired classes bit us 2026-07-20) — so this rebuilds every variant together. For a
+# release-identical on-device install use the `install-pkg` target, not hand-copied pieces.
+add_custom_target(prefpane-refresh DEPENDS MT2PaneRefresh MT2PaneRefresh_dylib MT2PaneRefresh_simbl mt2_pane_arm)
+add_custom_target(prefpane-refresh-simbl DEPENDS MT2PaneRefresh_simbl)  # kept: back-compat alias
 
 # Operational install/uninstall (privilege handled here; fully reversible).
 # NOTE: each step is its own COMMAND with NATIVE args (CMake quotes each arg, incl.
