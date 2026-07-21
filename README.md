@@ -1,90 +1,65 @@
 # VoodooInputMavericks
 
-Native gestures with Apple's Magic Trackpad 2 on Mac OS X 10.9 — built as a **VoodooInput-shaped
-trackpad framework** with a small device-specific satellite. The Magic Trackpad 2 driver is ~200
-lines; the reusable machinery is named and structured to merge back into
-[acidanthera/VoodooInput](https://github.com/acidanthera/VoodooInput).
+Magic Trackpad 2 driver for Mac OS X 10.9 Mavericks.
 
 ## How it works
 
-The Magic Trackpad 2 speaks a wire format 10.9 doesn't understand. Instead of reusing Apple's genuine
-drivers, we present the device to the OS through the **VoodooInput** interface, then let Apple's own
-recognizer do the gesture work against a device we fabricate:
+10.9 knows how to recognize multitouch gestures from period-appropriate
+laptop trackpads (USB) and the original Magic Trackpad (Bluetooth).
+Our job:
 
-1. **Satellite readers** (`mt2_*`, the ~3% that is device-specific) — `MT2USBReader` / `MT2BTReader`
-   out-bid `IOUSBHIDDriver` / `IOBluetoothHIDDriver` to win the trackpad, open its interrupt pipe /
-   L2CAP channels, enable multitouch, and decode each raw frame (`mt2_decode` + the
-   `mt2_usb_decode`/`mt2_bt_decode` transport wrappers) into a `MavericksTouchFrame`. Each satellite
-   advertises `VoodooInputSupported` + its coordinate span and `registerService()`s — the whole
-   satellite contract.
-2. **The mux** (`MavericksVoodooInput`, our reimplementation of upstream's `VoodooInput`) attaches to
-   each satellite, receives `VoodooInputEvent`s, and conditions the stream — settle gate, contact
-   lifecycle, liftoff, click logic (`mavericks_session` / `mavericks_pipeline` / `mavericks_lifecycle`).
-3. **The terminal** (`MavericksAMDTerminal`) fabricates its **own** `AppleMultitouchDevice`, seeds it
-   with genuine sensor geometry and the device-button gate, and feeds it MT1 `0x28` frames
-   (`mavericks_amd_construct_report`). Apple's recognizer, `hidd`, and gesture engine then drive the
-   cursor / gestures / clicks against our fabricated device — **no Apple driver is hosted or interposed.**
+1. Speak the recognized wire formats
+2. Present a sensible API
 
-Two 10.9 quirks we handle, both RE'd (`docs/mt-stack/`):
-- `hidd` only opens the multitouch **frames client** when the device appears while it is freshly
-  enumerating, so the boot wrapper kicks `hidd` once when the USB reader binds (the BT reconnect bounce
-  covers Bluetooth).
-- Apple's Trackpad **preference pane** only shows the trackpad view for a genuine driver *class*, so a
-  userland companion forces the trackpad controller for our fabricated device and keeps it honest as the
-  device connects / disconnects / switches transport. The companion ships as a SIMBL plugin (SIMBLAgent
-  injects it into System Preferences); the trackpad itself works without it.
+The programming interface is nearly verbatim from
+[VoodooInput](https://github.com/acidanthera/VoodooInput):
 
-Mavericks loads an unsigned kext as long as it's *not* in `/Library/Extensions` (so it's absent at early
-boot); the `voodooinputmavericks-run` LaunchDaemon kextloads it from `/usr/local/lib`, with a boot
-brick-guard so a load panic can't loop.
+1. Magic Trackpad 2 **satellite readers** (`mt2_*`)
+   `MT2USBReader` / `MT2BTReader` out-bid `IOUSBHIDDriver` /
+   `IOBluetoothHIDDriver`, open interrupt pipe / L2CAP channels,
+   enable multitouch, decode each raw frame (`mt2_decode`) into a
+   `MavericksTouchFrame`, and advertise `VoodooInputSupported`.
+2. **Mux** (`MavericksVoodooInput`) attaches to
+   each satellite, receives `VoodooInputEvent`s, and conditions the
+   stream (`mavericks_session` / `mavericks_pipeline` /
+   `mavericks_lifecycle`).
+3. **Terminal** (`MavericksAMDTerminal`) synthesizes an
+   `AppleMultitouchDevice` and feeds it MT1 frames
+   (`mavericks_amd_construct_report`).
 
-## Requirements
+Intent is for VoodooInput drivers to build and run unchanged, and
+for upstream VoodooInput to have an easy way to add Mavericks
+support, in case that's something they might want.
 
-- Mac OS X 10.9
-- Command Line Tools (clang) + CMake (≥3.10).
-- [mavericks-shared-cmake](https://github.com/schmonz/mavericks-shared-cmake) installed once — the build
-  finds it via `find_package`:
-
-      git clone https://github.com/schmonz/mavericks-shared-cmake
-      cmake -S mavericks-shared-cmake -B mavericks-shared-cmake/build
-      cmake --install mavericks-shared-cmake/build --prefix "$HOME/.local"
-
-  The install self-registers in CMake's per-user package registry, so no `CMAKE_PREFIX_PATH` is needed.
-- The Trackpad preference-pane companion needs [SIMBL](https://mavericksforever.com/downloads/SIMBL.pkg)
-  — install it once (the trackpad itself works without it; only the pane's settings/battery/rename need it).
-
-## Build & install
-
-    cmake --preset native
-    cmake --build build-native --target pkg
-    sudo installer -pkg build-native/voodooinputmavericks-<version>.pkg -target /
-
-Or, to install exactly what a release ships (same installer scripts, SIMBL-plugin companion):
-
-    cmake --build build-native --target install-pkg
-
-## Uninstall
-
-    sudo launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.plist
-    launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist
-    sudo kextunload -b com.schmonz.VoodooInputMavericks
-    sudo rm -rf /Library/LaunchDaemons/com.schmonz.voodooinputmavericks*.plist \
-        /Library/LaunchAgents/com.schmonz.voodooinputmavericks*.plist \
-        "/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle" \
-        /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
-        /usr/local/libexec/mt2_bluetooth_linkstated \
-        /usr/local/lib/voodooinputmavericks /usr/local/{var,share}/voodooinputmavericks \
-        /var/db/voodooinputmavericks-boot.state
-
-(The prefpane companion is the SIMBL plugin removed above; SIMBL itself is a separate install you can keep.)
+10.9's Trackpad prefpane needs a SIMBL plugin (included) to recognize
+devices connected via our VoodooInput terminal.
 
 ## Develop
 
-    cmake --preset native                                  # configure (once; use `cross` to cross-build)
-    cmake --build build-native                             # tools + kext
-    cmake --build build-native --target kext               # just the kernel extension
-    ctest --test-dir build-native --output-on-failure      # unit + shell + bats tests
-    cmake --build build-native --target reload             # hot-reload the running kext
+```sh
+cmake --preset native                                  # configure (once; use `cross` to cross-build)
+cmake --build build-native                             # tools + kext
+cmake --build build-native --target kext               # just the kernel extension
+ctest --test-dir build-native --output-on-failure      # unit + shell + bats tests
+cmake --build build-native --target reload             # hot-reload the running kext
+cmake --build build-native --target pkg
+cmake --build build-native --target install-pkg
+```
+
+## Uninstall
+
+```sh
+sudo launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.plist
+launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist
+sudo kextunload -b com.schmonz.VoodooInputMavericks
+sudo rm -rf /Library/LaunchDaemons/com.schmonz.voodooinputmavericks*.plist \
+    /Library/LaunchAgents/com.schmonz.voodooinputmavericks*.plist \
+    "/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle" \
+    /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
+    /usr/local/libexec/mt2_bluetooth_linkstated \
+    /usr/local/lib/voodooinputmavericks /usr/local/{var,share}/voodooinputmavericks \
+    /var/db/voodooinputmavericks-boot.state
+```
 
 ## Layout
 
