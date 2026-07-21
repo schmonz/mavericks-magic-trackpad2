@@ -26,12 +26,12 @@ launchctl load -w "$PLIST"
 # (openConnection -> kBluetoothHCIErrorACLConnectionAlreadyExists 0x0b); the bounce forces a full
 # re-establish + re-enable. Best-effort (paired CoD-0x594 only, no-ops otherwise). Backgrounded +
 # settle so a powered-off device's page timeout can't stall the installer.
-( sleep 3; /usr/local/libexec/mt2_bluetooth_linkstated --bounce-once >/dev/null 2>&1 ) &
+( sleep 3; /usr/local/libexec/mt2_linkstated --bounce-once >/dev/null 2>&1 ) &
 
 # USB->BT handoff daemon: wakes deep-idle Bluetooth on cable unplug (no click). Root LaunchDaemon,
 # runs regardless of GUI session. Best-effort — a UX feature, never fail the install on it.
-HANDOFF=/Library/LaunchDaemons/com.schmonz.voodooinputmavericks.bluetoothlinkstated.plist
-chmod +x /usr/local/libexec/mt2_bluetooth_linkstated 2>/dev/null || true
+HANDOFF=/Library/LaunchDaemons/com.schmonz.voodooinputmavericks.linkstated.plist
+chmod +x /usr/local/libexec/mt2_linkstated 2>/dev/null || true
 launchctl unload "$HANDOFF" 2>/dev/null || true
 launchctl load -w "$HANDOFF" 2>/dev/null || true
 

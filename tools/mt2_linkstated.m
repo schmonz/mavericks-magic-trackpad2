@@ -1,31 +1,39 @@
-/* mt2_bluetooth_linkstated — the Magic Trackpad 2's Bluetooth link-state daemon. A resident root
- * LaunchDaemon that keeps the paired MT2's Bluetooth link in the state the CURRENT transport calls for.
- * The MT2 is single-transport ([[mt2-single-transport-at-a-time]]): on the cable it's USB, off the cable
- * it's BT — never both. This daemon reads that truth from the shared presence SM (mavericks_presence via
- * the observer, the same one the prefpane uses) and acts on the BT link — four jobs:
+/* mt2_linkstated — the Magic Trackpad 2's transport link-state coordinator. A resident root LaunchDaemon
+ * that keeps the device's link in the state the CURRENT transport calls for. The MT2 is one device with
+ * two transports but TWO IOKit driver instances (MT2USBReader / MT2BTReader) — so a transport switch is a
+ * DEVICE switch, and needs re-init the reader-swap alone doesn't do. This daemon reads transport truth from
+ * the shared presence SM (mavericks_presence via the observer, the same one the prefpane uses) and reacts
+ * to the presence edges — five jobs (mostly BT actions, plus the USB gesture-open):
  *
- *   RECONNECT (page)  — while we're NOT on USB and the paired MT2 is BT-disconnected, a 15s keeper timer
+ *   RECONNECT (page BT) — while we're NOT on USB and the paired MT2 is BT-disconnected, a 15s keeper timer
  *                       `openConnection`s it: the login-screen wake at boot + "power it on an hour later
  *                       and it just connects". openConnection wakes even a deep-idle radio with no tap
  *                       (proven 2026-07-04; same primitive as tools/mt2_bt_bounce). GATED OFF on USB — a
  *                       page that wins mid-USB flips the single-transport device off its own cable and
  *                       kills the USB stream (the periodic cursor stalls; see mt2_reconnect_policy.h).
- *   HANDOFF (page)    — on the USB-removal edge, page BT at once so unplugging the cable "just keeps
+ *   HANDOFF (page BT) — on the USB-removal edge, page BT at once so unplugging the cable "just keeps
  *                       working" with no tap. ASYMMETRIC BY DESIGN: only USB->BT needs help; BT->USB
  *                       (plug in) is smooth and the device handles it — we add nothing there.
- *   YIELD (close)     — on the USB-appear edge, close any BT link so we never hold the device off the
+ *   YIELD (close BT)  — on the USB-appear edge, close any BT link so we never hold the device off the
  *                       cable — covers the TOCTOU where the cable goes in during a ~5s page.
- *   QUIESCE (stop)    — on restart/power-off, cancel the keeper + drain the paging queue so the BT
+ *   GESTURE-KICK (hidd) — on the USB-appear edge, `killall hidd` so a fresh hidd opens the frames client
+ *                       (AppleMultitouchDeviceUserClient) for the just-appeared USB AMD. Without it a
+ *                       MID-SESSION BT->USB switch has cursor+gestures DEAD (only kernel 2-finger click
+ *                       works) — the whole multitouch path needs the frames client open, and only a fresh
+ *                       USB BOOT gets a kick (from voodooinputmavericks-run); the switch never re-kicked.
+ *                       Root-caused + fixed 2026-07-21. (The observer drains initial iterators without
+ *                       firing, so this fires on a LIVE USB appear/switch, NOT at boot — no double-kick.)
+ *   QUIESCE (stop BT) — on restart/power-off, cancel the keeper + drain the paging queue so the BT
  *                       controller is idle for the OS teardown AND the next boot's EFI Bluetooth init.
  *                       Without it a warm restart inherited a mid-page controller and HUNG before video
  *                       (EFIBluetoothDelay makes firmware wait on BT); root-caused + fixed 2026-07-20.
  *
  * All BT action targets CoD-0x594 paired devices only (mt2_cod_match.h), so a co-connected non-MT2 Apple
- * device is never touched. Root LaunchDaemon (dist/com.schmonz.voodooinputmavericks.bluetoothlinkstated.plist)
+ * device is never touched. Root LaunchDaemon (dist/com.schmonz.voodooinputmavericks.linkstated.plist)
  * so it runs regardless of GUI session.
  *
  *   clang -fobjc-arc -mmacosx-version-min=10.9 -framework Foundation -framework IOBluetooth \
- *         -framework IOKit -o mt2_bluetooth_linkstated tools/mt2_bluetooth_linkstated.m
+ *         -framework IOKit -o mt2_linkstated tools/mt2_linkstated.m
  */
 #import <Foundation/Foundation.h>
 #import <IOBluetooth/IOBluetooth.h>
@@ -78,7 +86,7 @@ static void reconnect_matched(const char *why) {
         for (IOBluetoothDevice *d in devs) {
             if (!mt2_reconnect_should_page([d getClassOfDevice], [d isConnected], usb_present)) continue;
             IOReturn ro = [d openConnection];   /* synchronous baseband re-establish (blocks ~5s) */
-            NSLog(@"mt2_bluetooth_linkstated: [%s] openConnection %@ -> 0x%08x", why, [d addressString], ro);
+            NSLog(@"mt2_linkstated: [%s] openConnection %@ -> 0x%08x", why, [d addressString], ro);
         }
     }
 }
@@ -100,7 +108,7 @@ static void disconnect_matched(const char *why) {
             if (!mt2_cod_is_mt2([d getClassOfDevice])) continue;
             if (![d isConnected]) continue;
             IOReturn rc = [d closeConnection];
-            NSLog(@"mt2_bluetooth_linkstated: [%s] closeConnection %@ -> 0x%08x", why, [d addressString], rc);
+            NSLog(@"mt2_linkstated: [%s] closeConnection %@ -> 0x%08x", why, [d addressString], rc);
         }
     }
 }
@@ -121,12 +129,12 @@ static void bounce_bt_mt2(void) {
             n++;
             if ([d isConnected]) {
                 IOReturn rc = [d closeConnection];       /* synchronous: returns after the link is down */
-                NSLog(@"mt2_bluetooth_linkstated: bounce closeConnection %@ -> 0x%08x", [d addressString], rc);
+                NSLog(@"mt2_linkstated: bounce closeConnection %@ -> 0x%08x", [d addressString], rc);
             }
             IOReturn ro = [d openConnection];            /* re-open -> re-run HID matching + our enable */
-            NSLog(@"mt2_bluetooth_linkstated: bounce openConnection %@ -> 0x%08x", [d addressString], ro);
+            NSLog(@"mt2_linkstated: bounce openConnection %@ -> 0x%08x", [d addressString], ro);
         }
-        if (!n) NSLog(@"mt2_bluetooth_linkstated: bounce — no paired CoD-0x594 MT2 found");
+        if (!n) NSLog(@"mt2_linkstated: bounce — no paired CoD-0x594 MT2 found");
     }
 }
 
@@ -135,15 +143,38 @@ static void bounce_bt_mt2(void) {
  * This is the exact trigger the old ad-hoc com_schmonz_MT2USBReader-terminate notifier fired on;
  * the canonical AppleUSBMultitouchDriver terminate the observer watches fires within ~0.04 ms of it
  * (measured on-device 2026-07-09). ASYMMETRIC BY DESIGN preserved: only USB_REMOVE wakes BT. */
+/* USB gesture-open: kick hidd so a fresh instance opens the frames client
+ * (AppleMultitouchDeviceUserClient) for the just-appeared USB AMD. Needed on a MID-SESSION BT->USB switch:
+ * a fresh USB boot gets this kick from voodooinputmavericks-run, but the switch never re-kicked, leaving
+ * cursor AND gestures dead (only kernel 2-finger click works) because the whole USB multitouch path needs
+ * the frames client open (proven on-device 2026-07-21). killall is blunt (one momentary all-HID hiccup)
+ * but it's the only thing that reliably opens the client for an AMD that appeared into a running hidd
+ * (docs/mt-stack/open-questions.md). Skipped during shutdown quiesce. */
+static void kick_hidd(const char *why) {
+    if (g_terminating) return;
+    @try {
+        [NSTask launchedTaskWithLaunchPath:@"/usr/bin/killall" arguments:@[@"hidd"]];
+        NSLog(@"mt2_linkstated: [%s] kicked hidd to open the frames client for the USB AMD", why);
+    } @catch (NSException *e) {
+        NSLog(@"mt2_linkstated: [%s] hidd kick skipped: %@", why, e);
+    }
+}
+
 static void on_presence(presence_action_t action, presence_event_t event, void *ctx) {
     (void)action; (void)ctx;
     if (event == PRESENCE_EV_USB_REMOVE) reconnect_matched_async("usb-remove");   /* unplug -> wake BT */
     /* USB just came up (cable in, from BT-idle OR from off). The MT2 is single-transport, so we must hold
-     * NO BT link. This closes the TOCTOU the point-in-time usb_present check can't: if the cable went in
-     * DURING a ~5s openConnection, that page may have opened/attempted a BT link. Enqueue the yield on the
-     * SAME serial paging queue so it runs AFTER any in-flight page and tears down whatever it left. (The
-     * device's own "cable drops BT" is the ultimate backstop; this just makes us stop fighting it promptly.) */
-    else if (event == PRESENCE_EV_USB_APPEAR) dispatch_async(reconnect_queue(), ^{ disconnect_matched("usb-appeared"); });
+     * NO BT link. YIELD closes the TOCTOU the point-in-time usb_present check can't: if the cable went in
+     * DURING a ~5s openConnection, that page may have opened/attempted a BT link. Enqueue it on the SAME
+     * serial paging queue so it runs AFTER any in-flight page. THEN GESTURE-KICK: let the USB AMD register
+     * (reader->mux->shell->AMD is ~sub-second), then kick hidd so it opens the frames client — restores
+     * cursor+gestures on a mid-session BT->USB switch. The observer drained initial iterators, so this
+     * fires on a LIVE appear/switch, never at boot (no double-kick with the wrapper's boot kick). */
+    else if (event == PRESENCE_EV_USB_APPEAR) {
+        dispatch_async(reconnect_queue(), ^{ disconnect_matched("usb-appeared"); });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)2 * NSEC_PER_SEC),
+                       dispatch_get_main_queue(), ^{ kick_hidd("usb-appeared"); });
+    }
 }
 
 /* Quiesce the keeper for a power-off/restart: stop new pages (cancel the timer + latch g_terminating) and
@@ -156,7 +187,7 @@ static void quiesce_for_shutdown(const char *why) {
     g_terminating = 1;
     if (g_reconnect_timer) dispatch_source_cancel(g_reconnect_timer);
     dispatch_sync(reconnect_queue(), ^{});               /* wait out any in-flight page (~5s max) */
-    NSLog(@"mt2_bluetooth_linkstated: quiesced BT for %s — keeper stopped, controller left idle for warm restart", why);
+    NSLog(@"mt2_linkstated: quiesced BT for %s — keeper stopped, controller left idle for warm restart", why);
 }
 
 /* System power callback (IORegisterForSystemPower). The MT2 box has EFIBluetoothDelay set, so firmware
@@ -209,7 +240,7 @@ int main(int argc, const char *argv[]) {
          * observer drains its initial iterators without firing, so no spurious wake at startup just
          * because USB happens to be plugged in now. */
         g_obs = presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
-        if (!g_obs) { NSLog(@"mt2_bluetooth_linkstated: presence_observer_create failed"); return 1; }
+        if (!g_obs) { NSLog(@"mt2_linkstated: presence_observer_create failed"); return 1; }
         /* The observer drains its initial iterators WITHOUT firing, so an already-present USB reader at
          * launch produces no USB_APPEAR edge -> the SM would sit at PRESENCE_NONE and the keeper would
          * page BT off USB. Reconcile once against live truth so the SM knows we're on USB from the start. */
@@ -235,7 +266,7 @@ int main(int argc, const char *argv[]) {
         if (g_pm_root != MACH_PORT_NULL && pmPort) {
             CFRunLoopAddSource(CFRunLoopGetCurrent(), IONotificationPortGetRunLoopSource(pmPort), kCFRunLoopCommonModes);
         } else {
-            NSLog(@"mt2_bluetooth_linkstated: WARNING IORegisterForSystemPower failed — warm-restart BT quiesce unavailable");
+            NSLog(@"mt2_linkstated: WARNING IORegisterForSystemPower failed — warm-restart BT quiesce unavailable");
         }
 
         /* SIGTERM (launchctl unload + the shutdown daemon-reap): quiesce then stop the runloop for a clean
@@ -245,7 +276,7 @@ int main(int argc, const char *argv[]) {
         dispatch_source_set_event_handler(termSrc, ^{ quiesce_for_shutdown("sigterm"); CFRunLoopStop(CFRunLoopGetCurrent()); });
         dispatch_resume(termSrc);
 
-        NSLog(@"mt2_bluetooth_linkstated: armed — %ds reconnect keeper + USB-removal wake + shutdown quiesce", RECONNECT_CADENCE_SEC);
+        NSLog(@"mt2_linkstated: armed — %ds reconnect keeper + USB handoff/yield/hidd-kick + shutdown quiesce", RECONNECT_CADENCE_SEC);
         CFRunLoopRun();
     }
     return 0;

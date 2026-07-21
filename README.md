@@ -56,7 +56,7 @@ sudo rm -rf /Library/LaunchDaemons/com.schmonz.voodooinputmavericks*.plist \
     /Library/LaunchAgents/com.schmonz.voodooinputmavericks*.plist \
     "/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle" \
     /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
-    /usr/local/libexec/mt2_bluetooth_linkstated \
+    /usr/local/libexec/mt2_linkstated \
     /usr/local/lib/voodooinputmavericks /usr/local/{var,share}/voodooinputmavericks \
     /var/db/voodooinputmavericks-boot.state
 ```

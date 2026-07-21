@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Root LaunchDaemon (not a per-user Agent): the MT2's transport link-state coordinator -- keeps the
+         device's link in sync with the current transport (reconnect keeper, USB-removal handoff,
+         USB-appear yield, USB-appear hidd gesture-kick, shutdown quiesce; see the mt2_linkstated.m header).
+         Must be a Daemon so it runs regardless of GUI session; needs root for IOBluetooth openConnection
+         outside an Aqua session, and for killall hidd. -->
+    <key>Label</key>
+    <string>com.schmonz.voodooinputmavericks.linkstated</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/mt2_linkstated</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
