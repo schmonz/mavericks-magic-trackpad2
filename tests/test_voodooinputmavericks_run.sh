@@ -56,7 +56,7 @@ hv "USB=1 nub=1 -> healthy"    healthy    0 1 1
 hv "nub=0 BT=2 -> incomplete"  incomplete 2 0 0
 
 # Recovery loop: fake ioclasscount returns INCOMPLETE (BT=1) on the first query then HEALTHY (BT=2),
-# proving recover_full retries (unload/reload) and converges. kext ops + sleep are stubbed/zeroed.
+# proving recover_full retries (bounce BT close->open) and converges. bounce + kext ops + sleep stubbed.
 rec="$TMP/rec"; mkdir -p "$rec"
 cat > "$rec/ioclasscount" <<EOF
 #!/bin/sh
@@ -72,8 +72,8 @@ chmod +x "$rec/ioclasscount"
 printf '#!/bin/sh\nexit 0\n' > "$rec/kextload";   chmod +x "$rec/kextload"
 printf '#!/bin/sh\nexit 0\n' > "$rec/kextunload"; chmod +x "$rec/kextunload"
 rec_out="$(MT2D_STATE_FILE="$rec/state" MT2D_IOCLASSCOUNT="$rec/ioclasscount" \
-    MT2D_KEXTLOAD="$rec/kextload" MT2D_KEXTUNLOAD="$rec/kextunload" \
-    MT2D_RECONNECT_WAIT=0 MT2D_HEALTHY_DELAY=0 MT2D_RECOVER_TRIES=3 \
+    MT2D_KEXTLOAD="$rec/kextload" MT2D_KEXTUNLOAD="$rec/kextunload" MT2D_BOUNCE=: \
+    MT2D_HEALTHY_DELAY=0 MT2D_RECOVER_TRIES=3 \
     "$WRAPPER" --recover 2>&1)"
 if echo "$rec_out" | grep -q "recovery succeeded on attempt 2"; then
     echo "PASS: recover_full retries (BT=1->2) then converges to healthy"

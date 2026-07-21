@@ -26,7 +26,6 @@ HEALTHY_DELAY="${MT2D_HEALTHY_DELAY:-20}"
 IOCLASSCOUNT="${MT2D_IOCLASSCOUNT:-ioclasscount}"
 KEXTLOAD="${MT2D_KEXTLOAD:-kextload}"
 KEXTUNLOAD="${MT2D_KEXTUNLOAD:-kextunload}"
-RECONNECT_WAIT="${MT2D_RECONNECT_WAIT:-8}"
 RECOVER_TRIES="${MT2D_RECOVER_TRIES:-3}"
 # Baseband bounce (close->open) that forces a connected BT MT2 to re-open BOTH L2CAP channels so our
 # reader wins them (BT=2). Overridable so the unit test can stub it. Runs at the session-takeover, where
@@ -43,17 +42,19 @@ HIDD_KICK="${MT2D_HIDD_KICK:-killall hidd}"
 
 log() { echo "[voodooinputmavericks-run $(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-# recover_full: on a half-open attach (BT<2), exploit the load-after-connect lever -- unload our
-# kext so IOBluetoothHIDDriver re-attaches and opens BOTH L2CAP channels generically, then reload
-# (binding already-open channels is the harmless ordering -> BT=2). Bounded retries; logs every
-# step; backstop leaves generic HID (a cursor, never no-cursor).
+# recover_full: on a half-open attach (BT<2) the BT MT2 came up offering only the CONTROL channel
+# (PSM 17); the INTERRUPT channel (PSM 19) is device-initiated and won't re-open on its own, so our
+# reader is stuck data-less. A baseband BOUNCE (close->open) makes the device re-offer BOTH channels so
+# our (still-loaded) reader binds them -> BT=2. PROVEN reliable warm 2026-07-21 — a plain disconnect
+# reconnects full every time — whereas the OLD unload/reload could not force PSM 19 and reliably failed
+# the cold-boot takeover. Retry: the HEALTHY_DELAY between tries rides out a still-cold-starting BT stack
+# (the first bounce can land before blued/the controller are ready). On exhaustion, unload so Apple's
+# generic HID still gives at least a basic cursor (never no-cursor).
 recover_full() {
     i=1
     while [ "$i" -le "$RECOVER_TRIES" ]; do
-        log "recovery attempt $i/$RECOVER_TRIES: unload -> let generic HID reconnect -> reload"
-        "$KEXTUNLOAD" -b com.schmonz.VoodooInputMavericks 2>/dev/null || true
-        sleep "$RECONNECT_WAIT"
-        "$KEXTLOAD" "$KEXT_DIR/VoodooInputMavericks.kext" 2>/dev/null || true
+        log "recovery attempt $i/$RECOVER_TRIES: bounce BT (close->open) to re-offer both L2CAP channels"
+        $BOUNCE >/dev/null 2>&1 || true
         sleep "$HEALTHY_DELAY"
         btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
         usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
