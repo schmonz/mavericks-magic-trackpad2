@@ -167,12 +167,22 @@ static void on_presence(presence_action_t action, presence_event_t event, void *
      * NO BT link. YIELD closes the TOCTOU the point-in-time usb_present check can't: if the cable went in
      * DURING a ~5s openConnection, that page may have opened/attempted a BT link. Enqueue it on the SAME
      * serial paging queue so it runs AFTER any in-flight page. THEN GESTURE-KICK: let the USB AMD register
-     * (reader->mux->shell->AMD is ~sub-second), then kick hidd so it opens the frames client — restores
-     * cursor+gestures on a mid-session BT->USB switch. The observer drained initial iterators, so this
-     * fires on a LIVE appear/switch, never at boot (no double-kick with the wrapper's boot kick). */
+     * (reader->mux->shell->AMD is ~sub-second), then kick hidd so it opens the frames client.
+     *
+     * This is now the SOLE gesture-kicker. It fires on a LIVE appear the observer didn't drain as an
+     * initial iterator — both a mid-session BT->USB switch AND a cold USB boot (there the wrapper's
+     * mt2_reenumerate reclaim detaches/reattaches interface 1, which is a fresh appear). The wrapper no
+     * longer kicks: two kickers made two hidd kills ~1s apart -> the second cut off the first respawn ->
+     * a ~9s all-HID freeze (measured 2026-07-21). A won-on-load boot has USB present when we arm, so it's
+     * drained (no appear, no kick) — correct, since won-on-load means gestures already work.
+     *
+     * KICK_DELAY: margin for the AMD to finish registering before we kick. On-device the AMD's
+     * "started + registered" lands sub-second after the appear (measured 2026-07-21), so 1s clears it
+     * with margin. Was 2s; trimmed with the wrapper's settle as pure slack over the observed timing. */
     else if (event == PRESENCE_EV_USB_APPEAR) {
+        static const int64_t KICK_DELAY_SEC = 1;   /* AMD registers sub-second; 1s = margin, not padding */
         dispatch_async(reconnect_queue(), ^{ disconnect_matched("usb-appeared"); });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)2 * NSEC_PER_SEC),
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, KICK_DELAY_SEC * NSEC_PER_SEC),
                        dispatch_get_main_queue(), ^{ kick_hidd("usb-appeared"); });
     }
 }

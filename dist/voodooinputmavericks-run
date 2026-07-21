@@ -151,14 +151,6 @@ log "attempting full-gesture mode"
 # BT + USB reader personalities bind the device on their own.
 "$KEXTLOAD" "$KEXT_DIR/VoodooInputMavericks.kext" 2>/dev/null || true
 
-# Force a clean BT takeover. At the session-load we evict Apple's generic HID mid-connection, and our
-# reader tends to win only the CONTROL channel (BT=1, half-open — the device-initiated interrupt channel
-# PSM 19 doesn't re-open for us). A baseband bounce (close->open) makes the device re-open BOTH channels
-# so our reader binds both (BT=2). Proven on-device 2026-07-19: recover_full's unload/wait/reload reliably
-# FAILS the cold session-takeover; a plain bounce fixes it. No-op for USB / when no BT MT2 is connected
-# (mt2_linkstated self-matches CoD-0x594 paired devices). Non-fatal.
-$BOUNCE >/dev/null 2>&1 || true
-
 # NOTE: kext diagnostics (debug.mt2_log) default OFF; the screensaver-capture boot-enable was removed
 # once that investigation concluded (not our bug). Enable on demand: `sudo sysctl debug.mt2_log=1`
 # (milestones / BT conn-trace) or `=2` (verbose per-frame, both transports). See mt2_diag / mt2_log.
@@ -168,24 +160,55 @@ $BOUNCE >/dev/null 2>&1 || true
 # Rename in the Bluetooth pane (the injected osax mirrors that onto the device — see docs/mt-stack
 # "Rename routing + the mirror"). Nothing writes the name unrequested.
 
-# Conditional re-enumerate. Let IOKit matching settle, then check whether our USB
-# reader won interface 1. At cold boot the cabled MT2 is claimed by IOUSBHIDDriver
-# before this kext loads, and kextload does NOT preempt an already-matched nub, so we
-# force a re-enumeration to re-run matching (our 500000 probe score then wins). Only
-# when needed:
-#   USB reader bound (won on load)        -> skip, no disruption
-#   USB reader not bound, USB MT2 present  -> re-enumerate to reclaim interface 1
-#   USB reader not bound, no USB MT2       -> mt2_reenumerate exits nonzero (no device,
-#                                             e.g. Bluetooth-only boot) -> nothing to do
-sleep 5
-if [ "$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')" = "0" ]; then
-    if "$SBIN/mt2_reenumerate" >/dev/null 2>&1; then
-        log "USB reader lost interface 1 on load; re-enumerated to reclaim it"
-    else
-        log "USB reader not bound and no USB MT2 present (Bluetooth-only boot); no re-enumerate needed"
-    fi
-else
+# Determine transport, THEN do only that transport's takeover work. The MT2 drives ONE transport at a
+# time (cabling USB drops BT), so a USB boot must NOT do BT work and vice versa.
+#
+# Conditional re-enumerate. Let IOKit matching settle, then check whether our USB reader won interface
+# 1. At cold boot the cabled MT2 is claimed by IOUSBHIDDriver before this kext loads, and kextload does
+# NOT preempt an already-matched nub, so we force a re-enumeration to re-run matching (our 500000 probe
+# score then wins). mt2_reenumerate succeeds iff a USB MT2 is present, so it doubles as our "is this a
+# USB boot?" probe:
+#   USB reader bound (won on load)        -> on USB, skip re-enumerate
+#   USB reader not bound, USB MT2 present  -> on USB, re-enumerate to reclaim interface 1
+#   USB reader not bound, no USB MT2       -> NOT USB (Bluetooth-only or no device)
+# Settle: wait only until our kext is actually registered, then decide — a CONDITION, not a fixed
+# sleep. The nub (MavericksVoodooInputHost, IOResources-matched) instantiates as soon as kextload
+# processes our personalities into the matching catalog; once it's present, the MT2USB reader
+# personality is in the catalog too, so the reclaim's re-match will pick our 500000 reader. kextload is
+# synchronous, so on a normal boot this passes on the first check (~0s). It only ever waits if a load
+# is unexpectedly slow, and is bounded so a failed load (nub never appears) falls through to the "nub
+# absent" health branch below rather than hanging. The won-vs-lost check is then immediately conclusive
+# (won-on-load = reader already resident from a re-trigger -> nonzero instantly; cold boot never wins ->
+# 0 -> reclaim). Replaces a fixed 5s->1s settle the timing breakdown (2026-07-21) showed was pure margin.
+settle=0
+while [ "$("$IOCLASSCOUNT" com_schmonz_MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')" = "0" ] \
+      && [ "$settle" -lt "${MT2D_SETTLE_TRIES:-25}" ]; do
+    settle=$((settle + 1)); sleep 0.2
+done
+on_usb=0
+if [ "$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')" != "0" ]; then
     log "USB reader won interface 1 on load; skipping re-enumerate"
+    on_usb=1
+elif "$SBIN/mt2_reenumerate" >/dev/null 2>&1; then
+    log "USB reader lost interface 1 on load; re-enumerated to reclaim it"
+    on_usb=1
+else
+    log "USB reader not bound and no USB MT2 present (Bluetooth-only boot); no re-enumerate needed"
+fi
+
+# BT baseband bounce — ONLY on a non-USB boot. At the BT session-load we evict Apple's generic HID
+# mid-connection and our reader tends to win only the CONTROL channel (BT=1, half-open — the device-
+# initiated interrupt channel PSM 19 doesn't re-open for us); a bounce (close->open) makes the device
+# re-open BOTH channels so our reader binds both (BT=2). Proven on-device 2026-07-19.
+#
+# SKIP it on USB: the MT2 is single-transport, so its BT link is DOWN while cabled — the bounce's
+# openConnection just blocks ~10.5s timing out against a device that can't answer over BT (measured
+# 2026-07-21), adding ~10.5s of dead time to every USB boot for zero benefit. (The old code ran this
+# unconditionally and mislabeled it a "no-op for USB".)
+if [ "$on_usb" = "0" ]; then
+    $BOUNCE >/dev/null 2>&1 || true
+else
+    log "on USB -> skipping BT bounce (single-transport; BT link is down while cabled)"
 fi
 
 # Anti-brick-loop gate, INLINE (no background subshell, which doesn't survive in
@@ -206,13 +229,16 @@ cnt="$("$IOCLASSCOUNT" com_schmonz_MavericksVoodooInputHost 2>/dev/null | awk '{
 btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
 usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
 log "transport readers bound: BT=$btn USB=$usbn (gesture nub=$cnt)"
-# USB gesture-open: kick hidd so a fresh instance opens our just-appeared USB AMD's frames client.
-# USB only — BT gestures are already engaged by the baseband bounce above; a BT-only or no-device boot
-# must NOT restart hidd. hidd respawns instantly via launchd (one momentary all-HID hiccup, at bring-up).
-if [ "${usbn:-0}" != "0" ]; then
-    $HIDD_KICK >/dev/null 2>&1 || true
-    log "USB reader bound; kicked hidd to open the multitouch frames client (gestures)"
-fi
+# USB gesture-open is now owned SOLELY by mt2_linkstated, NOT the wrapper. The daemon arms its
+# presence observers early in boot (measured 2026-07-21: armed 45s before the reclaim), so the USB
+# re-enumeration mt2_reenumerate does above is a LIVE USB-appear to it -> it kicks hidd at appear+2s
+# (kick_hidd, tools/mt2_linkstated.m), opening the AMD frames client -> gestures. The wrapper ALSO
+# kicking here made TWO kills ~1s apart; the second interrupts the first hidd respawn -> a ~9s all-HID
+# freeze ("cursor stuck", measured 2026-07-21). One owner = one kick = no collision. (Won-on-load boots:
+# the device is present when the daemon arms, drained as an initial iterator, so the daemon does NOT
+# kick — but a won-on-load boot means our reader already holds the interrupt pipe and hidd enumerated it
+# at its own startup, so no kick is needed there either. If this experiment shows a won-on-load boot
+# lacks gestures, restore a wrapper kick GATED to the won-on-load branch only.)
 echo ok > "$STATE_FILE" 2>/dev/null || true            # survived load+settle => brick-guard satisfied
 if [ "$cnt" = "0" ]; then
     log "WARNING: VoodooInputMavericks nub absent after load — kext load failed (no panic; will retry next boot)"
