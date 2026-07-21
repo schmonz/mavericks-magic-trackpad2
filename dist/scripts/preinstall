@@ -38,4 +38,8 @@ fi
 rm -f /Library/LaunchAgents/com.schmonz.voodooinputmavericks.panewatch.plist 2>/dev/null || true
 rm -rf /Library/ScriptingAdditions/VoodooInputMavericksPane.osax 2>/dev/null || true
 rm -f /usr/local/libexec/voodooinputmavericks_pane_watch 2>/dev/null || true
+# Same hazard for the SIMBL delivery: before the rename the pane bundle was MT2PaneRefresh.bundle. With
+# the single-load guard gone, a stale pre-rename bundle would co-load alongside the new
+# VoodooInputMavericksPane.bundle and DOUBLE-SWIZZLE the pane (broken UI / wrong icon). Purge the old name.
+rm -rf "/Library/Application Support/SIMBL/Plugins/MT2PaneRefresh.bundle" 2>/dev/null || true
 exit 0
