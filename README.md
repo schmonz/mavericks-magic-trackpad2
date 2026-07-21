@@ -8,7 +8,7 @@ Magic Trackpad 2 driver for Mac OS X 10.9 Mavericks.
 laptop trackpads (USB) and the original Magic Trackpad (Bluetooth).
 Our job:
 
-1. Speak the recognized wire formats
+1. Speak MT1 wire format
 2. Present a sensible API
 
 The programming interface is nearly verbatim from
@@ -79,8 +79,10 @@ the shipping product.
   and the `MavericksVoodooInputHost` nub (an always-present `IOResources` sentinel for the boot brick-guard).
 - `third_party/VoodooInput/` — the vendored acidanthera VoodooInput ABI headers (verbatim); the interface
   our framework is built against and meant to merge into.
-- `tools/` — `mt2_reenumerate` ships, as does the Trackpad-pane companion (`voodooinputmavericks_prefpane/`,
-  delivered as a SIMBL plugin). `multitouch_*` are generic
+- `tools/` — shipped: `mt2_linkstated` (the resident transport link-state coordinator daemon —
+  reconnect / USB-handoff / yield / hidd-kick / shutdown-quiesce) and `mt2_reenumerate` (a boot-time
+  re-enumerate to reclaim USB interface 1 when the reader loses it to `IOUSBHIDDriver`), plus the
+  Trackpad-pane companion (`voodooinputmavericks_prefpane/`, a SIMBL plugin). `multitouch_*` are generic
   MultitouchSupport probes; `tools/re` is the RE toolkit; `tools/spikes/` holds one-off probes.
 - `tests/` — host unit + shell tests.
 - `dist/` — the LaunchDaemon/Agent plists, the `voodooinputmavericks-run` boot wrapper, installer scripts.
