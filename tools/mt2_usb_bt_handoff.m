@@ -73,7 +73,7 @@ static void reconnect_matched(const char *why) {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         for (IOBluetoothDevice *d in devs) {
             if (!mt2_reconnect_should_page([d getClassOfDevice], [d isConnected], usb_present)) continue;
-            IOReturn ro = [d openConnection];   /* synchronous baseband re-establish */
+            IOReturn ro = [d openConnection];   /* synchronous baseband re-establish (blocks ~5s) */
             NSLog(@"mt2_usb_bt_handoff: [%s] openConnection %@ -> 0x%08x", why, [d addressString], ro);
         }
     }
@@ -84,9 +84,12 @@ static void reconnect_matched_async(const char *why) {
     dispatch_async(reconnect_queue(), ^{ reconnect_matched(why); });
 }
 
-/* Test/debug only: drop the link on our matched device(s) WITHOUT re-opening — leaves the device
- * powered but disconnected, so --reconnect-once and the timer can be exercised deterministically. */
+/* Drop the BT link on our matched device(s) WITHOUT re-opening. Two uses: the --disconnect-once CLI
+ * (exercise the keeper deterministically) and the USB-appear yield (close any BT link the single-
+ * transport device must not hold once it's on the cable). Idempotent: skips non-matching + already-
+ * disconnected devices. Never touches BT during shutdown quiesce. */
 static void disconnect_matched(const char *why) {
+    if (g_terminating) return;
     @autoreleasepool {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         for (IOBluetoothDevice *d in devs) {
@@ -130,7 +133,13 @@ static void bounce_bt_mt2(void) {
  * (measured on-device 2026-07-09). ASYMMETRIC BY DESIGN preserved: only USB_REMOVE wakes BT. */
 static void on_presence(presence_action_t action, presence_event_t event, void *ctx) {
     (void)action; (void)ctx;
-    if (event == PRESENCE_EV_USB_REMOVE) reconnect_matched_async("usb-remove");
+    if (event == PRESENCE_EV_USB_REMOVE) reconnect_matched_async("usb-remove");   /* unplug -> wake BT */
+    /* USB just came up (cable in, from BT-idle OR from off). The MT2 is single-transport, so we must hold
+     * NO BT link. This closes the TOCTOU the point-in-time usb_present check can't: if the cable went in
+     * DURING a ~5s openConnection, that page may have opened/attempted a BT link. Enqueue the yield on the
+     * SAME serial paging queue so it runs AFTER any in-flight page and tears down whatever it left. (The
+     * device's own "cable drops BT" is the ultimate backstop; this just makes us stop fighting it promptly.) */
+    else if (event == PRESENCE_EV_USB_APPEAR) dispatch_async(reconnect_queue(), ^{ disconnect_matched("usb-appeared"); });
 }
 
 /* Quiesce the keeper for a power-off/restart: stop new pages (cancel the timer + latch g_terminating) and
