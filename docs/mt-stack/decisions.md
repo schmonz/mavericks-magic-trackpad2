@@ -322,6 +322,29 @@ Raised while cleaning up the SIMBL-only prefpane cut. Recorded so they aren't re
   entirely. On least-disruptive: `killall hidd` is blunt (one momentary all-HID hiccup, fired once at USB
   bring-up, guarded to USB-bound-non-BT); a gentler path (fire the exact DeviceAdded notification our USB
   appearance misses) is known but unRE'd — the kick is empirically sufficient, so it stays.
+
+  **UPDATE 2026-07-21 (shipped, commit `2d0c4b6`) — three refinements from a USB-cold-boot latency dig
+  (login->gestures ~55s -> ~2s of our code; timing in `/var/log/voodooinputmavericks.log` + syslog):**
+  - **ONE kicker, not two.** The wrapper (`voodooinputmavericks-run`) USED to `killall hidd` too. But the
+    boot reclaim (`mt2_reenumerate`) detaches/reattaches interface 1 — a LIVE USB-appear that
+    `mt2_linkstated` ALSO kicks on — so both kills landed ~1s apart and the second cut off the first hidd
+    respawn: a ~9s all-HID freeze ("cursor stuck"). Fix: the wrapper no longer kicks; **`mt2_linkstated`
+    is the SOLE gesture-kicker** (fires on the reclaim's live appear at boot AND on a mid-session switch).
+    A won-on-load boot has USB present when the daemon arms → drained as an initial iterator → no kick,
+    which is CORRECT (won-on-load only happens when our reader is already resident, i.e. gestures already
+    work; a fresh cold boot always loses interface 1 to Apple and hits the reclaim path). Result: one
+    clean kill, one brief (~1s) blip.
+  - **The BT bounce is SKIPPED on a USB boot.** It was NOT a "no-op for USB" as the old comment claimed —
+    `--bounce-once` openConnection'd the MT2 over Bluetooth (down while cabled: single transport) and
+    BLOCKED ~10.5s warm / longer cold, timing out, on every USB boot. The wrapper now determines transport
+    first (the reclaim doubles as the USB-present probe) and bounces ONLY when there is no USB MT2. This
+    does NOT contradict "dropping the bounce would kill BT data" above — that holds FOR A BT BOOT, which
+    still bounces; a USB boot has no BT data to protect.
+  - **Fixed waits -> condition/floor.** The wrapper's `sleep 5` settle-before-reclaim became a bounded
+    poll on the nub (present the instant `kextload` registers our personalities) → ~0s on a normal boot;
+    the daemon's USB-appear kick delay 2s→1s (the AMD's "started + registered" lands sub-second after the
+    appear on-device, so 1s clears it with margin, verified: AMD 19:16:42, kick 19:16:43). Both were pure
+    slack over observed timing, not load-bearing.
 - **"Does upstream VoodooInput make each driver free itself from Apple's generic HID? If so, do likewise." → upstream does NOT, and "do likewise" is INAPPLICABLE.** Upstream's satellites (VoodooPS2/I2C)
   translate *non-Apple* hardware on the I2C/PS2/SMBus buses, which Apple's generic USB/BT HID drivers never
   claim — so there is nothing to evict (the VoodooInput mux binds Apple's MT HID to a *virtual* nub; see
