@@ -72,7 +72,7 @@ Or, to install exactly what a release ships (same installer scripts, SIMBL-plugi
         /Library/LaunchAgents/com.schmonz.voodooinputmavericks*.plist \
         "/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle" \
         /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
-        /usr/local/libexec/mt2_usb_bt_handoff \
+        /usr/local/libexec/mt2_bluetooth_linkstated \
         /usr/local/lib/voodooinputmavericks /usr/local/{var,share}/voodooinputmavericks \
         /var/db/voodooinputmavericks-boot.state
 

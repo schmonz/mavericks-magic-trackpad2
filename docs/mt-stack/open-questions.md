@@ -1440,7 +1440,7 @@ slot that survives boot. (Earlier "plist shortcut is DEAD — blued re-derives/d
 re-derives the slot), or write the plist slot AND defeat the re-derivation; both fight blued. (B) **[LIKELY SIMPLER,
 mission-aligned] our OWN boot-time reconnect** — a `RunAtLoad` root LaunchDaemon that, once `blued` is up at the login
 screen, does `openConnection` to the MT2 using its stored link key (the exact primitive `tools/mt2_bt_bounce` /
-`mt2_usb_bt_handoff` already use). This sidesteps UHE/blued's plist machinery entirely: host pages the device at boot
+`mt2_bluetooth_linkstated` already use). This sidesteps UHE/blued's plist machinery entirely: host pages the device at boot
 instead of relying on the controller's autonomous store. OPEN for (B): does a login-screen LaunchDaemon `openConnection`
 actually bring the link up pre-login, and — the separate sub-question — does our manual-start kext then DRIVE the cursor
 at the login screen (the link forming ≠ multitouch working). Next session: prototype (B) as a boot LaunchDaemon +
@@ -1494,11 +1494,11 @@ screen once the link is up. **BUILD PLAN for (B):** a small root LaunchDaemon �
 (generalized by our device-match predicate `mt2_cod_is_mt2`, not a hardcoded addr, to stay device-agnostic), gated on
 `hciControllerOnline` (poll for `[IOBluetoothHostController defaultController].powerState`/paired-device availability)
 with bounded retry/backoff, `RunAtLoad`+`KeepAlive`-off. Install to `/Library/LaunchDaemons`, reboot, watch at login.
-Keep it in the same family as `tools/mt2_usb_bt_handoff` (already a RunAtLoad IOBluetooth daemon).
+Keep it in the same family as `tools/mt2_bluetooth_linkstated` (already a RunAtLoad IOBluetooth daemon).
 
 **2026-07-19 — ★★ (B) BUILT + REBOOT-TESTED: the reconnect layer WORKS pre-login; the remaining gap is
 cursor-drive-at-login (a kext/reader issue, NOT reconnect).** Implemented as a resident connection-keeper in
-`tools/mt2_usb_bt_handoff.m` (idempotent `reconnect_matched()` actuator on a serial queue + a 15s `dispatch_source`
+`tools/mt2_bluetooth_linkstated.m` (idempotent `reconnect_matched()` actuator on a serial queue + a 15s `dispatch_source`
 timer for boot/login wake + periodic-while-disconnected + the existing USB-removal edge; `mt2_reconnect_policy.h`
 predicate + `tests/test_reconnect_policy.c`; `--reconnect-once`/`--disconnect-once` test hooks). Installed + on-device
 validated. **Reboot boot log (decisive):** boot 09:24:37 → daemon armed 09:24:40 (pid 108, early/pre-login) →
@@ -1540,7 +1540,7 @@ history). Rule out device-side (asleep/battery/bonded elsewhere) vs host page-sc
 
 The MT2's stored `ClassOfDevice` is `9620` = **`0x2594`**: device-class `0x594` (major 5 / minor 0x25, correct)
 **plus** the `0x2000` Limited-Discoverable service bit. Three tools compare with **exact equality** and so
-silently miss the MT2 when the service bit is set: `tools/mt2_usb_bt_handoff.m:38,60` (this is why `19:23:49`
+silently miss the MT2 when the service bit is set: `tools/mt2_bluetooth_linkstated.m:38,60` (this is why `19:23:49`
 logged "USB removed but no paired CoD-0x594 MT2 found" → USB-unplug→BT handoff currently broken),
 `tools/mt2_bt_bounce.m:34`, `tools/mt2_prefpane_refresh.c:1246`. **Fix:** mask — `(cod & 0x1FFF) == 0x594` (or
 compare only the device-class bits) instead of `== 0x594`. Small, low-risk. Passed validation on 2026-07-04
@@ -1592,7 +1592,7 @@ our 10.9 owned-stack enable is the bug. The ~14s/3.6s timers in 10.9's IOAppleBl
 HERRING — 10.9 predates native MT2 support, so its "genuine" BT-multitouch path was never a real MT2 driver. Do NOT
 conclude "device-level / accept it". Corrected dig (next session):
 1. **Reliable repro (no reboot):** the cold state must be reproduced by getting the MT2 into Apple-HID BASIC mode first
-   (`kextunload MavericksVoodooInputHost` + `mt2_usb_bt_handoff --bounce-once` → confirm `IOBluetoothHIDDriver`=1), THEN reload our
+   (`kextunload MavericksVoodooInputHost` + `mt2_bluetooth_linkstated --bounce-once` → confirm `IOBluetoothHIDDriver`=1), THEN reload our
    kext + bounce + `debug.mt2_log=2` and time from load to the first `MT2: BT shim saw report id 0x31`. (First attempt
    was confounded: after unload, Apple HID needs a bounce to actually attach; and a stale "multitouch confirmed" from a
    prior boot matched the grep — use a fresh log marker.)
@@ -1603,7 +1603,7 @@ conclude "device-level / accept it". Corrected dig (next session):
    path works locally — check whether USB multitouch is instant vs BT slow, then diff the two enable paths.
 
 **2026-07-19 — enable-lag dig, sharpened: device ACKs the enable (SUCCESS) but delays streaming; prime suspect = OUR
-re-enable spam.** Built a reliable no-reboot repro: `kextunload MavericksVoodooInputHost` → `mt2_usb_bt_handoff --bounce-once`
+re-enable spam.** Built a reliable no-reboot repro: `kextunload MavericksVoodooInputHost` → `mt2_bluetooth_linkstated --bounce-once`
 (confirm `IOBluetoothHIDDriver`=1, Apple-HID basic) → reload our kext → bounce → touch → time to `multitouch confirmed
 (first frame after N enables)`. Instrumented `controlData` (throwaway, reverted) to log control-channel replies:
 **the device answers every one of our control writes (SET_PROTOCOL / SET_IDLE / 0xF1) with `CTRL-IN len=1 [00]` = HIDP
@@ -1652,7 +1652,7 @@ PSM 17 only, interrupt PSM 19 MISSING = half-open) → `recover_full` attempts 1
 → backstop unloads our kext → Apple HID basic cursor, `multitouch confirmed` = 0 the whole time. So the ~30s first-login
 "multitouch lag" the user always felt = the half-open + failed-recovery churn, NOT the 0xF1 enable and NOT touch-timing
 (both earlier hypotheses were on the wrong path; my warm logged-in repro never hit this because the warm device already
-had PSM 19 open). **FIX (proven live in the same session):** a plain `mt2_usb_bt_handoff --bounce-once`
+had PSM 19 open). **FIX (proven live in the same session):** a plain `mt2_bluetooth_linkstated --bounce-once`
 (closeConnection→openConnection) after loading our kext got BT=2 immediately — i.e. force the device to re-open BOTH
 L2CAP channels, rather than recover_full's "unload → wait 8s → reload (no bounce)" which reliably fails at the cold
 session-takeover. NEXT: make mt2d-run's session-takeover BOUNCE (or make recover_full bounce instead of unload/wait/
@@ -1683,7 +1683,7 @@ we own, and always did:
 | Contact events | the wire (`VoodooInputEvent`) | ✅ |
 | Device **matching** (which devices we drive) | IOKit personalities + high probe score, per device | ❌ |
 | Device **metadata** (battery/charge/name) | node properties + reader read/write | ❌ |
-| Transport **orchestration** (pair/handoff) | presence observer + `mt2_usb_bt_handoff` daemon | ❌ |
+| Transport **orchestration** (pair/handoff) | presence observer + `mt2_bluetooth_linkstated` daemon | ❌ |
 | Multi-device **coexistence** | per-provider match → per-mux-instance AMD | ❌ |
 
 **Battery / name / charging — reachable, out-of-band, not stranded.** The reader (front-half, still

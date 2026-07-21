@@ -1,27 +1,31 @@
-/* mt2_usb_bt_handoff — resident BT connection-keeper for our trackpad: keeps the paired MT2 connected
- * with no physical tap. Pages it (openConnection) on three triggers: a repeating timer (login-screen
- * wake at boot + "power it on later and it just connects"), and the USB-removal edge (unplug -> BT).
- * (Rename to a broader name is a deferred follow-up, gated on the reboot acid test.) Original note:
- * no-click USB→BT handoff (the "I unplug the cable and it just keeps working" bit).
+/* mt2_bluetooth_linkstated — the Magic Trackpad 2's Bluetooth link-state daemon. A resident root
+ * LaunchDaemon that keeps the paired MT2's Bluetooth link in the state the CURRENT transport calls for.
+ * The MT2 is single-transport ([[mt2-single-transport-at-a-time]]): on the cable it's USB, off the cable
+ * it's BT — never both. This daemon reads that truth from the shared presence SM (mavericks_presence via
+ * the observer, the same one the prefpane uses) and acts on the BT link — four jobs:
  *
- * When the MT2 is on USB, cabling drops its Bluetooth link (single-transport device,
- * docs/mt-stack + [[mt2-single-transport-at-a-time]]). Unplug the cable and the BT radio is
- * deep-idle: today it takes a physical CLICK to wake, so there's a dead gap. PROVEN on-device
- * 2026-07-04: a host `-[IOBluetoothDevice openConnection]` wakes that deep-idle radio with ZERO
- * physical action — the same primitive tools/mt2_bt_bounce uses for the reload case.
+ *   RECONNECT (page)  — while we're NOT on USB and the paired MT2 is BT-disconnected, a 15s keeper timer
+ *                       `openConnection`s it: the login-screen wake at boot + "power it on an hour later
+ *                       and it just connects". openConnection wakes even a deep-idle radio with no tap
+ *                       (proven 2026-07-04; same primitive as tools/mt2_bt_bounce). GATED OFF on USB — a
+ *                       page that wins mid-USB flips the single-transport device off its own cable and
+ *                       kills the USB stream (the periodic cursor stalls; see mt2_reconnect_policy.h).
+ *   HANDOFF (page)    — on the USB-removal edge, page BT at once so unplugging the cable "just keeps
+ *                       working" with no tap. ASYMMETRIC BY DESIGN: only USB->BT needs help; BT->USB
+ *                       (plug in) is smooth and the device handles it — we add nothing there.
+ *   YIELD (close)     — on the USB-appear edge, close any BT link so we never hold the device off the
+ *                       cable — covers the TOCTOU where the cable goes in during a ~5s page.
+ *   QUIESCE (stop)    — on restart/power-off, cancel the keeper + drain the paging queue so the BT
+ *                       controller is idle for the OS teardown AND the next boot's EFI Bluetooth init.
+ *                       Without it a warm restart inherited a mid-page controller and HUNG before video
+ *                       (EFIBluetoothDelay makes firmware wait on BT); root-caused + fixed 2026-07-20.
  *
- * This daemon closes the gap: it arms the shared presence observer (src/mavericks_presence_observer.h — the
- * same one the prefpane uses) and, on the USB-removal edge (cable pulled), calls `openConnection` on
- * the paired CoD-0x594 MT2. No tap. Runs as a root LaunchDaemon so it works regardless of GUI session
- * (dist/com.schmonz.mt2usbbthandoff.plist). The observer watches the canonical AppleUSBMultitouchDriver
- * terminate, which fires within ~0.04 ms of the old com_schmonz_MT2USBReader edge (measured 2026-07-09).
- *
- * ASYMMETRIC BY DESIGN (do NOT make it symmetric): only the USB→BT (unplug) direction needs help.
- * BT→USB (plug in) is already smooth and the device handles it — we add nothing there. The
- * "ensure BT is paired on plug-in" half is a separate, un-proven enhancement, deliberately omitted.
+ * All BT action targets CoD-0x594 paired devices only (mt2_cod_match.h), so a co-connected non-MT2 Apple
+ * device is never touched. Root LaunchDaemon (dist/com.schmonz.voodooinputmavericks.bluetoothlinkstated.plist)
+ * so it runs regardless of GUI session.
  *
  *   clang -fobjc-arc -mmacosx-version-min=10.9 -framework Foundation -framework IOBluetooth \
- *         -framework IOKit -o mt2_usb_bt_handoff tools/mt2_usb_bt_handoff.m
+ *         -framework IOKit -o mt2_bluetooth_linkstated tools/mt2_bluetooth_linkstated.m
  */
 #import <Foundation/Foundation.h>
 #import <IOBluetooth/IOBluetooth.h>
@@ -74,7 +78,7 @@ static void reconnect_matched(const char *why) {
         for (IOBluetoothDevice *d in devs) {
             if (!mt2_reconnect_should_page([d getClassOfDevice], [d isConnected], usb_present)) continue;
             IOReturn ro = [d openConnection];   /* synchronous baseband re-establish (blocks ~5s) */
-            NSLog(@"mt2_usb_bt_handoff: [%s] openConnection %@ -> 0x%08x", why, [d addressString], ro);
+            NSLog(@"mt2_bluetooth_linkstated: [%s] openConnection %@ -> 0x%08x", why, [d addressString], ro);
         }
     }
 }
@@ -96,7 +100,7 @@ static void disconnect_matched(const char *why) {
             if (!mt2_cod_is_mt2([d getClassOfDevice])) continue;
             if (![d isConnected]) continue;
             IOReturn rc = [d closeConnection];
-            NSLog(@"mt2_usb_bt_handoff: [%s] closeConnection %@ -> 0x%08x", why, [d addressString], rc);
+            NSLog(@"mt2_bluetooth_linkstated: [%s] closeConnection %@ -> 0x%08x", why, [d addressString], rc);
         }
     }
 }
@@ -117,12 +121,12 @@ static void bounce_bt_mt2(void) {
             n++;
             if ([d isConnected]) {
                 IOReturn rc = [d closeConnection];       /* synchronous: returns after the link is down */
-                NSLog(@"mt2_usb_bt_handoff: bounce closeConnection %@ -> 0x%08x", [d addressString], rc);
+                NSLog(@"mt2_bluetooth_linkstated: bounce closeConnection %@ -> 0x%08x", [d addressString], rc);
             }
             IOReturn ro = [d openConnection];            /* re-open -> re-run HID matching + our enable */
-            NSLog(@"mt2_usb_bt_handoff: bounce openConnection %@ -> 0x%08x", [d addressString], ro);
+            NSLog(@"mt2_bluetooth_linkstated: bounce openConnection %@ -> 0x%08x", [d addressString], ro);
         }
-        if (!n) NSLog(@"mt2_usb_bt_handoff: bounce — no paired CoD-0x594 MT2 found");
+        if (!n) NSLog(@"mt2_bluetooth_linkstated: bounce — no paired CoD-0x594 MT2 found");
     }
 }
 
@@ -152,7 +156,7 @@ static void quiesce_for_shutdown(const char *why) {
     g_terminating = 1;
     if (g_reconnect_timer) dispatch_source_cancel(g_reconnect_timer);
     dispatch_sync(reconnect_queue(), ^{});               /* wait out any in-flight page (~5s max) */
-    NSLog(@"mt2_usb_bt_handoff: quiesced BT for %s — keeper stopped, controller left idle for warm restart", why);
+    NSLog(@"mt2_bluetooth_linkstated: quiesced BT for %s — keeper stopped, controller left idle for warm restart", why);
 }
 
 /* System power callback (IORegisterForSystemPower). The MT2 box has EFIBluetoothDelay set, so firmware
@@ -205,7 +209,7 @@ int main(int argc, const char *argv[]) {
          * observer drains its initial iterators without firing, so no spurious wake at startup just
          * because USB happens to be plugged in now. */
         g_obs = presence_observer_create(CFRunLoopGetCurrent(), 1300, on_presence, NULL);
-        if (!g_obs) { NSLog(@"mt2_usb_bt_handoff: presence_observer_create failed"); return 1; }
+        if (!g_obs) { NSLog(@"mt2_bluetooth_linkstated: presence_observer_create failed"); return 1; }
         /* The observer drains its initial iterators WITHOUT firing, so an already-present USB reader at
          * launch produces no USB_APPEAR edge -> the SM would sit at PRESENCE_NONE and the keeper would
          * page BT off USB. Reconcile once against live truth so the SM knows we're on USB from the start. */
@@ -231,7 +235,7 @@ int main(int argc, const char *argv[]) {
         if (g_pm_root != MACH_PORT_NULL && pmPort) {
             CFRunLoopAddSource(CFRunLoopGetCurrent(), IONotificationPortGetRunLoopSource(pmPort), kCFRunLoopCommonModes);
         } else {
-            NSLog(@"mt2_usb_bt_handoff: WARNING IORegisterForSystemPower failed — warm-restart BT quiesce unavailable");
+            NSLog(@"mt2_bluetooth_linkstated: WARNING IORegisterForSystemPower failed — warm-restart BT quiesce unavailable");
         }
 
         /* SIGTERM (launchctl unload + the shutdown daemon-reap): quiesce then stop the runloop for a clean
@@ -241,7 +245,7 @@ int main(int argc, const char *argv[]) {
         dispatch_source_set_event_handler(termSrc, ^{ quiesce_for_shutdown("sigterm"); CFRunLoopStop(CFRunLoopGetCurrent()); });
         dispatch_resume(termSrc);
 
-        NSLog(@"mt2_usb_bt_handoff: armed — %ds reconnect keeper + USB-removal wake + shutdown quiesce", RECONNECT_CADENCE_SEC);
+        NSLog(@"mt2_bluetooth_linkstated: armed — %ds reconnect keeper + USB-removal wake + shutdown quiesce", RECONNECT_CADENCE_SEC);
         CFRunLoopRun();
     }
     return 0;

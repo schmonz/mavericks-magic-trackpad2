@@ -3,7 +3,12 @@
 # stale kext from /Library/Extensions (older layout; it can't load there anyway
 # due to signing).
 launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.plist 2>/dev/null || true
+launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.bluetoothlinkstated.plist 2>/dev/null || true
+# The BT link-state daemon was renamed mt2_usb_bt_handoff -> mt2_bluetooth_linkstated (label .usbbthandoff
+# -> .bluetoothlinkstated) 2026-07-20. Purge the just-superseded label + binary so neither lingers and
+# tries to load a removed binary at the next boot.
 launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.usbbthandoff.plist 2>/dev/null || true
+rm -f /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.usbbthandoff.plist /usr/local/libexec/mt2_usb_bt_handoff 2>/dev/null || true
 # Legacy daemon labels from pre-rename installs (product was mt2d / MavericksVoodooInputHost).
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist 2>/dev/null || true

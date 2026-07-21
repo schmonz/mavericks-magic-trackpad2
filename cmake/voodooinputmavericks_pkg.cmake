@@ -45,8 +45,8 @@ add_custom_target(pkg
   # the SIMBL Plugins dir; if the target has no SIMBL it points the user at mavericksforever.com/SIMBL.pkg.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/libexec
   # USB->BT handoff daemon (wakes BT on cable unplug, no click): its watcher binary + a root LaunchDaemon.
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_usb_bt_handoff ${PKGROOT}/usr/local/libexec/
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.usbbthandoff.plist ${PKGROOT}/Library/LaunchDaemons/
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_bluetooth_linkstated ${PKGROOT}/usr/local/libexec/
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.bluetoothlinkstated.plist ${PKGROOT}/Library/LaunchDaemons/
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
   # Scheduled background update check: per-user LaunchAgent that runs the updater in --background mode
   # (daily + at login). Only useful when the updater app is staged (Sparkle build), but the plist is a
@@ -73,7 +73,7 @@ add_custom_target(pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --resources ${CMAKE_SOURCE_DIR}/dist/resources
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
-  DEPENDS kext mt2_reenumerate VoodooInputMavericksPane_simbl mt2_usb_bt_handoff ${_UPD_PKG_DEP}
+  DEPENDS kext mt2_reenumerate VoodooInputMavericksPane_simbl mt2_bluetooth_linkstated ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
 
 # Dev "install exactly what a user gets": build the release .pkg and install it locally through the SAME

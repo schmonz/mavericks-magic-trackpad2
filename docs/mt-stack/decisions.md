@@ -312,7 +312,7 @@ our manual-start — does it work on 10.9? (Has teeth: catalogue residue, built-
 Raised while cleaning up the SIMBL-only prefpane cut. Recorded so they aren't re-litigated.
 
 - **"Does the USB `hidd` kick also cover BT, so we can drop the BT baseband bounce?" → NO.** The two are
-  ORTHOGONAL, not redundant. The BT bounce (`mt2_usb_bt_handoff --bounce-once`) re-opens BOTH L2CAP
+  ORTHOGONAL, not redundant. The BT bounce (`mt2_bluetooth_linkstated --bounce-once`) re-opens BOTH L2CAP
   channels so our reader binds them (BT=1→2, the **data** path); without it BT is half-open and there are
   no frames at all. The `killall hidd` kick only re-opens the gesture **frames client**
   (`AppleMultitouchDeviceUserClient`) for an AMD that appeared into an already-running hidd — it cannot

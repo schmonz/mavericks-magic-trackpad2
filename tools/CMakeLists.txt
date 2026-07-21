@@ -16,17 +16,18 @@ foreach(t mt2_bt_bounce)
   target_link_libraries(${t} "-framework Foundation" "-framework IOBluetooth")
 endforeach()
 
-# mt2_usb_bt_handoff — the no-click USB->BT handoff daemon. Same ObjC/IOBluetooth base as bt_bounce,
-# now driven by the shared presence observer (mavericks_presence_observer + the pure mavericks_presence SM) so it
-# watches the same canonical USB/BT services as the prefpane.
-add_executable(mt2_usb_bt_handoff mt2_usb_bt_handoff.m
+# mt2_bluetooth_linkstated — the MT2's Bluetooth link-state daemon (reconnect keeper + USB-removal handoff
+# + USB-appear yield + shutdown quiesce; see the file header). Same ObjC/IOBluetooth base as bt_bounce,
+# driven by the shared presence observer (mavericks_presence_observer + the pure mavericks_presence SM) so it
+# reads the same canonical USB/BT transport truth as the prefpane.
+add_executable(mt2_bluetooth_linkstated mt2_bluetooth_linkstated.m
   ${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_prefpane/mavericks_presence_observer.c
   ${CMAKE_SOURCE_DIR}/src/mavericks_presence.c)
-target_compile_options(mt2_usb_bt_handoff PRIVATE -fobjc-arc)
-target_include_directories(mt2_usb_bt_handoff PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(mt2_usb_bt_handoff
+target_compile_options(mt2_bluetooth_linkstated PRIVATE -fobjc-arc)
+target_include_directories(mt2_bluetooth_linkstated PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(mt2_bluetooth_linkstated
   "-framework Foundation" "-framework IOBluetooth" "-framework IOKit" "-framework CoreFoundation")
-mavericks_compat_guard(mt2_usb_bt_handoff)
+mavericks_compat_guard(mt2_bluetooth_linkstated)
 
 # The prefpane-refresh payload: a pure-C GC-neutral bundle injected into System Preferences, shipped ONLY
 # as a SIMBL plugin. OSAX_DIR is the shared source dir (used by the SIMBL target below).
@@ -79,17 +80,17 @@ add_custom_target(prefpane-refresh-simbl-uninstall
   COMMAND ${CMAKE_COMMAND} -E echo "Removed VoodooInputMavericksPane.bundle from SIMBL Plugins"
   COMMENT "Removing VoodooInputMavericksPane.bundle (SIMBL)")
 
-# USB->BT handoff LaunchDaemon: arms an IOKit termination notification on com_schmonz_MT2USBReader;
-# on cable-unplug it wakes the deep-idle BT MT2 via openConnection (no physical click). Root daemon
-# (runs regardless of GUI session). Reuses the mt2_usb_bt_handoff target (-> ${CMAKE_BINARY_DIR}/sbin).
-add_custom_target(usb-bt-handoff-install
-  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_usb_bt_handoff.sh install
-          ${CMAKE_BINARY_DIR}/sbin/mt2_usb_bt_handoff ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.usbbthandoff.plist
-  COMMENT "Installing + loading the USB->BT handoff LaunchDaemon")
-add_dependencies(usb-bt-handoff-install mt2_usb_bt_handoff)
-add_custom_target(usb-bt-handoff-uninstall
-  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_usb_bt_handoff.sh uninstall
-  COMMENT "Uninstalling the USB->BT handoff LaunchDaemon")
+# Bluetooth link-state LaunchDaemon (dev install/uninstall): the resident root daemon that keeps the MT2's
+# BT link in sync with the current transport — reconnect keeper, USB-removal handoff, USB-appear yield,
+# shutdown quiesce (see the mt2_bluetooth_linkstated.m header). Reuses the target (-> ${CMAKE_BINARY_DIR}/sbin).
+add_custom_target(bluetooth-linkstate-install
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_bluetooth_linkstated.sh install
+          ${CMAKE_BINARY_DIR}/sbin/mt2_bluetooth_linkstated ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.bluetoothlinkstated.plist
+  COMMENT "Installing + loading the mt2_bluetooth_linkstated LaunchDaemon")
+add_dependencies(bluetooth-linkstate-install mt2_bluetooth_linkstated)
+add_custom_target(bluetooth-linkstate-uninstall
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_bluetooth_linkstated.sh uninstall
+  COMMENT "Uninstalling the mt2_bluetooth_linkstated LaunchDaemon")
 
 # ---- MavericksTrackpad2Updater.app (shared MavericksSparkle) --------------------------------------
 # Built only when a fetched Sparkle framework path is provided (MT2_SPARKLE_FRAMEWORK); otherwise the
