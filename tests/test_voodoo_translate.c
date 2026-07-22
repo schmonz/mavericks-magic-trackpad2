@@ -84,5 +84,25 @@ static void run_tests(void) {
         CHECK_EQ(rt.transducers[0].touch_minor, 0);
         CHECK_EQ(rt.transducers[0].orientation, 0);
     }
+
+    /* --- full-transducer completeness (upstream simulator terminal consumes these) --- */
+    /* Upstream's simulator terminal consumes these fields; our satellites must set them so the same
+     * VoodooInputEvent drives both terminals. Our 10.9 backend ignores them (no behavior change). */
+    {
+        MavericksTouchFrame ff; memset(&ff, 0, sizeof ff);
+        ff.contact_count = 1;
+        ff.transducers[0].id = 7;
+        ff.transducers[0].currentCoordinates.x = 100;
+        ff.transducers[0].currentCoordinates.y = 200;
+
+        VoodooInputEvent cw = mavericks_voodoo_from_frame(&ff, 1000, 1000);
+        CHECK(cw.transducers[0].isValid == true);
+        CHECK(cw.transducers[0].type == FINGER);
+        CHECK(cw.transducers[0].fingerType == kMT2FingerTypeIndexFinger);
+        CHECK(cw.transducers[0].supportsPressure == true);
+        /* previousCoordinates seeded from current on first emit (no prior frame) */
+        CHECK_EQ(cw.transducers[0].previousCoordinates.x, cw.transducers[0].currentCoordinates.x);
+        CHECK_EQ(cw.transducers[0].previousCoordinates.y, cw.transducers[0].currentCoordinates.y);
+    }
 }
 TEST_MAIN()

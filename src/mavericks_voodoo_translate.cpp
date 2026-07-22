@@ -61,6 +61,14 @@ VoodooInputEvent mavericks_voodoo_from_frame(const MavericksTouchFrame *f,
         t->currentCoordinates.y = inv_rescale(c->currentCoordinates.y, logical_max_y, MT2_MIN_Y, MT2_MAX_Y);
         t->currentCoordinates.pressure = (UInt8)c->currentCoordinates.pressure;
         t->currentCoordinates.width    = (UInt8)c->currentCoordinates.width;
+        /* Fields upstream's simulator terminal consumes; our <ElCapitan backend ignores them, so
+         * setting them is a no-op on our path but lets the SAME event drive both terminals. */
+        t->isValid = true;
+        t->type = FINGER;
+        t->fingerType = (MT2FingerType)(kMT2FingerTypeIndexFinger);   /* stable per-slot type; refine later */
+        t->supportsPressure = true;
+        t->timestamp = 0;                    /* AbsoluteTime; the mux/terminal restamp — 0 is upstream-safe */
+        t->previousCoordinates = t->currentCoordinates;  /* first-emit: prev == current (no jump) */
     }
     return w;
 }
