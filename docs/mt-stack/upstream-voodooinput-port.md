@@ -10,6 +10,29 @@ OWN reimplemented mux (`com_schmonz_VoodooInput`) + fabricated-AMD terminal. The
 terminal backend**, so the ecosystem gains a 10.9 target and the MT2 driver becomes upstreamable. This note
 is the grounded difficulty sizing from actually reading upstream `master` (2026-07-19).
 
+## North-star — the reconstructable end state (2026-07-22)
+
+The way we're working toward this is deliberately *reconstructable*. Target end state: a new agent can be
+pointed at this repo, told to "review how we got here," and then either —
+1. **Clean-room replay:** create a fresh repo containing only the *logical* steps that actually reach this
+   end point (dropping the RE detours, dead ends, and back-and-forth), or
+2. **Real upstream branch:** fork acidanthera/VoodooInput, branch, and reconstruct those logical steps *there*
+   as the actual contribution — **with the MT2 driver kept OUT of the PR branch.**
+
+Two implications that steer how we build, starting now:
+- **Commit hygiene = the contribution.** Each VoodooInput-facing change should be a self-contained, logically
+  ordered step (vendor pristine → additive guarded seam → …), so the sequence *is* the reconstructable
+  history. The `unifdef -UMAVERICKS_TERMINAL == pristine` invariant means the guarded delta of each vendored
+  file is exactly the diff a PR would carry.
+- **Separability: the mux must not name the MT2 driver.** Today our seam hardcodes
+  `#include "…/MavericksTerminalBackend.h"` + `OSTypeAlloc(MavericksTerminalBackend)` inside `VoodooInput.cpp`.
+  That's MT2-driver code reaching *into* the mux — fine for OUR fork, but it blocks "MT2 stays out of the PR
+  branch." The clean end state: the mux's `< ElCapitan` branch references a **generic pre-ElCapitan terminal
+  interface** (mirroring how it references `VoodooInputSimulatorDevice`), and `MavericksTerminalBackend` is
+  *our* concrete implementation of that interface, living out-of-branch in the MT2 driver. Introducing that
+  abstraction is the "prep the PR" step — deferred, not yet done. The current version_major-gate work still
+  hardcodes the backend (correct incremental step; the guarded block stays cleanly replaceable).
+
 ## What upstream VoodooInput is
 
 README: *"opensource trackpad aggregator kernel extension providing **Magic Trackpad 2 software emulation**
