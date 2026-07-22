@@ -1,0 +1,39 @@
+#ifndef MAVERICKS_TERMINAL_BACKEND_H
+#define MAVERICKS_TERMINAL_BACKEND_H
+#include <libkern/c++/OSObject.h>
+#include <IOKit/IOService.h>
+#include <IOKit/IOLocks.h>
+#include "mavericks_session.h"        // mavericks_session_t
+#include "MavericksAMDTerminal.h"      // mavericks_amd_terminal_ctx + transport enum + feed/button
+#include "voodoo_wire.h"              // VoodooInputEvent
+class IOWorkLoop; class IOTimerEventSource;
+
+/* The 10.9 terminal backend: everything that turns VoodooInputEvents into device output on Mavericks —
+ * the shared session/conditioning engine + the fabricated-AMD terminal + their workloop/timer/lock/sink
+ * wiring. Owned by the mux (a thin router) with an explicit start/stop lifecycle the mux drives. An
+ * OSObject so it can be the owner of its own IOTimerEventSource (and mirrors upstream, whose terminal is
+ * also an OSObject). */
+class MavericksTerminalBackend : public OSObject {
+    OSDeclareDefaultStructors(MavericksTerminalBackend)
+public:
+    bool start(IOService *nub, mavericks_amd_terminal_transport_t transport,
+               uint32_t logicalMaxX, uint32_t logicalMaxY);
+    void handleEvent(const VoodooInputEvent *ev);
+    void updateDimensions(uint32_t logicalMaxX, uint32_t logicalMaxY);
+    void stop(IOService *nub);
+
+    uint32_t logicalMaxX() const { return fLogicalMaxX; }   // mux reads these as the update-message default
+    uint32_t logicalMaxY() const { return fLogicalMaxY; }
+    mavericks_amd_terminal_ctx *synthCtx() const { return fSynth; }   // sink-trampoline glue
+    void armIdle(uint32_t ms);                                        // sink-trampoline glue
+private:
+    static void idleTick(OSObject *owner, IOTimerEventSource *sender);
+    uint32_t            fLogicalMaxX;
+    uint32_t            fLogicalMaxY;
+    mavericks_amd_terminal_ctx *fSynth;
+    mavericks_session_t fSession;
+    IOWorkLoop         *fWL;
+    IOTimerEventSource *fIdle;
+    IOLock             *fLock;
+};
+#endif

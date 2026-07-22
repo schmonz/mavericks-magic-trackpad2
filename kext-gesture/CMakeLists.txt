@@ -6,7 +6,7 @@
 set(KEXT_LOCAL_CPP
   MavericksVoodooInputHost.cpp MavericksVoodooInputHostUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mavericks_log.cpp mavericks_diag.cpp mavericks_splice_kext.cpp
-  MavericksVoodooInput.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mavericks_amd_probe.cpp)
+  MavericksVoodooInput.cpp MavericksTerminalBackend.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mavericks_amd_probe.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
@@ -44,7 +44,7 @@ set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_
 # host shim). All gate behavior on #if KERNEL.
 set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_conn_trace.c
-  MavericksVoodooInput.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
+  MavericksVoodooInput.cpp MavericksTerminalBackend.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
 # Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel
