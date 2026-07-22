@@ -90,6 +90,19 @@ pane row's `NSImageView` directly.
 > `IOServiceNameMatching` matches the node's registry name string exactly (no subclasses) → the plugin key must
 > be exactly `AppleMultitouchDevice`.
 >
+> **ENCODING RESOLVED 2026-07-22 (disasm of IOBluetoothHIDDriver + BezelServices).** The poster is
+> `IOBluetoothHIDDriver::messageClientsWithString(type, OSString*)` (vtable `0xb60`), called from
+> `deviceConnectTimerFired`/`sendDeviceConnectNotifications` (name `"Connected"`, or `"MouseConnected"` for the
+> is-pointing default) and `sendDeviceDisconnectNotifications` (`"Disconnected"`/`"MouseDisconnected"`). It
+> `strncpy`s the OSString into a 32-byte stack buffer and calls **`messageClients(0x62736B32, (char*)name, 32)`**
+> (`IOService::messageClients(UInt32,void*,vm_size_t)`, vtable `0x740`). BezelServices reads the arg as a
+> **`char*`** (`stringWithFormat:@"%@.%s"` → `"<PrefixID>.<name>"`). So OUR terminal call is exactly:
+> `messageClients(0x62736B32, (void*)"Connected", 32)` on connect, `…"Disconnected"…` on disconnect — a plain
+> NUL-terminated cstring (NOT an OSString — that'd be misread as char* and crash), only needs to outlive the
+> synchronous call (static literal ok). CAVEAT: BezelServices arms its `kIOGeneralInterest` watch on our node
+> only if OUR plugin (keyed `AppleMultitouchDevice`) is installed + loginwindow has scanned it → the plugin
+> takes effect on next login/reboot; validate accordingly. FULLY SPEC-READY.
+>
 > Genuine-BNB-era analysis retained below.
 
 **Bezel HUD (connect/disconnect) — RE'd 2026-07-06 (mechanism found; NOT the CoD vault).** The earlier
