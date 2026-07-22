@@ -7,7 +7,7 @@ name: release
 # AUTHENTICITY / CORRECTNESS of the cross-built kext rests on two things, no old
 # Xcode required:
 #   1. the SDK is pinned by SHA-256 in the shared fetch_10_9_sdk.sh (integrity;
-#      mavericks-shared-cmake, itself pinned to MSC_REF below), and
+#      from ModernMavericks/shared-cmake, consumed at @v1), and
 #   2. the equivalence gate (cmake/characterize_build.sh compare) proves the
 #      cross-built kext is identical -- in undefined+defined external symbol sets,
 #      KPI deps, and arch -- to the trusted native 10.9.5 build committed in
@@ -26,13 +26,6 @@ on:
 permissions:
   contents: write
 
-env:
-  # Shared build machinery (find_package(MavericksSharedCMake) in CMakeLists.txt +
-  # the 10.9 SDK-fetch and compat-guard scripts). Pinned by SHA for reproducible
-  # releases -- same philosophy as the SHA-pinned SDK/Sparkle/ed25519 fetches. Bump
-  # deliberately to pick up shared-machinery changes.
-  MSC_REF: 312389eb8b3ac24c8f89fad2a78c82bc4eeac8cd  # mavericks-shared-cmake
-
 jobs:
   build-macos:
     runs-on: macos-26
@@ -41,9 +34,20 @@ jobs:
 
       # shared-cmake installs itself via its own action (HTTPS via the runner token). It self-registers
       # in the per-user CMake package registry (no CMAKE_PREFIX_PATH downstream), and the install prefix
-      # holds the shared scripts/ used by the SDK-fetch step. @<sha> matches MSC_REF above (cache keys).
-      - name: Install mavericks-shared-cmake
-        uses: schmonz/mavericks-shared-cmake/.github/actions/install@312389eb8b3ac24c8f89fad2a78c82bc4eeac8cd  # mavericks-shared-cmake
+      # holds the shared scripts/ used by the SDK-fetch step. @v1 like every sibling: the versioned
+      # action IS the pin, and breaking changes to the shared surface come with a major bump.
+      - name: Install shared-cmake
+        uses: ModernMavericks/shared-cmake/.github/actions/install@v1
+
+      # What @v1 resolves to TODAY, for the SDK cache key below. The SDK's URL and its pinned SHA-256
+      # live in shared-cmake's fetch script, so the cached SDK must be invalidated whenever the shared
+      # machinery moves. Keying on the tag NAME would never change and could serve a stale SDK forever.
+      - name: Resolve shared-cmake @v1
+        id: msc
+        run: |
+          sha=$(git ls-remote https://github.com/ModernMavericks/shared-cmake refs/tags/v1 | head -1 | cut -f1)
+          [ -n "$sha" ] || { echo "::error::could not resolve shared-cmake v1"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       - name: Determine version (from CMake MAVERICKS_VERSION — single source of truth)
         id: ver
@@ -69,14 +73,13 @@ jobs:
         run: softwareupdate --install-rosetta --agree-to-license || true
 
       # Persist the fetched SDK across runs so releases don't depend on the phracker
-      # archive being up every time. The URL + pinned SHA-256 now live in the shared
-      # fetch script, so key on MSC_REF -- bumping the shared machinery (which is how
-      # the SDK pin would change) auto-invalidates the cache.
+      # archive being up every time. Keyed on the commit @v1 resolves to, so bumping the shared
+      # machinery (which is how the SDK pin would change) auto-invalidates the cache.
       - name: Cache the MacOSX10.9 SDK
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-sdk-cache
-          key: macosx10.9-sdk-${{ env.MSC_REF }}
+          key: macosx10.9-sdk-${{ steps.msc.outputs.sha }}
 
       - name: Fetch + checksum-verify the MacOSX10.9 SDK
         id: sdk
@@ -85,12 +88,12 @@ jobs:
         run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_10_9_sdk.sh")" >> "$GITHUB_OUTPUT"
 
       # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for Trackpad2Updater.app. The fetch script
-      # (URL + pinned SHA) now lives in mavericks-shared-cmake, so key the cache on MSC_REF.
+      # (URL + pinned SHA) lives in shared-cmake, so key the cache on what @v1 resolves to.
       - name: Cache the Sparkle framework
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-sparkle-cache
-          key: sparkle-1.27.3-${{ env.MSC_REF }}
+          key: sparkle-1.27.3-${{ steps.msc.outputs.sha }}
 
       - name: Fetch + checksum-verify + thin Sparkle 1.27.3
         id: sparkle
@@ -99,12 +102,12 @@ jobs:
         run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_sparkle.sh")" >> "$GITHUB_OUTPUT"
 
       # orlp/ed25519 (the same lib Sparkle vendors) for our native mavericks_sign_update, which signs the
-      # .pkg -- no Swift-binary dependency. Fetch script lives in mavericks-shared-cmake; key on MSC_REF.
+      # .pkg -- no Swift-binary dependency. Fetch script lives in shared-cmake; key on @v1's commit.
       - name: Cache orlp/ed25519
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.mt2-ed25519-cache
-          key: ed25519-${{ env.MSC_REF }}
+          key: ed25519-${{ steps.msc.outputs.sha }}
 
       - name: Fetch + checksum-verify orlp/ed25519
         id: ed25519
