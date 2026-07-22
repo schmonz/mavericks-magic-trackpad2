@@ -58,6 +58,19 @@ pane row's `NSImageView` directly.
   `_LSCreateDeviceTypeIdentifierWithModelCode` from a **product/model-code string** — a name/model identity
   path independent of CoD. A correct model-code could resolve Apple art without swizzling.
 
+> ⚠️ **ARCHITECTURE-STALE (2026-07-22): the mouse-bezel mechanism + node-seed fix below are GENUINE-BNB-ERA.**
+> In the current owned-BT + VoodooInput-satellite build, Apple's BT-HID posters are ALL excluded — live
+> `ioclasscount` with the MT2 connected over BT: `IOBluetoothHIDDriver` / `IOAppleBluetoothHIDDriver` /
+> `BNBTrackpadDevice` / `BNBMouseDevice` = **`<no such class>`** (our `Info.plist` out-bids + excludes the
+> generic `IOBluetoothHIDDriver`; we never start a `BNBTrackpadDevice` — `MT2BTReader.cpp:9`). So
+> `deviceConnectTimerFired` (the `"MouseConnected"` poster) does NOT run, and step 3's node-seed has no node to
+> seed. Current bezel behavior UNCONFIRMED (hypothesis: **no connect OSD at all** — DriverServices keys on the
+> driver classes we exclude, and our `MT2BTReader` class isn't registered with BezelServices; needs a visual
+> connect/disconnect check on BT). The "shows a mouse" report predates the owned-BT pivot. RE-SCOPE before
+> implementing: to get the genuine trackpad bezel we'd need a poster BezelServices recognizes (register a
+> `BS_UI_Plugin` for our class, or emit the notification ourselves) — NOT the BNBTrackpadDevice node-seed.
+> Genuine-BNB-era analysis retained below.
+
 **Bezel HUD (connect/disconnect) — RE'd 2026-07-06 (mechanism found; NOT the CoD vault).** The earlier
 "caller resolves via the CoD vault" guess is **WRONG**. The connect/disconnect OSD is drawn by the
 **BezelServices login plugin** — `/System/Library/LoginPlugins/BezelServices.loginPlugin/Contents/MacOS/BezelServices`
