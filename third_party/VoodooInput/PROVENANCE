@@ -7,3 +7,9 @@ Why in-tree (exception to the mav_fetch_pinned convention): these define our pub
   in-tree: diffable, offline, and driving host tests without a network step. Headers are frozen
   upstream (Transducer.h last changed 2024-04, Event/Messages.h 2022-12).
 Re-sync: refetch at a newer SHA and `git diff` this dir; update this file's SHA/date.
+
+VoodooInput.cpp, VoodooInput.hpp, VoodooInputIDs.hpp
+  source: acidanthera/VoodooInput @ d897813718c2ef9ad143b6a86240fe52dcb1693e
+  fetched: 2026-07-21
+  license: GPLv2 (compatible with ours)
+  local mods: MAVERICKS_TERMINAL build-macro seam (Task 2) — guarded so upstream's default build is byte-unaffected
