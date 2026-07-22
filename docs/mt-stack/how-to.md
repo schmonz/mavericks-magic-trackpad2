@@ -143,3 +143,73 @@ backup pointer is live; the updated package is deployed (`cmake --build cmake-bu
    it. It persists across power-cycles and follows the device to other Macs. Nothing writes the name
    unrequested — there is no boot-time or install-time name write. (See docs/mt-stack/explanation.md
    "Rename routing + the mirror".)
+
+## Cross-build against 10.9 from a modern host (SDK + kext toolchain)
+
+For the queued macOS-26 → CI build work: build/target 10.9 from a modern toolchain while keeping the
+native 10.9 build as the reference (the modern path must be ADDITIVE — never regress building on a 10.9
+host; select the toolchain by host as a seam, default = today's 10.9-native behavior). Credit the sources
+below in `CREDITS.md` if they materially help the build.
+
+### Userland — standalone MacOSX10.9 SDK
+
+`phracker/MacOSX-SDKs` is the canonical archive of extracted historical macOS SDKs.
+
+```sh
+# Release page: https://github.com/phracker/MacOSX-SDKs/releases/tag/11.3
+# Direct:       https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX10.9.sdk.tar.xz
+# Unpack it and point a current clang/Xcode at it:
+clang -isysroot <path>/MacOSX10.9.sdk -mmacosx-version-min=10.9 ...   # standard old-target cross-build
+```
+
+The **userland** cross-build is already PROVEN via the shared-CMake `dimmit` adopter. An old SDK alone
+does NOT settle the KEXT side (a kext links against kernel headers, must LOAD on 10.9). Note: this box
+(the MacPro6,1) is the 10.9-native build host (`clang-600.0.57`, `darwin13.4.0`), so the modern-toolchain
+spike CANNOT run here — it needs a macOS-26 host. Old `clang-600` does not grok the blog's
+`-target x86_64-apple-macos10.9` triple (emits ELF); 10.9-era syntax is
+`-arch x86_64 -mmacosx-version-min=10.9`.
+
+### Kext — build a loadable 10.9 kext from a modern toolchain (leads, not yet attempted)
+
+Open question: can a modern toolchain build a kext that LOADS on 10.9? The recipe pieces:
+- **XNU headers matching the 10.9.x kernel** (kexts link against kernel headers, not the userland SDK).
+- clang cross-target sketch:
+  ```sh
+  clang -target x86_64-apple-macos10.9 -mkernel -nostdinc \
+        -I<xnu>/libkern -I<xnu>/iokit -I<xnu>/osfmk -I<xnu>/bsd ...   # the driver's include graph
+  ```
+- kernel include paths, **`-mkernel`**, correct **linker flags**, packaging as a **`.kext` bundle** (not a
+  normal executable).
+- **KEY INSIGHT:** a kext does NOT need the whole XNU source tree — only the include graph its driver
+  actually pulls in (typically `libkern`, `iokit`, `osfmk`, and selected parts of `bsd`). Identify that
+  graph and carve just those dirs.
+
+**Sources:**
+- Recipe blog (building XNU for 10.9 Mavericks):
+  http://shantonu.blogspot.com/2013/10/building-xnu-for-os-x-109-mavericks.html
+- XNU source matching 10.9.x (2422 = Mavericks):
+  https://github.com/apple-oss-distributions/xnu/tree/xnu-2422.115.4
+  (tarball: https://github.com/apple-oss-distributions/xnu/archive/xnu-2422.115.4.tar.gz)
+- 10.9.0 XNU tarball: https://opensource.apple.com/tarballs/xnu/xnu-2422.1.72.tar.gz
+- Apple open-source index: https://opensource.apple.com/releases/
+
+**Dependency map (off-device de-risk, from our own code):**
+- **Kernel-header dependency set is small + bounded.** Angle-bracket includes across `kext-gesture/`:
+  IOKit core (IOService, IOLib, IOLocks, IOWorkLoop, IOCommandGate/Pool, IOTimerEventSource, IOUserClient,
+  IOBufferMemoryDescriptor, IOCommand), libkern/c++ (OSObject/Dictionary/Number/String/Boolean/MetaClass),
+  kern/clock.h, mach/{kmod,mach_types}.h, sys/sysctl.h, string.h — all from **xnu-2422.x**. PLUS two family
+  headers NOT in xnu: `IOKit/hid/IOHIDDevice.h` (**IOHIDFamily**) and `IOKit/usb/IOUSBInterface.h`
+  (**IOUSBFamily**).
+- **Link deps** (Info.plist `OSBundleLibraries`, KPI ver 13.4 = 10.9.4): `com.apple.kpi.{iokit,libkern,mach,bsd}`
+  + `IOHIDFamily`(1.5) + `IOUSBFamily`(1.8) + `IOBluetoothFamily`(2.0.0) + `AppleMultitouchDriver`(193.8).
+- **Build-time headers NOT needed for IOBluetoothFamily or AppleMultitouchDriver** — the kext REDECLARES
+  the minimal Apple classes it splices (`IOBluetoothL2CAPChannel`/`IOBluetoothObject`; AMD) and resolves
+  the mangled symbols AT LOAD via `OSBundleLibraries`. So a modern build needs headers for **xnu +
+  IOHIDFamily + IOUSBFamily ONLY**; Bluetooth/AMD are redeclare + link-resolve.
+- **Simplest single header/stub source = the 10.9 Kernel Debug Kit (KDK)** — bundles xnu KPIs + IOHIDFamily
+  + IOUSBFamily + IOBluetoothFamily + AppleMultitouchDriver headers AND the KPI symbol/export lists for the
+  link step — likely cleaner than carving xnu + IOHIDFamily + IOUSBFamily repos separately.
+
+**Remaining unknowns for the kext spike (need a macOS-26 host):** whether modern clang/ld64 can emit a
+Mach-O kext that LOADS on 10.9 (KPI symbol versioning, codesigning/`-mkernel` ABI), and sourcing the 10.9
+KDK (Apple KDKs for 10.9 are archived, findable). The header/dep graph above is settled.

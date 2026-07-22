@@ -1750,3 +1750,195 @@ inferred, never verified — this RE contradicts it):
 - **DECISIVE UNTESTED EXPERIMENT: reboot with the MT2 cabled on USB.** Fresh WindowServer, device present
   at startup, empty slot → should `IOServiceOpen` it → cursor. If it works, uniform-USB is VIABLE and the
   wall was mid-session hotplug bookkeeping, not a gate. If not, RE the `"Multitouch ID"` match value V.
+
+---
+
+## BT reconnect: `_enableMultitouchEvents` fails on rapid power-cycle — OPEN kext bug (found 2026-07-03)
+
+**Symptom.** After a few rapid BT power-cycles of the MT2, the cursor stops returning for ~50 s+ despite
+many taps; it recovers only after waiting + a later reconnect that happens to get the enable through.
+
+**Root cause (from `/var/log/system.log` kernel lines, NOT a guess):**
+```
+[BNBTrackpadDevice::_simpleSetReport] ERROR: setReport returned error 0xe00002bc for reportID 0xD7
+[BNBTrackpadDevice::_enableMultitouchEvents] ERROR: _simpleSetReport returned error 0xe00002bc
+[BNBTrackpadDevice::processInterruptData] ERROR: Incorrect report length 9 for reportID 0x02
+```
+On a rapid reconnect the multitouch-ENABLE (feature report `0xD7` = the mode-switch/Wellspring enable)
+fails with IOKit error `0xe00002bc` (device/channel not ready). Without it the MT2 streams BASIC HID
+MOUSE packets (reportID `0x02`, length 9) which the kext rejects → no multitouch frames → no cursor.
+The user's taps WERE arriving; they were basic-mouse reports the kext couldn't use. `MT2Gesture:
+connection established` logs are misleading — connection ≠ multitouch enabled ≠ input flowing.
+
+**Proposed fix (KEXT change → reload/crash-risk; pre-existing, surfaced by rapid power-cycling):** on
+reconnect, RETRY `_enableMultitouchEvents` on failure with a short backoff (a few attempts) until
+setReport `0xD7` succeeds, instead of enabling once and giving up. NOT the battery/OSAX (userland) work;
+this is on the input path. Distinct from the "genuine kext unloaded" bug below (that's the whole
+`BNBTrackpadDevice` class missing, not an enable-setReport failure). Lesson: read the kext log before
+diagnosing a wedge — "connection established" is not "input flowing" (first mis-called this "BT idle
+needs a tap"; it was not).
+
+> **Note (relevance to current owned/synthetic BT):** the ground-truth of this bug is Apple's genuine
+> `BNBTrackpadDevice::_enableMultitouchEvents` (`0xD7`) path from the genuine-BNB era. Current owned BT
+> sends the MT2's own `0xF1` enable directly; the *retry-until-enabled* discipline it motivates is
+> already reflected in the BT reader's "retry-until-first-frame" re-enable (see `explanation.md` →
+> "Reconnect re-enable"). Verify against current code before treating the `0xD7`/BNB specifics as live.
+
+---
+
+## BT "Connected but cursor dead" = genuine `AppleBluetoothMultitouch.kext` not loaded — ROOT CAUSE UNKNOWN (2026-07-05)
+
+Diagnosed live on-device (genuine-BNB era). Device drove over USB, but over **Bluetooth it connected yet
+the cursor was dead**.
+
+**What we OBSERVED (facts):**
+- BT link came up: `MT2BTReader: bound L2CAP channel, enabled multitouch (0xF1), listening`.
+- But immediately: `MT2BTReader: manual BNBTrackpadDevice host start FAILED`, repeating ~every 15 s.
+- `kextstat` showed **`com.apple.driver.AppleBluetoothMultitouch` was NOT loaded** (only
+  AppleUSBMultitouch + AppleMultitouchDriver + our MT2Gesture). It provides the `BNBTrackpadDevice` class
+  our reader reuse-started, so with the class absent the manual start failed → touches never became
+  gestures. Bluetooth still showed **Connected: Yes** because OUR reader bound the link.
+- `sudo kextload /System/Library/Extensions/AppleBluetoothMultitouch.kext` (rc=0) → on the next wake:
+  `manual BNBTrackpadDevice start OK` / `[BNBTrackpadDevice::handleStart][80.14] returning 1` /
+  `multitouch confirmed`; `BNBTrackpadDevice` node = 1; cursor works. (The `Could not retrieve extended
+  feature dictionary` line is a benign ExtendedFeatures warning; handleStart still returns 1.)
+
+**ROOT CAUSE = UNKNOWN — this is UNACCEPTABLE and must be run down if it recurs.** We do NOT know why
+`AppleBluetoothMultitouch.kext` was unloaded. An earlier note claiming "macOS auto-unloaded it as idle
+while the user was on USB" was a **fabricated, unverified guess and is FALSE**: (1) the user was **mainly
+on BT** the last few days, not USB; (2) Apple would not silently idle out the driver a paired pointing
+device needs. `mt2d-run` pre-loads this kext at boot, so at boot it WAS loaded; something between boot and
+now unloaded it, and the prime suspect is **something WE did** (a reload/unload in our own dev/recovery
+machinery, a side effect of a crash, a probe/daemon, or our teardown path), NOT Apple. Do NOT paper over
+it with another plausible story.
+
+**If this EVER happens again — investigate, don't assume:**
+- Check what unloads kexts in our stack: `mt2d-run` (`recover_full` does `kextunload`/`kextload`), the
+  reconnect path, any probe/debug launchd jobs, and our own kext teardown. Grep our tree for `kextunload`
+  / `AppleBluetoothMultitouch`.
+- Capture the moment it unloads: watch `kextstat | grep BluetoothMultitouch` + `/var/log/system.log`
+  across a USB↔BT switch and across our reload/recovery ops. Find the exact op that drops it.
+- Only once we KNOW the trigger do we design the fix. A blind "just reload it on BT bring-up" would HIDE
+  the real bug — explicitly rejected. Meta-lesson: state observations as facts and unknowns as unknowns;
+  don't invent causal mechanisms to sound complete.
+
+---
+
+## Screensaver / boot bug is BACK — the "proven external" verdict reopened (queued 2026-06-29)
+
+User flagged 2026-06-29: **"the screensaver bug is solidly back."** Queued — reproduce + capture before
+coding.
+
+**What the recurrence reopens.** `src/mt2_pipeline.h` retained `MT2_SETTLE_MS = 0` on the theory that a
+2026-06-17 cold-boot measurement found *no post-connect burst reaching the pipeline on either transport*
+(interrupt/event endpoints deliver only on touch) and so "the boot screensaver bug was proven external"
+— i.e. NOT caused by our stream conditioning. The bug recurring "solidly" is evidence against that
+verdict: either it was never fully external, or something changed (the genuine-host reframe, the geometry
+seeding `eea90c7`, the cold-boot auto-load path, or a deploy/identity change since 2026-06-17). When
+picked up: reproduce first, capture what the device/pipeline actually emit around the screensaver/idle
+transition (the standing oracles + `tools/re`, `mt_svc_observe`), and decide whether the zero-settle seam
+or some idle path is implicated before touching code. Encode the repro as a failing behavior test.
+
+**REFRAMED 2026-07-04 — the "proven external" verdict was NARROW.** The 2026-06-17 work only disproved the
+*burst-of-stale-frames-at-connect* theory (added the `MT2_SETTLE_MS` settle-gate, measured no post-connect
+burst, set it to 0). It says nothing about a wake/reconnect ENABLE-FAILURE — a different mechanism. Two
+things reframe it:
+1. The **reconnect-enable-fails class** (see above): a fresh BT connection can fail the `0xF1`/`0xD7`
+   multitouch-enable → device stuck in basic HID mouse mode (report `0x02`), no cursor until a tap. A
+   screensaver/idle→wake reconnect is exactly the kind of fresh connection that hits this.
+2. **CONFIRMED GAP (grep'd our kext 2026-07-04):** we do **NOT handle sleep/wake at all** — no
+   `IORegisterForSystemPower`, no wake re-init. Our BT path only re-runs when a fresh control channel
+   opens. Apple's `MultitouchHID.plugin` DOES handle it (`registerForSleepWakeNotifications`).
+
+**HYPOTHESIS: a sleep/wake variant of the enable class, NOT our stream conditioning.** Two sub-cases,
+distinguished by one on-device trace: **(A)** link DROPS + reconnects on wake, enable fails → stuck mouse
+mode (the reconnect-v2 retry likely already fixes it); **(B)** link stays UP (idle, no fresh control
+channel) → our path never re-runs → nothing recovers until a full drop → fix = add explicit power-event
+handling (mirror Apple's `registerForSleepWakeNotifications` → re-enable on wake).
+
+**INVESTIGATED 2026-07-07 (3 captures) — DRIVER FULLY EXONERATED; root cause is environmental.** Deployed
+an instrumented kext at `debug.mt2_log=2` + a login-window cursor logger and reproduced across three boots
+(two with kext, one WITHOUT our kext):
+- Our decoded-frame path fed ZERO cursor input before the screensaver fired (the BT reader bound ~3 s
+  AFTER the screensaver engaged; first touch frame ~15 s after) — across two independent boots.
+- The cursor logger showed the login cursor **parked at the exact top-right pixel `(3439, 0)`** (= width-1,
+  0, a saturated/clamped absolute value, NOT a restored arbitrary spot) and SITTING there ~7.8 s → the
+  user's upper-right **hot corner** fires the screensaver promptly (matches "within 1-2 s of desktop").
+- The kext-UNLOADED boot parked the cursor at the identical `(3439, 0)` ⇒ **macOS parks the login cursor
+  there regardless of our kext. THE SCREENSAVER BUG IS NOT AN MT2 DRIVER BUG.**
+
+**Why macOS parks it there (option-2 root cause, 2026-07-07):** the box is a 2013 Mac Pro, dual AMD
+FirePro D500 (6+ framebuffers), one real display (DELL S3422DW ultrawide 3440×1440, flagged
+`Television: Yes`). TV/overscan RULED OUT (point-space = full native 3440×1440). **Prime suspect =
+phantom framebuffers:** the WindowServer boot log shows **7 phantom 1×1 "displays" at (4464,0)…(4470,0)**
+(all y=0, up-and-right of the main panel) that appear transiently then drop. The cursor's `(3439,0)` = the
+main-display pixel nearest that phantom cluster → macOS biases initial cursor placement toward the
+phantoms, clamps to the real display, phantoms drop, cursor stranded in the hot corner (circumstantial but
+strong). **Fix landscape:** suppressing the phantom framebuffers is invasive (unused GPU outputs,
+kext-level) — likely not worth it; the pragmatic constraint-respecting fix = a tiny agent that re-centers
+the cursor at login (NOT disabling the hot corner, which the user rejects). A login-window-context cursor
++ phantom-count logger (`com.schmonz.mt2lwcursorlog`, TRANSIENT) was staged to confirm the phantom timing
+before deciding.
+
+---
+
+## Force Touch click sensitivity — configurable? (community request, BACKLOG 2026-07-21)
+
+Community ask (MacRumors, user f54da): "Since the MT2 trackpads use Force Touch, can you customize the
+click sensitivity? Is it currently hardcoded to default or can that be configured (a config file, or —
+fancy — have your SIMBL plugin add a slider to the Trackpad pane for it)?"
+
+Orientation for when we pick it up (verify against code, don't assume):
+- We DO have pressure: `mt2_decode.c` sets `currentCoordinates.pressure = t[6]`; the terminal seeds
+  `MultitouchPreferences` on the fabricated AMD ("MultitouchPreferences seeded" log). MT2 Force Touch = a
+  pressure THRESHOLD + Taptic haptic; "click sensitivity" = that threshold (genuine Macs: the Trackpad
+  pane's "Click" Light/Medium/Firm control).
+- **FIRST CHECK (cheap, no code):** with the SIMBL pane forcing the trackpad view, does the native
+  **"Click"** pressure control already appear AND affect our device? If yes → it's ALREADY configurable
+  via the native setting (answer f54da: use the pane's Click setting) — just document it. If the setting
+  is absent or inert, decide where click is decided: Apple's recognizer via the seeded
+  `MultitouchPreferences` key, vs OUR pipeline click logic / device-button gate
+  (`mavericks_session`/`_pipeline`/`_lifecycle`, `ExtractAndPostDeviceButtonState`).
+- If ours/hardcoded: expose a threshold (a sysctl like `debug.mavericks_log`/`debug.mt2_batt`, or a config),
+  and — the "fancy" option — have the SIMBL companion add/repurpose a slider in the pane (it already
+  swizzles the pane, so it can add controls). Pairs with the demo-ideas polish backlog below.
+
+---
+
+## Custom assets across the UI — BACKLOG (user-flagged 2026-07-06)
+
+User reminder ("haven't forgotten that"): we want to **swap in our own custom assets** in a number of
+places across the UI rather than reusing Apple's art. Current Apple-art reuse spots:
+- The updater app icon (`tools/mt2_updater/MavericksTrackpad2Updater.icns`) = Apple's `TrackpadPicture.png`.
+- The BT-pane row-icon swizzle = Apple's `Trackpad.prefPane` `TrackpadPicture.png` (see `explanation.md`
+  → Bluetooth prefpane device identity → Picture).
+- (The bezel-HUD trackpad art is Apple's `BtTrackpad.pdf` — Apple's config, so that one is fine.)
+
+Not urgent, but a deliberate pass to give the product its own visual identity (app/product icon, pane art,
+updater icon, maybe an About-tab logo) is wanted, tied to the public-Apple-UX polish goal.
+
+---
+
+## Demo video / animation — product BACKLOG (user, 2026-06-29)
+
+What would make a good demo of the driver — a video or animation? Seed ideas captured; not built. The
+"wow" = a **Magic Trackpad 2, which Apple says needs OS X 10.11+, working FULLY on 10.9 Mavericks** —
+every gesture, both USB and Bluetooth. Judge any demo by a new general user's first-run.
+
+**Strong demo concepts (rank/refine later):**
+- **Split-screen hands + screen.** Camera on the hands on the trackpad, side-by-side with the screen, so
+  each physical gesture and its on-screen result read together. Keep "About This Mac → 10.9.5" visible to
+  prove the OS.
+- **Before/after.** Plug an MT2 into stock 10.9 (cursor barely works / no gestures) → load our driver →
+  the full gesture set lights up. Same hardware, same OS, one change.
+- **The full gesture reel:** cursor, two-finger scroll, two-finger swipe between pages, tap-to-click,
+  physical click, two-finger secondary-click, edge responsiveness (no dead zones) — on BOTH USB and BT.
+- **Seamless transport handoff:** unplug USB → keeps working over Bluetooth (the no-tap handoff); the
+  Trackpad prefpane updating live as transport switches.
+- **Onboarding "plug in once" story** (aspirational, gated on the USB-OOB pairing spike): plug in USB once
+  → auto-paired → unplug → fully wireless. The Apple-grade first-run.
+- **Battery in the menu bar / prefpane** once that ships.
+
+**Format candidates:** short screen-capture + hand cam (QuickTime screen recording on the 10.9 box + phone
+cam, composited); a tight animated GIF per feature for the README; or one ~60 s narrated walkthrough for a
+release page.

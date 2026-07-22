@@ -297,3 +297,22 @@ finalizes the tap. Timestamp = CompactV4 packing `ts = (b1>>2) | (b2<<6) | (b3<<
 `debug.mt2_log` sysctl (`kext-gesture/mt2_log.{h,cpp}`): `0` off (default), `1` milestones +
 CONNTRACE, `2` verbose (per-report geometry, per-edge clicks). `dmesg | tools/re conn-trace` →
 per-connection STEADY/FAIL verdict.
+
+## Supportable OS range — floor = OS X 10.6.4
+
+**How far back can this driver work?** Our approach feeds Apple's existing external-trackpad gesture
+engine (`AppleMultitouchDriver.kext` + `MultitouchHID.plugin`) instead of reimplementing gestures, so the
+floor is wherever that engine first existed.
+
+- **HARD FLOOR = OS X 10.6.4 Snow Leopard** — the external Magic Trackpad gesture engine shipped with the
+  original Magic Trackpad launch update (2010; the Magic Trackpad requires 10.6.4). Below it there is no
+  host gesture stack to hijack → reimplementing gestures = out of scope.
+- **Useful range = 10.6.4 → 10.10 Yosemite.** 10.11 El Capitan (2015) added NATIVE MT2 support, so the
+  driver is unneeded from 10.11 up. **10.9 Mavericks is the lead/dev platform.**
+- **Each older version is a SEPARATE PORT, not a recompile.** MT2 USB/BT decode is OS-independent (ports
+  free), but the `AppleMultitouchDevice` hijack (the `IsFake` bypass, `allocClassWithName`, exact property
+  names, `createMultitouchHandler` config, `MTSlideGesture` offsets) is 10.9.5-tuned, and the kext needs a
+  per-version Kernel-KPI build. The BNBDevice-equivalence config is itself per-version.
+- **Caveat:** the *technique's* real floor could be ABOVE 10.6.4 if our specific hijack points (e.g. the
+  `IsFake` lenient path) don't exist in older `AppleMultitouchDriver` builds — confirm per-version via RE
+  before promising support.

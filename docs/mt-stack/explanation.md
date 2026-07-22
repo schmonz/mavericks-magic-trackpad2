@@ -199,6 +199,48 @@ still works — it's the recognizer's gesture path, gate-independent). We put
 `ExtractAndPostDeviceButtonState` in `DefaultMultitouchProperties`; `createMultitouchHandler` copies
 it onto the AMD before `start`, so the gate opens. We also route the click sink to BNB's AMD.
 
+## Historical bug: cursor edge dead zones — FIXED 2026-06-25 (`eea90c7`)
+
+**Symptom (both transports).** A ~1-inch band near each L/R pad edge froze the cursor's X (couldn't
+move left/right within the band) while Y still moved; a larger top band froze Y while L/R still worked;
+no bottom band. Net effect: the active area looked reduced and offset toward the bottom. Each dead zone
+froze **only the axis perpendicular to its edge** — the exact signature of position-normalization
+saturating against a rectangle smaller than the pad (`norm.x = clamp((x-xmin)/(xmax-xmin),0,1)` pins to
+0/1 in the L/R band; `norm.y` pins to 1 in the top band). On-device `tools/mt_contacts` norm/abs traces
+confirmed a CLAMP (values pinned at exactly 0.000/1.000, not held-at-entry): the recognizer's active
+position rectangle measured ≈ **80×64 mm, Y-center +31 mm**, versus the physical **160×115 mm** — about
+half-scale and offset up.
+
+**Root cause: we seeded a HALF-RESOLUTION sensor grid + a ZEROED region.** The recognizer builds its
+position-normalization rectangle from the sensor grid/region, not from the Surface dimensions. We seeded
+**Cols 16 / Rows 13 + a zeroed Sensor Region + no Surface Descriptor**; a genuine MT2 is **Cols 30 /
+Rows 22** with a populated Region/Surface descriptor (ground truth in `reference.md` → genuine geometry).
+`16/30 = 0.53`, `13/22 = 0.59` — matching the measured active-rect fractions (X ≈ 0.53, Y ≈ 0.56). So
+our half grid produced a half-pad normalization rectangle → the perpendicular-axis edge dead zones.
+
+**The fix.** Seed the **genuine geometry** (Family 129, Rows 22, Cols 30, Surface 15600×11040 + the real
+Region Descriptor / Region Param / Surface Descriptor) from **one source of truth** (`src/mt2_geometry.h`)
+into BOTH the BT report (`mt2_geometry.c`) and the genuine-USB init dict — verified on both transports
+`eea90c7`. Exact bytes in `reference.md` → genuine geometry.
+
+**Four theories were FALSIFIED first** (recorded so we don't re-chase them):
+1. **Coordinate-range clamp** (`mt1_encode` MT2_MIN/MAX_X too narrow → `scale()` clamps): refuted —
+   measured decoded extent ≈ the assumed range; the ±2500 `MT1_MAX_X` experiment changed nothing.
+2. **Device-side sensor saturation** at the border: refuted — under full-BNB an in-band finger wiggle
+   made decoded `x` VARY (3440→3573) while the cursor X stayed frozen ⇒ decoded x is faithful and
+   changing ⇒ the pin is DOWNSTREAM, not the device.
+3. **`MTSlideGesture::isBlocked` gated on `transport==4` (Bluetooth):** falsified on-device — the
+   `kEdgeNoBtTransport` override made `tools/mt_transport` report `transportMethod=1` (not 4), but the
+   dead zone PERSISTED and from-edge swipes STILL worked (both should have flipped). The reserve is NOT
+   transport-gated; `isBlocked` decides the edge-*swipe* block, not pointer suppression.
+4. **Surface-width seed too narrow** (the meticulous-but-wrong one): widened `MT2_SURFACE_WIDTH`
+   13000→16000 (single knob in `src/mt2_geometry.h`, propagation verified end-to-end via `ioreg` +
+   `tools/mt_transport` cached `surfaceW=16000`) — dead zones were IDENTICAL. A confident static-analysis
+   chain (`detectSustainedHoverAtEdge` band = `threshold_mm ÷ surfaceWidth`) did not describe the operative
+   mechanism. 16000 was KEPT (the pad provably IS 160 mm; 13000 was a real under-model) but it was NOT the
+   fix. The lesson: pure static RE reached a confident-but-wrong conclusion; the on-device norm/abs trace
+   plus a genuine-device `ioreg` sample cracked it.
+
 ## Cursor actuation — how the pointer actually gets driven
 
 Geometry makes the cursor *smooth*; a separate mechanism makes it *move at all*. Apple wires a
