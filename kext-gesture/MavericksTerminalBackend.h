@@ -22,6 +22,12 @@ public:
     void updateDimensions(uint32_t logicalMaxX, uint32_t logicalMaxY);
     void stop(IOService *nub);
 
+    /* Publish a battery capacity (0-100) on our fabricated AMD node as "BatteryPercent" — the terminal
+     * owns that node, so the reader hands us a parsed value instead of reaching the node itself. Self-
+     * fences (no-op until the AMD is built / once teardown starts) and dedups repeat values. Honors the
+     * debug.mt2_batt override. */
+    void publishBattery(uint8_t pct);
+
     uint32_t logicalMaxX() const { return fLogicalMaxX; }   // mux reads these as the update-message default
     uint32_t logicalMaxY() const { return fLogicalMaxY; }
     mavericks_amd_terminal_ctx *synthCtx() const { return fSynth; }   // sink-trampoline glue
@@ -35,5 +41,6 @@ private:
     IOWorkLoop         *fWL;
     IOTimerEventSource *fIdle;
     IOLock             *fLock;
+    int                 fLastBattPct;   /* publishBattery dedup (-1 = none published yet) */
 };
 #endif

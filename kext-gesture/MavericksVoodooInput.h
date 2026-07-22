@@ -8,9 +8,9 @@ public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
     virtual IOReturn message(UInt32 type, IOService *provider, void *argument) override;
-    mavericks_amd_terminal_ctx *synthCtx() const {   // reader glue: MT2BTReader battery poll
-        return fBackend ? fBackend->synthCtx() : 0;
-    }
+    /* Reader glue: MT2BTReader parses the BT battery report and hands us the capacity; we forward it to
+     * the backend, which owns the fabricated AMD node it lands on. The reader never touches that node. */
+    void publishBattery(uint8_t pct) { if (fBackend) fBackend->publishBattery(pct); }
 private:
     IOService                *fProvider;
     MavericksTerminalBackend *fBackend;

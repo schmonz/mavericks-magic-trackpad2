@@ -24,7 +24,6 @@
 #include "bt_l2cap_shim.h"
 #include "MT2BTReader.h"
 #include "MavericksVoodooInputHost.h"
-#include "amd_shim.h"          /* AppleMultitouchDevice (used by mavericks_maybe_publish_battery) */
 
 /* Compiled as C++ under the kext toolchain (so is mt2_bt_decode.c), so these resolve
  * with C++ linkage on both sides — no extern "C". */
@@ -36,10 +35,9 @@
 #include "../src/mavericks_conn_trace.h" /* CONNTRACE emitter (connect-flap measurement) */
 #include "../src/mavericks_stack.h"  /* canonical RE facts: vtable slots, field offsets, props */
 #include "../src/mavericks_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
-#include "MavericksAMDTerminal.h"           /* mavericks_amd_terminal_amd — read the mux's terminal AMD node for battery */
 #include "mavericks_voodoo_translate.h"     /* mavericks_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
-#include "MavericksVoodooInput.h"           /* com_schmonz_MavericksVoodooInput::synthCtx() — terminal AMD node for battery */
+#include "MavericksVoodooInput.h"           /* com_schmonz_MavericksVoodooInput::publishBattery() — hands battery to the backend */
 #include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
 /* mavericks_splice_kext.h -> mavericks_splice.h -> vtable_clone.h requires these macros before the include. */
 #define VTC_ALLOC(sz)  IOMalloc(sz)
@@ -96,33 +94,15 @@ static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
     if (mavericks_conn_trace_format(buf, sizeof(buf), &r) > 0) MAVERICKS_DLOG(1, "%s", buf);
 }
 
-/* Battery bridge: publish the report-0x90 capacity on the fabricated AMD node.
- * Task 3 re-homes this to the fabricated AMD's node; for now it is a no-op
- * (gGenuineBnb is gone — Task 3 wires the fabricated node instead). */
-static int        gLastBattPct = -1;
-static IOService *gLastBattBnb = 0;
-static void mavericks_publish_battery(IOService *node, uint8_t pct) {
-    /* debug.mt2_batt override: force a value for prefpane UI testing (e.g. 0 to exercise the pane's
-     * low-battery / Change-Batteries painting). -1 = off (use the real device value). */
-    if (gMavericksBattOverride >= 0 && gMavericksBattOverride <= 100) pct = (uint8_t)gMavericksBattOverride;
-    if (pct > 100) return;                     /* capacity is 0-100; ignore out-of-range */
-    if (node == gLastBattBnb && (int)pct == gLastBattPct) return;   /* same node + same value */
-    gLastBattPct = (int)pct; gLastBattBnb = node;
-    OSNumber *n = OSNumber::withNumber((unsigned long long)pct, 32);
-    if (n) { node->setProperty("BatteryPercent", n); n->release(); }
-    MAVERICKS_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
-}
-
-/* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), publish the capacity as
- * "BatteryPercent" on the terminal fabricated AMD node — which the mux now owns (gBtMux->synthCtx()).
- * mavericks_amd_terminal_amd() returns NULL until the AMD is built + ready and again once teardown starts, so
- * this self-fences; gBtMux is NULL until the interrupt reader locates the mux. The pure parse is
- * host-tested (tests/test_battery.c). No-op when the packet isn't 0x90 or no terminal AMD is up. */
+/* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), hand the capacity to the
+ * terminal backend (through the located mux), which publishes it as "BatteryPercent" on the fabricated
+ * AMD node IT owns — the reader no longer reaches that node. The backend applies the debug.mt2_batt
+ * override, dedups, and self-fences until its AMD is up; gBtMux is NULL until the reader locates the mux.
+ * The pure parse is host-tested (tests/test_battery.c). No-op when the packet isn't 0x90. */
 static void mavericks_maybe_publish_battery(const void *data, size_t len) {
     uint8_t pct;
     if (!mt2_parse_battery_report((const uint8_t *)data, len, &pct)) return;
-    AppleMultitouchDevice *amd = gBtMux ? mavericks_amd_terminal_amd(gBtMux->synthCtx()) : 0;
-    if (amd) mavericks_publish_battery((IOService *)amd, pct);
+    if (gBtMux) gBtMux->publishBattery(pct);
 }
 
 /* CONTROL-channel (PSM 17) delegate shim. Unlike the interrupt shim (which consumes touch frames),
@@ -461,7 +441,7 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
     /* We are a VoodooInput satellite: as this provider stops, IOKit detaches + stops the mux
        (our client), which tears down its own terminal AMD. Just drop our borrowed references. */
     fMux = 0;
-    if (gBtMux) { gBtMux = 0; gLastBattBnb = 0; }  /* forget the mux's battery node */
+    if (gBtMux) gBtMux = 0;   /* forget the located mux (its backend owns the battery node + dedup) */
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */

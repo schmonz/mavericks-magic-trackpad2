@@ -3,7 +3,9 @@
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOLocks.h>
 #include <kern/clock.h>
+#include <libkern/c++/OSNumber.h>
 #include "mavericks_voodoo_translate.h"  // mavericks_frame_from_voodoo (extern "C")
+#include "mavericks_log.h"               // MAVERICKS_DLOG + gMavericksBattOverride
 
 OSDefineMetaClassAndStructors(MavericksTerminalBackend, OSObject)
 
@@ -43,7 +45,7 @@ bool MavericksTerminalBackend::start(IOService *nub, mavericks_amd_terminal_tran
     if (!fLogicalMaxX || !fLogicalMaxY)
         IOLog("MavericksTerminalBackend: WARNING zero logical max (X=%u Y=%u); coordinates unscaled\n",
               fLogicalMaxX, fLogicalMaxY);
-    fSynth = 0; fWL = 0; fIdle = 0; fLock = IOLockAlloc();
+    fSynth = 0; fWL = 0; fIdle = 0; fLock = IOLockAlloc(); fLastBattPct = -1;
     fSynth = mavericks_amd_terminal_build(nub, transport);   /* fail-soft */
     if (!fSynth) IOLog("MavericksTerminalBackend: WARNING synthetic AMD build failed; no cursor\n");
     fWL = IOWorkLoop::workLoop();
@@ -76,4 +78,17 @@ void MavericksTerminalBackend::stop(IOService *nub) {
     if (fWL) { fWL->release(); fWL = 0; }
     mavericks_amd_terminal_teardown(nub, fSynth); fSynth = 0;
     if (fLock) { IOLockFree(fLock); fLock = 0; }
+}
+
+void MavericksTerminalBackend::publishBattery(uint8_t pct) {
+    /* debug.mt2_batt override: force a value for prefpane UI testing (-1 = off / use the real value). */
+    if (gMavericksBattOverride >= 0 && gMavericksBattOverride <= 100) pct = (uint8_t)gMavericksBattOverride;
+    if (pct > 100) return;                             /* capacity is 0-100; ignore out-of-range */
+    if ((int)pct == fLastBattPct) return;              /* dedup: same value on our one AMD node */
+    AppleMultitouchDevice *amd = mavericks_amd_terminal_amd(fSynth);   /* NULL until built / during teardown */
+    if (!amd) return;                                  /* self-fence: no node yet */
+    fLastBattPct = (int)pct;
+    OSNumber *n = OSNumber::withNumber((unsigned long long)pct, 32);
+    if (n) { ((IOService *)amd)->setProperty("BatteryPercent", n); n->release(); }
+    MAVERICKS_DLOG(1, "battery = %u%% -> published BatteryPercent", (unsigned)pct);
 }
