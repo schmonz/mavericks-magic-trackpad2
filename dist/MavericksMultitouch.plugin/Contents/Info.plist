@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>dev.modernmavericks.MavericksMultitouch</string>
+    <key>CFBundleName</key><string>MavericksMultitouch</string>
+    <key>CFBundlePackageType</key><string>BNDL</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleVersion</key><string>1.0</string>
+    <key>CFBundleDevelopmentRegion</key><string>English</string>
+    <key>BezelServicesPlugin</key>
+    <dict>
+        <key>Version</key><integer>2</integer>
+        <key>Classes</key>
+        <dict>
+            <key>AppleMultitouchDevice</key>
+            <dict>
+                <key>PreferenceIdentifier</key><string>dev.modernmavericks.MavericksMultitouch.trackpad</string>
+                <key>Actions</key>
+                <dict>
+                    <key>ConnectOSD</key>
+                    <dict>
+                        <key>Type</key><string>OSD</string>
+                        <key>Image</key><string>MavericksTrackpad.pdf</string>
+                        <key>Priority</key><integer>600</integer>
+                        <key>DurationMS</key><integer>2000</integer>
+                    </dict>
+                    <key>DisconnectOSD</key>
+                    <dict>
+                        <key>Type</key><string>OSD</string>
+                        <key>Image</key><string>MavericksTrackpad.pdf</string>
+                        <key>Priority</key><integer>600</integer>
+                        <key>DurationMS</key><integer>2000</integer>
+                    </dict>
+                </dict>
+                <key>Messages</key>
+                <dict>
+                    <key>Connected</key>
+                    <dict>
+                        <key>Action</key><string>ConnectOSD</string>
+                        <key>CancelsPendingAction</key><string>DisconnectOSD</string>
+                        <key>CancelsSelf</key><true/>
+                    </dict>
+                    <key>Disconnected</key>
+                    <dict>
+                        <key>Action</key><string>DisconnectOSD</string>
+                    </dict>
+                </dict>
+            </dict>
+        </dict>
+    </dict>
+</dict>
+</plist>
