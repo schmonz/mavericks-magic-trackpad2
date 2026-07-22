@@ -63,19 +63,12 @@ In multitouch mode (what our driver puts the device in), the MT2 exposes battery
 - Same report id + byte offset on both transports; macOS handles the BT HIDP framing. byte[1] gives a free
   charging indicator.
 
-> ⚠️ **CAVEAT (2026-07-04): byte[2] has NEVER been observed below 100.** Every capture (USB `90 05 64`,
-> BT `90 00 64`) was `0x64` = 100%, and the user reports the pane has *only ever* shown 100% — never 99% or
-> any other value. So "battery % = byte[2]" is confirmed as the field's *location + value at full*, but it is
-> UNCONFIRMED that byte[2] actually TRACKS drain. The response is exactly 3 bytes (the probe prints the full
-> reply), so there is no other capacity field to have missed — it is not a wrong-offset bug. Two live
-> possibilities remain, indistinguishable from any 100%-only data: (a) the battery really is ~100% (desktop
-> Mac Pro; the MT2 is charged over USB often, and BT drains slowly), or (b) byte[2] is a coarse/fixed
-> "full" indicator (Usage `0x65` AbsoluteStateOfCharge) that the firmware doesn't update finely. **This is
-> unresolvable off-device — we already read everything the report contains.** Cheapest resolutions:
-> (1) read-only: dump the MT2 report descriptor and check the `0x65` field's LogicalMax — `100` ⇒ meant as a
-> real 0–100%, a small enum ⇒ coarse; (2) empirical: run the MT2 BT-only until genuinely drained, probe
-> periodically with `mt2_battery_probe`, and see whether byte[2] ever moves off `0x64`. No code change is
-> warranted until one of these shows byte[2] is actually wrong.
+> ✅ **RESOLVED (2026-07-22): byte[2] DOES track drain — the always-100 was just a full battery.** The user
+> confirmed on-device that the battery reading slowly drains (drops below 100 over BT-only use). So the
+> earlier "never observed below 100" was possibility (a) — the MT2 was simply kept near-full (charged over USB
+> often; BT drains slowly) — NOT a coarse/fixed field. "battery % = byte[2]" is fully confirmed: location AND
+> tracking. No further work; the field is correct. (Historical: the 2026-07-04 caveat flagged this as
+> unresolvable off-device pending a real drain; the real drain happened and byte[2] moved.)
 - Red herring: the *mouse-mode* descriptor also had a battery-strength report `0x47` (Usage `0x06/0x20`, 1
   byte), but that interface is NOT present in multitouch mode. The first `0x47` read we saw was a vendor
   report. Ignore `0x47`.

@@ -1827,7 +1827,13 @@ it with another plausible story.
 
 ---
 
-## Screensaver / boot bug is BACK — the "proven external" verdict reopened (queued 2026-06-29)
+## Screensaver / boot bug — CLOSED, NOT OURS (final verdict 2026-07-22)
+
+> ✅ **CLOSED — NOT our driver.** The user confirmed (2026-07-22) the bug is characterized thoroughly as
+> unrelated to the driver: it happens on this machine's **graphics hardware + display setup regardless** of
+> our kext (reproduces without/around it). The "proven external" verdict below was right after all; the
+> 2026-06-29 "solidly back" recurrence was the same external GPU/display issue, not a driver regression. No
+> driver work warranted. History retained below.
 
 User flagged 2026-06-29: **"the screensaver bug is solidly back."** Queued — reproduce + capture before
 coding.
