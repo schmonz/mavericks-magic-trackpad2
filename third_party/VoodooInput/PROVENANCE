@@ -13,3 +13,12 @@ VoodooInput.cpp, VoodooInput.hpp, VoodooInputIDs.hpp
   fetched: 2026-07-21
   license: GPLv2 (compatible with ours)
   local mods: MAVERICKS_TERMINAL build-macro seam (Task 2) — guarded so upstream's default build is byte-unaffected
+
+VoodooInputSimulator/VoodooInput{Simulator,Actuator}Device.{cpp,hpp}, Trackpoint/TrackpointDevice.{cpp,hpp},
+VoodooInputMultitouch/MultitouchHelpers.h
+  source: acidanthera/VoodooInput @ d897813718c2ef9ad143b6a86240fe52dcb1693e
+  fetched: 2026-07-22
+  license: GPLv2 (compatible with ours)
+  local mods: none (pristine). Compiled on 10.9 as the always-present >=ElCapitan terminal branch; selected
+    only at runtime by version_major (never on our 10.9 target). IOLog/IOMalloc reach them via a
+    -include <IOKit/IOLib.h> compile flag (upstream gets it from its umbrella) — the sources stay verbatim.
