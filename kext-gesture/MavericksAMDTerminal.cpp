@@ -20,6 +20,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOService.h>
 #include <IOKit/IOWorkLoop.h>
+#include <IOKit/IOTimerEventSource.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
@@ -40,7 +41,19 @@ struct mavericks_amd_terminal_ctx {
     AppleMultitouchDevice    *amd;
     bool                      ready;  /* feed fence: amd() returns NULL until built, and again once teardown starts */
     IOWorkLoop               *wl;     /* retained AMD workloop; released LAST (VoodooInput invariant) */
+    IOTimerEventSource       *bezelTimer;  /* one-shot: posts the BezelServices connect OSD after registerService */
 };
+
+/* BezelServices connect/disconnect OSD trigger: the owning driver posts messageClients('bsk2', <name>, 32)
+ * on its node; our MavericksMultitouch.plugin (keyed AppleMultitouchDevice) maps Connected/Disconnected to
+ * trackpad art. RE: docs/mt-stack/device-identity-map.md. The arg is a plain NUL-terminated char* (BezelServices
+ * reads it via %s) — NOT an OSString. */
+static const UInt32 kMavericksBezelMsg = 0x62736B32;  /* 'bsk2' */
+
+static void mavericks_bezel_connect_fired(OSObject *owner, IOTimerEventSource *) {
+    IOService *amd = OSDynamicCast(IOService, owner);
+    if (amd) amd->messageClients(kMavericksBezelMsg, (void *)"Connected", 32);
+}
 
 /* ---- handler stubs (RE'd layout: buf at b+1; length at *(u32*)(b+0x204)) ------------------- */
 
@@ -138,6 +151,7 @@ mavericks_amd_terminal_ctx *mavericks_amd_terminal_build(IOService *nub, maveric
      *    here BEFORE the AMD starts. Best-effort: failure is logged but the build
      *    continues (the AMD may still start in lenient mode). */
     ctx->shell = 0;
+    ctx->bezelTimer = 0;
     {
         MavericksHIDShell *hid = new MavericksHIDShell;
         OSDictionary *hp = makeHidProps(transport);
@@ -345,6 +359,12 @@ mavericks_amd_terminal_ctx *mavericks_amd_terminal_build(IOService *nub, maveric
     ctx->wl = dev->getWorkLoop();
     if (ctx->wl) ctx->wl->retain();
 
+    /* Fire the BezelServices connect OSD on a short one-shot timer so BezelServices has armed its
+     * IOGeneralInterest watch on our just-registered node first (mirrors Apple's deviceConnectTimerFired
+     * post-start timer). Inert unless MavericksMultitouch.plugin is installed + scanned at login. */
+    ctx->bezelTimer = ctx->wl ? IOTimerEventSource::timerEventSource((OSObject *)ctx->amd, &mavericks_bezel_connect_fired) : 0;
+    if (ctx->bezelTimer) { ctx->wl->addEventSource(ctx->bezelTimer); ctx->bezelTimer->setTimeoutMS(500); }
+
     /* Raise the feed fence LAST: callers of mavericks_amd_terminal_amd() see NULL until the device
      * is fully built+started, and again once teardown clears it. */
     ctx->ready = true;
@@ -404,6 +424,15 @@ static void op_release_wl(void *c) {
 
 void mavericks_amd_terminal_teardown(IOService *nub, mavericks_amd_terminal_ctx *ctx) {
     (void)nub;
+    /* BezelServices disconnect OSD: post while the AMD node still exists + cancel the pending connect timer,
+     * BEFORE the ordered ops terminate the node and release the workloop. */
+    if (ctx && ctx->bezelTimer) {
+        ctx->bezelTimer->cancelTimeout();
+        if (ctx->wl) ctx->wl->removeEventSource(ctx->bezelTimer);
+        ctx->bezelTimer->release();
+        ctx->bezelTimer = 0;
+    }
+    if (ctx && ctx->amd) ((IOService *)ctx->amd)->messageClients(kMavericksBezelMsg, (void *)"Disconnected", 32);
     if (!ctx) return;
     mavericks_synth_teardown_ops_t ops = {
         op_clear_ready, op_term_shell, op_term_amd, op_release_amd, op_release_wl, ctx
