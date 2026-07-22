@@ -1,106 +1,54 @@
 #include "MavericksVoodooInput.h"
-#include <IOKit/IOWorkLoop.h>
-#include <IOKit/IOTimerEventSource.h>
-#include <IOKit/IOLocks.h>
-#include <kern/clock.h>
 #include "mavericks_log.h"              // MAVERICKS_DLOG
-#include "voodoo_wire.h"           // wire VoodooInputEvent + kIOMessage* + key macros
-#include "mavericks_voodoo_translate.h"  // mavericks_frame_from_voodoo (extern "C")
+#include "voodoo_wire.h"               // VoodooInputEvent + kIOMessage* + VOODOO_INPUT_* keys
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 
 OSDefineMetaClassAndStructors(com_schmonz_MavericksVoodooInput, IOService)
-
-static uint32_t uptime_ms(void) {
-    uint64_t abs_t, ns;
-    clock_get_uptime(&abs_t);
-    absolutetime_to_nanoseconds(abs_t, &ns);
-    return (uint32_t)(ns / 1000000ULL);
-}
 
 static uint32_t read_u32_prop(IOService *p, const char *key, uint32_t dflt) {
     OSNumber *n = OSDynamicCast(OSNumber, p->getProperty(key));
     return n ? (uint32_t)n->unsigned32BitValue() : dflt;
 }
 
-/* Sink trampolines: dispatch each session effect to the mux's own synthetic AMD. */
-static void mux_feed_frame(void *ctx, const MavericksTouchFrame *frame) {
-    com_schmonz_MavericksVoodooInput *self = (com_schmonz_MavericksVoodooInput *)ctx;
-    mavericks_amd_terminal_feed(self->synthCtx(), frame, (uint32_t)uptime_ms());
-}
-static void mux_post_button_edge(void *ctx, unsigned mask) {
-    com_schmonz_MavericksVoodooInput *self = (com_schmonz_MavericksVoodooInput *)ctx;
-    mavericks_amd_terminal_button(self->synthCtx(), mask);   /* physical click -> terminal AMD (was a no-op stub:
-        the sample satellite never pressed a button, so this path went untested until the MT2 reader) */
-}
-static void mux_arm_timer(void *ctx, uint32_t ms) { ((com_schmonz_MavericksVoodooInput *)ctx)->armIdle(ms); }
-
-void com_schmonz_MavericksVoodooInput::armIdle(uint32_t ms) { if (fIdle) fIdle->setTimeoutMS(ms); }
-
-void com_schmonz_MavericksVoodooInput::idleTick(OSObject *owner, IOTimerEventSource *) {
-    com_schmonz_MavericksVoodooInput *self = OSDynamicCast(com_schmonz_MavericksVoodooInput, owner);
-    if (!self) return;
-    mavericks_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, self };
-    if (self->fLock) IOLockLock(self->fLock);
-    mavericks_session_timer(&self->fSession, &sink);
-    if (self->fLock) IOLockUnlock(self->fLock);
-}
-
 bool com_schmonz_MavericksVoodooInput::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
-    fProvider    = provider;
-    fLogicalMaxX = read_u32_prop(provider, VOODOO_INPUT_LOGICAL_MAX_X_KEY, 0);
-    fLogicalMaxY = read_u32_prop(provider, VOODOO_INPUT_LOGICAL_MAX_Y_KEY, 0);
-    if (!fLogicalMaxX || !fLogicalMaxY)   // dimension-less satellite -> translator identity fallback
-        IOLog("MavericksVoodooInput: WARNING zero logical max (X=%u Y=%u); coordinates unscaled\n",
-              fLogicalMaxX, fLogicalMaxY);
-
-    fSynth = 0; fWL = 0; fIdle = 0; fLock = IOLockAlloc();
-    /* Build the fabricated AMD with the satellite's advertised transport (BT default when unset,
-     * e.g. an external VoodooInput satellite that reports none). */
+    fProvider = provider;
+    uint32_t lmx = read_u32_prop(provider, VOODOO_INPUT_LOGICAL_MAX_X_KEY, 0);
+    uint32_t lmy = read_u32_prop(provider, VOODOO_INPUT_LOGICAL_MAX_Y_KEY, 0);
+    /* Transport policy stays in the router (it already reads provider props): BT default, USB when the
+     * satellite advertises it. The backend just receives the typed value. */
     mavericks_amd_terminal_transport_t xport = MAVERICKS_AMD_TERMINAL_XPORT_BT;
     OSString *tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
     if (tp && tp->isEqualTo("USB")) xport = MAVERICKS_AMD_TERMINAL_XPORT_USB;
-    fSynth = mavericks_amd_terminal_build(this, xport);   /* under the mux nub itself; fail-soft */
-    if (!fSynth) IOLog("MavericksVoodooInput: WARNING synthetic AMD build failed; no cursor\n");
-    fWL = IOWorkLoop::workLoop();
-    fIdle = fWL ? IOTimerEventSource::timerEventSource(this, &idleTick) : 0;
-    if (fIdle) fWL->addEventSource(fIdle);
-    mavericks_session_connect(&fSession, (uintptr_t)this, MAVERICKS_EVENT_DRIVEN, &mavericks_policy_default, (uint32_t)uptime_ms());
+
+    fBackend = OSTypeAlloc(MavericksTerminalBackend);
+    if (fBackend && !fBackend->start(this, xport, lmx, lmy)) { fBackend->release(); fBackend = 0; }
+    if (!fBackend)
+        IOLog("MavericksVoodooInput: WARNING terminal backend start failed; no cursor\n");
 
     setProperty(VOODOO_INPUT_IDENTIFIER, kOSBooleanTrue);  // satellites locate us by this
     registerService();
-    MAVERICKS_DLOG(1, "MavericksVoodooInput: up (LmaxX=%u LmaxY=%u)", fLogicalMaxX, fLogicalMaxY);
+    MAVERICKS_DLOG(1, "MavericksVoodooInput: up (LmaxX=%u LmaxY=%u)", lmx, lmy);
     return true;
 }
 
 void com_schmonz_MavericksVoodooInput::stop(IOService *provider) {
-    fProvider = 0;                        // fence: a late message() drops on the provider==fProvider check
-    /* Quiesce: drain any message() that passed the fence and holds fLock inside mavericks_session_frame,
-     * before we tear down fSynth / free fLock. With fProvider==0 no new message() enters the fLock
-     * region, so this barrier makes the teardown UAF-safe (matches the old quiesceDelivery pattern).
-     * Needed for the edge case where the mux is torn down while a live satellite is still sending. */
-    if (fLock) { IOLockLock(fLock); IOLockUnlock(fLock); }
-    if (fIdle) { fIdle->cancelTimeout(); if (fWL) fWL->removeEventSource(fIdle); fIdle->release(); fIdle = 0; }
-    if (fWL) { fWL->release(); fWL = 0; }
-    mavericks_amd_terminal_teardown(this, fSynth); fSynth = 0;
-    if (fLock) { IOLockFree(fLock); fLock = 0; }
+    fProvider = 0;   // routing fence: a late message() drops on the provider==fProvider check
+    if (fBackend) { fBackend->stop(this); fBackend->release(); fBackend = 0; }
     IOService::stop(provider);
 }
 
 IOReturn com_schmonz_MavericksVoodooInput::message(UInt32 type, IOService *provider, void *argument) {
     if (type == kIOMessageVoodooInputMessage && provider == fProvider && argument) {
-        const VoodooInputEvent *w = (const VoodooInputEvent *)argument;
-        MavericksTouchFrame f = mavericks_frame_from_voodoo(w, fLogicalMaxX, fLogicalMaxY);
-        mavericks_session_sink_t sink = { mux_post_button_edge, mux_feed_frame, mux_arm_timer, this };
-        if (fLock) IOLockLock(fLock);
-        mavericks_session_frame(&fSession, (uintptr_t)this, &f, (uint32_t)uptime_ms(), &sink);
-        if (fLock) IOLockUnlock(fLock);
+        if (fBackend) fBackend->handleEvent((const VoodooInputEvent *)argument);
         return kIOReturnSuccess;
     }
     if (type == kIOMessageVoodooInputUpdateDimensionsMessage && provider == fProvider) {
-        fLogicalMaxX = read_u32_prop(fProvider, VOODOO_INPUT_LOGICAL_MAX_X_KEY, fLogicalMaxX);
-        fLogicalMaxY = read_u32_prop(fProvider, VOODOO_INPUT_LOGICAL_MAX_Y_KEY, fLogicalMaxY);
+        if (fBackend)
+            fBackend->updateDimensions(
+                read_u32_prop(fProvider, VOODOO_INPUT_LOGICAL_MAX_X_KEY, fBackend->logicalMaxX()),
+                read_u32_prop(fProvider, VOODOO_INPUT_LOGICAL_MAX_Y_KEY, fBackend->logicalMaxY()));
         return kIOReturnSuccess;
     }
     return IOService::message(type, provider, argument);
