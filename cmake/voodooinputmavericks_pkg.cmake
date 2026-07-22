@@ -64,6 +64,10 @@ add_custom_target(pkg
   # Stage the SIMBL plugin bundle in a holding area; postinstall installs it into the SIMBL Plugins dir.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/share/voodooinputmavericks
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/VoodooInputMavericksPane.bundle ${PKGROOT}/usr/local/share/voodooinputmavericks/VoodooInputMavericksPane.bundle
+  # Connect/disconnect bezel OSD: our BezelServices plugin (plist only — art is copied from Apple's own
+  # co-resident plugin by the postinstall). Installs to the standard scan dir; takes effect next login.
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${PKGROOT}/Library/Application Support/Apple/BezelServices"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/dist/MavericksMultitouch.plugin "${PKGROOT}/Library/Application Support/Apple/BezelServices/MavericksMultitouch.plugin"
   # Build the flat component, then wrap it with productbuild --distribution so the
   # installer enforces the 10.9.5 floor (allowed-os-versions in dist/distribution.xml).
   # A bare pkgbuild product cannot express an OS floor; productbuild can.
