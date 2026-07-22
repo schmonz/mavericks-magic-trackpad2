@@ -10,12 +10,11 @@
 
 #include <IOKit/IOService.h>
 
-#ifdef MAVERICKS_TERMINAL
-class MavericksTerminalBackend;
-#else
 class VoodooInputSimulatorDevice;
 class VoodooInputActuatorDevice;
 class TrackpointDevice;
+#ifdef MAVERICKS_TERMINAL
+class MavericksTerminalBackend;
 #endif
 
 #ifndef EXPORT
@@ -27,12 +26,11 @@ class EXPORT VoodooInput : public IOService {
     
     IOService* parentProvider;
     
-#ifdef MAVERICKS_TERMINAL
-    MavericksTerminalBackend* backend;
-#else
     VoodooInputSimulatorDevice* simulator;
     VoodooInputActuatorDevice* actuator;
     TrackpointDevice* trackpoint;
+#ifdef MAVERICKS_TERMINAL
+    MavericksTerminalBackend* backend;
 #endif
     
     UInt8 transformKey;

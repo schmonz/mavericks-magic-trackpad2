@@ -7,6 +7,9 @@ set(KEXT_LOCAL_CPP
   MavericksVoodooInputHost.cpp MavericksVoodooInputHostUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mavericks_log.cpp mavericks_diag.cpp mavericks_splice_kext.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInput.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputSimulatorDevice.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputActuatorDevice.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/Trackpoint/TrackpointDevice.cpp
   MavericksTerminalBackend.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mavericks_amd_probe.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
@@ -53,7 +56,17 @@ set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_
 set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_conn_trace.c
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInput.cpp MavericksTerminalBackend.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputSimulatorDevice.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputActuatorDevice.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/Trackpoint/TrackpointDevice.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
+
+# Upstream's simulator/actuator reach IOLog/IOMalloc/IOFree via its umbrella include; our per-file kext build
+# doesn't, so force-include IOLib for exactly those two TUs. Keeps the vendored sources byte-identical to upstream.
+set_source_files_properties(
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputSimulatorDevice.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputActuatorDevice.cpp
+  PROPERTIES COMPILE_OPTIONS "-include;IOKit/IOLib.h")
 
 # Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel
 # link options, Kernel/IOKit include dirs, Info.plist configure, and .kext bundle assembly.

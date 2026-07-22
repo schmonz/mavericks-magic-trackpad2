@@ -9,14 +9,13 @@
 #include "VoodooInput.hpp"
 #include "VoodooInputIDs.hpp"
 #include "VoodooInputMultitouch/VoodooInputMessages.h"
-#ifdef MAVERICKS_TERMINAL
-#include <IOKit/IOLib.h>   /* IOLog — pulled in transitively by upstream's toolchain, explicit on the 10.9 SDK */
-#include "../../kext-gesture/MavericksTerminalBackend.h"
-#include <libkern/c++/OSString.h>
-#else
 #include "VoodooInputSimulator/VoodooInputActuatorDevice.hpp"
 #include "VoodooInputSimulator/VoodooInputSimulatorDevice.hpp"
 #include "Trackpoint/TrackpointDevice.hpp"
+#ifdef MAVERICKS_TERMINAL
+#include <IOKit/IOLib.h>
+#include "../../kext-gesture/MavericksTerminalBackend.h"
+#include <libkern/c++/OSString.h>
 #endif
 
 #include "libkern/version.h"
@@ -38,21 +37,25 @@ bool VoodooInput::start(IOService *provider) {
     }
 
 #ifdef MAVERICKS_TERMINAL
-    // 10.9: our fabricated-AMD terminal backend is the only terminal; the simulator/actuator/trackpoint
-    // subsystem is excluded from this build. Transport (BT default, USB when the satellite advertises it)
-    // mirrors our retired mux. logicalMaxX/Y already read by updateProperties() above.
-    mavericks_amd_terminal_transport_t xport = MAVERICKS_AMD_TERMINAL_XPORT_BT;
-    OSString* tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
-    if (tp && tp->isEqualTo("USB")) xport = MAVERICKS_AMD_TERMINAL_XPORT_USB;
-    backend = OSTypeAlloc(MavericksTerminalBackend);
-    if (backend && !backend->start(this, xport, logicalMaxX, logicalMaxY)) { backend->release(); backend = 0; }
-    if (!backend) IOLog("VoodooInput(MavericksTerminal): backend start failed; no cursor\n");
-#else
+    // 10.9 (< El Capitan): the OS multitouch AMD spawns only from a real USB transport driver, so upstream's
+    // simulator/actuator/trackpoint can't dispatch here (U2, see docs/mt-stack). Drive our fabricated-AMD
+    // terminal instead and skip the simulator subsystem. Same VoodooInputEvent stream (MavericksTerminalBackend).
+    if (version_major < kVoodooInputVersionElCapitan) {
+        mavericks_amd_terminal_transport_t xport = MAVERICKS_AMD_TERMINAL_XPORT_BT;
+        OSString* tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
+        if (tp && tp->isEqualTo("USB")) xport = MAVERICKS_AMD_TERMINAL_XPORT_USB;
+        backend = OSTypeAlloc(MavericksTerminalBackend);
+        if (backend && !backend->start(this, xport, logicalMaxX, logicalMaxY)) { backend->release(); backend = 0; }
+        if (!backend) IOLog("VoodooInput(MavericksTerminal): backend start failed; no cursor\n");
+        goto terminals_ready;
+    }
+#endif
+
     // Allocate the simulator and actuator devices
     simulator = OSTypeAlloc(VoodooInputSimulatorDevice);
     actuator = OSTypeAlloc(VoodooInputActuatorDevice);
     trackpoint = OSTypeAlloc(TrackpointDevice);
-    
+
     if (!simulator || !actuator || !trackpoint) {
         IOLog("VoodooInput could not alloc simulator, actuator or trackpoint!\n");
         OSSafeReleaseNULL(simulator);
@@ -60,7 +63,7 @@ bool VoodooInput::start(IOService *provider) {
         OSSafeReleaseNULL(trackpoint);
         return false;
     }
-    
+
     // Initialize simulator device
     if (!simulator->init(NULL) || !simulator->attach(this)) {
         IOLog("VoodooInput could not attach simulator!\n");
@@ -71,7 +74,7 @@ bool VoodooInput::start(IOService *provider) {
         simulator->detach(this);
         goto exit;
     }
-    
+
     // Initialize actuator device
     if (!actuator->init(NULL) || !actuator->attach(this)) {
         IOLog("VoodooInput could not init or attach actuator!\n");
@@ -82,7 +85,7 @@ bool VoodooInput::start(IOService *provider) {
         actuator->detach(this);
         goto exit;
     }
-    
+
     // Initialize trackpoint device
     if (!trackpoint->init(NULL) || !trackpoint->attach(this)) {
         IOLog("VoodooInput could not init or attach trackpoint!\n");
@@ -93,8 +96,11 @@ bool VoodooInput::start(IOService *provider) {
         trackpoint->detach(this);
         goto exit;
     }
+
+#ifdef MAVERICKS_TERMINAL
+terminals_ready:
 #endif
-    
+
     setProperty(VOODOO_INPUT_IDENTIFIER, kOSBooleanTrue);
     
     if (!parentProvider->open(this)) {
@@ -119,25 +125,24 @@ bool VoodooInput::willTerminate(IOService* provider, IOOptionBits options) {
 void VoodooInput::stop(IOService *provider) {
 #ifdef MAVERICKS_TERMINAL
     if (backend) { backend->stop(this); OSSafeReleaseNULL(backend); }
-#else
+#endif
     if (simulator) {
         simulator->stop(this);
         simulator->detach(this);
         OSSafeReleaseNULL(simulator);
     }
-    
+
     if (actuator) {
         actuator->stop(this);
         actuator->detach(this);
         OSSafeReleaseNULL(actuator);
     }
-    
+
     if (trackpoint) {
         trackpoint->stop(this);
         trackpoint->detach(this);
         OSSafeReleaseNULL(trackpoint);
     }
-#endif
     super::stop(provider);
 }
 
@@ -186,12 +191,13 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
     switch (type) {
         case kIOMessageVoodooInputMessage:
 #ifdef MAVERICKS_TERMINAL
-            if (provider == parentProvider && argument && backend)
+            if (provider == parentProvider && argument && backend) {
                 backend->handleEvent((const VoodooInputEvent*)argument);
-#else
+                break;
+            }
+#endif
             if (provider == parentProvider && argument && simulator)
                 simulator->constructReport(*(VoodooInputEvent*)argument);
-#endif
             break;
             
         case kIOMessageVoodooInputUpdateDimensionsMessage:
@@ -208,8 +214,7 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
         case kIOMessageVoodooInputUpdatePropertiesNotification:
             updateProperties();
             break;
-            
-#ifndef MAVERICKS_TERMINAL
+
         case kIOMessageVoodooTrackpointRelativePointer: {
             if (trackpoint) {
                 const RelativePointerEvent& event = *(RelativePointerEvent*)argument;
@@ -234,7 +239,6 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
                 trackpoint->updateTrackpointProperties();
             }
             break;
-#endif
     }
 
     return super::message(type, provider, argument);
