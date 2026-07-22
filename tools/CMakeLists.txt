@@ -104,7 +104,7 @@ if(MT2_SPARKLE_FRAMEWORK)
     BUNDLE_ID dev.modernmavericks.Trackpad2Updater
     FEED_URL "https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml"
     ED_PUBKEY "E8ZTStxLUfSWtTDg24bwnanLII20R27NVm+RxZtElGs="
-    ICON "${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_updater/MavericksTrackpad2Updater.icns"
+    ICON "${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_updater/Trackpad2Updater.icns"
     VERSION "${MAVERICKS_VERSION}"
     AUTO_CHECK false
     SPARKLE_FRAMEWORK "${MT2_SPARKLE_FRAMEWORK}"

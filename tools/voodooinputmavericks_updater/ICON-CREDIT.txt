@@ -1,0 +1,9 @@
+Trackpad2Updater.icns is a neutral placeholder: a plain gradient tile, no third-party artwork.
+
+At install time the postinstall replaces it with Mac OS X's own Magic Trackpad icon, copied from the
+machine being installed to (AppleBluetoothMultitouch.plugin) -- the same source, and the same rule,
+as the connect/disconnect bezel art a few lines above it: we ship no Apple artwork in our payload.
+A machine without that plugin simply keeps the placeholder.
+
+Until 2026-07-22 this file WAS Apple's Magic Trackpad icon, committed here and installed as part of
+the package, which contradicted that rule.

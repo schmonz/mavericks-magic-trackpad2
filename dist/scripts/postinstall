@@ -75,4 +75,10 @@ mkdir -p "$BEZEL_DST"
 cp "$BEZEL_SRC/BtTrackpad.pdf"     "$BEZEL_DST/MavericksTrackpad.pdf"  2>/dev/null || true
 cp "$BEZEL_SRC/MagicTrackpad.icns" "$BEZEL_DST/MavericksTrackpad.icns" 2>/dev/null || true
 
+# Updater icon: same rule, same source. We ship a neutral placeholder and borrow Apple's Magic
+# Trackpad art from the machine at install time, so no Apple artwork travels in our payload. The
+# updater is what a user sees when an update is offered, so it should look like the device it drives.
+UPD_ICON="/Library/Application Support/ModernMavericks/Trackpad2Updater.app/Contents/Resources/Trackpad2Updater.icns"
+[ -f "$UPD_ICON" ] && cp "$BEZEL_SRC/MagicTrackpad.icns" "$UPD_ICON" 2>/dev/null || true
+
 exit 0
