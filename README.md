@@ -19,11 +19,13 @@ The programming interface is nearly verbatim from
    `IOBluetoothHIDDriver`, open interrupt pipe / L2CAP channels,
    enable multitouch, decode each raw frame (`mt2_decode`) into a
    `MavericksTouchFrame`, and advertise `VoodooInputSupported`.
-2. **Mux** (`MavericksVoodooInput`) attaches to
-   each satellite, receives `VoodooInputEvent`s, and conditions the
+2. **Mux** (`MavericksVoodooInput`) attaches to each satellite and
+   routes its `VoodooInputEvent`s to the terminal backend — a thin
+   router (the upstream VoodooInput shape).
+3. **Terminal backend** (`MavericksTerminalBackend`) conditions the
    stream (`mavericks_session` / `mavericks_pipeline` /
-   `mavericks_lifecycle`).
-3. **Terminal** (`MavericksAMDTerminal`) synthesizes an
+   `mavericks_lifecycle`) and drives the **terminal**
+   (`MavericksAMDTerminal`), which synthesizes an
    `AppleMultitouchDevice` and feeds it MT1 frames
    (`mavericks_amd_construct_report`).
 
@@ -75,8 +77,9 @@ the shipping product.
   `_connect_sm`/`_coordinator` (transport SMs). `mavericks_vhid_mt1` is a kextless research path kept for
   reference.
 - `kext-gesture/` — the one shipped kext (`VoodooInputMavericks.kext`): the `MT2USBReader` / `MT2BTReader`
-  satellites, the `MavericksVoodooInput` mux, the `MavericksAMDTerminal` + `MavericksHIDShell` terminal,
-  and the `MavericksVoodooInputHost` nub (an always-present `IOResources` sentinel for the boot brick-guard).
+  satellites, the `MavericksVoodooInput` router mux, the `MavericksTerminalBackend` (conditioning + the
+  `MavericksAMDTerminal` / `MavericksHIDShell` terminal), and the `MavericksVoodooInputHost` nub (an
+  always-present `IOResources` sentinel for the boot brick-guard).
 - `third_party/VoodooInput/` — the vendored acidanthera VoodooInput ABI headers (verbatim); the interface
   our framework is built against and meant to merge into.
 - `tools/` — shipped: `mt2_linkstated` (the resident transport link-state coordinator daemon —
