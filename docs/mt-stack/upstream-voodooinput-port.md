@@ -46,8 +46,15 @@ have, not a new abstraction) — big for upstreamability.
 
 ## The (a)/(b) fork, precisely located
 
-Whether upstream's own terminal works on 10.9 hinges on the ONE unresolved question we deferred as **U2/③**:
-*does 10.9's `AppleMultitouchDriver` bind a virtual IOHIDDevice and spawn + dispatch an AMD?*
+> **U2 IS ANSWERED — NO (see `open-questions.md`, "Prefpane shows No Trackpad on synthetic USB" §, ~L874).**
+> 10.9's multitouch AMD **spawns only from the `IOUSBInterface` transport driver**, NOT from a bare virtual
+> IOHIDDevice. Upstream's `VoodooInputSimulatorDevice` *is* exactly a bare virtual IOHIDDevice (no USB
+> transport) → it cannot get an AMD dispatched on 10.9. So **fork (a) is foreclosed** and **fork (b) is the
+> answer** — which we then SHIPPED (see the SHIPPED section at the bottom). The framing below is preserved as
+> the reasoning; treat "U2 unresolved" here as historical.
+
+Whether upstream's own terminal works on 10.9 hinges on the ONE question we deferred as **U2/③** (now
+answered NO, above): *does 10.9's `AppleMultitouchDriver` bind a virtual IOHIDDevice and spawn + dispatch an AMD?*
 
 - **(a) Port their simulator as-is** — mechanical (KPI versions, 10.9 IOHIDDevice lifecycle compat, C++11 —
   our cross-build already does all of this). If ③ dispatches on 10.9 → their terminal ports beautifully +
@@ -64,14 +71,16 @@ Whether upstream's own terminal works on 10.9 hinges on the ONE unresolved quest
 
 - **Compile for 10.9:** small / mechanical — no Lilu is the gift; our repo already has the 10.9 SDK cross-
   build, kext KPI machinery, AppleClang gate, C++11 (`nullptr` etc. fine with AppleClang 6.0 on 10.9).
-- **Terminal WORKS on 10.9:** bounded; the only hard part is the U2/③ dispatch question we already own, and
-  we already hold the proven fallback (b), which fits upstream's version-gating architecture.
+- **Terminal WORKS on 10.9:** settled — U2 answered NO (above), so fork (b) is the terminal, and it's the
+  PROVEN fabricated-AMD (`MavericksTerminalBackend`), already shipped and USB-validated.
 - **MT2 satellite itself:** nearly free — already speaks the vendored ABI verbatim.
 - **Ally:** iphone2g&3gfan's Wellspring backend is converging on the same upstream — join forces.
 
-**Net: a moderate, mostly-mechanical port whose single risk (U2/③) we were already going to answer, with a
-clean landing either way.** Do U2 (started IOHIDDevice + built-in identity + enable handshake → does an AMD
-spawn/dispatch on 10.9) FIRST — its answer picks (a) vs (b).
+**Net: U2 is answered (NO) — fork (b) shipped. The remaining diff-reduction is structural, not a risk:
+convert our `MAVERICKS_TERMINAL` build-macro seam into upstream's own `version_major` runtime gate
+(`< kVoodooInputVersionElCapitan → MavericksTerminalBackend : VoodooInputSimulatorDevice`), which requires
+vendoring + 10.9-compiling upstream's simulator/actuator/trackpoint so both branches exist. That turns
+`VoodooInput.cpp` from a private fork-with-a-flag into a mergeable upstream patch.**
 
 Source read: acidanthera/VoodooInput `master`, `VoodooInput/{Info.plist, VoodooInput.cpp, VoodooInput.hpp,
 VoodooInputSimulator/VoodooInputSimulatorDevice.hpp}`, 2026-07-19.

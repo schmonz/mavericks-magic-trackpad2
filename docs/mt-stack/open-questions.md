@@ -872,7 +872,10 @@ USB. There is NO off-device one-liner; the diagnostic must run first. (Memory: `
 
 > **RESOLVED 2026-07-16 → `decisions.md` "② subclass … USB=genuine, BT=synthetic".** The two candidate fixes
 > both fell: ② subclass **panics** (bare `IOHIDDevice`-lineage `registerService`), ③ device-emulate is futile
-> (AMD spawns only from the `IOUSBInterface` transport driver). Decision: **USB goes genuine** — Apple's real
+> (AMD spawns only from the `IOUSBInterface` transport driver). **This also answers U2 for the upstream
+> VoodooInput port** (`upstream-voodooinput-port.md`): upstream's `VoodooInputSimulatorDevice` is a bare
+> virtual IOHIDDevice → can't get an AMD on 10.9 → fork (a) foreclosed, fork (b) confirmed. Decision:
+> **USB goes genuine** — Apple's real
 > `AppleUSBMultitouchDriver` starts on the MT2, which lights the pane **natively** (no swizzle, no synthetic
 > node). This entry is kept for the root-cause RE; the fix is the genuine-USB recovery, not anything here.
 
