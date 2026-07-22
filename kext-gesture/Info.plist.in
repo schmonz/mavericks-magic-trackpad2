@@ -189,11 +189,11 @@
             <key>CFBundleIdentifier</key>
             <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
-            <string>MavericksVoodooInput</string>
+            <string>VoodooInput</string>
             <key>IOProviderClass</key>
             <string>IOService</string>
             <key>IOMatchCategory</key>
-            <string>MavericksVoodooInput</string>
+            <string>VoodooInput</string>
             <key>IOPropertyMatch</key>
             <dict>
                 <key>VoodooInputSupported</key>

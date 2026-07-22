@@ -6,7 +6,8 @@
 set(KEXT_LOCAL_CPP
   MavericksVoodooInputHost.cpp MavericksVoodooInputHostUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mavericks_log.cpp mavericks_diag.cpp mavericks_splice_kext.cpp
-  MavericksVoodooInput.cpp MavericksTerminalBackend.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mavericks_amd_probe.cpp)
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInput.cpp
+  MavericksTerminalBackend.cpp MavericksHIDShell.cpp MavericksAMDTerminal.cpp mavericks_amd_probe.cpp)
 
 # Shared core from ../src, compiled UNDER the kext toolchain as C++ (-x c++), like the Makefile.
 set(KEXT_SHARED_NAMES
@@ -32,19 +33,26 @@ set_target_properties(mt2gesture_kext PROPERTIES
 # Project-specific include directories (source-local; kernel/IOKit dirs are added by mavericks_kext()).
 target_include_directories(mt2gesture_kext PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
+
+# The vendored upstream mux compiles verbatim; our MavericksTerminalBackend is selected in via
+# this seam (simulator/actuator/trackpoint #ifndef'd out). It MUST be target-wide, not per-source:
+# MT2BTReader.cpp includes VoodooInput.hpp and calls gBtMux->publishBattery(), which exists only
+# under MAVERICKS_TERMINAL — every TU that includes the header must see the SAME class layout.
+target_compile_definitions(mt2gesture_kext PRIVATE MAVERICKS_TERMINAL)
 
 # Compile the shared .c as C++ (kext mangling must match the .cpp callers; some shared
 # headers lack extern "C", so plain-C compilation would mismatch and fail to link).
 set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_OPTIONS "-x;c++")
 
 # KERNEL=1: MT2USBReader needs the kernel-only USB control API; conn_trace needs
-# libkern's snprintf (the kernel has no <stdio.h>). MavericksVoodooInput + the voodoo
+# libkern's snprintf (the kernel has no <stdio.h>). The vendored VoodooInput.cpp + the voodoo
 # translator need the KERNEL branch of voodoo_wire.h (real kernel OSTypes, not the
 # host shim). All gate behavior on #if KERNEL.
 set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_conn_trace.c
-  MavericksVoodooInput.cpp MavericksTerminalBackend.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInput.cpp MavericksTerminalBackend.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
   PROPERTIES COMPILE_DEFINITIONS KERNEL=1)
 
 # Apply reusable kext build machinery: -fapple-kext toolchain flags, freestanding-kernel

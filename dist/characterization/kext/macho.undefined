@@ -438,6 +438,7 @@ _absolutetime_to_nanoseconds
 _bzero
 _clock_get_system_microtime
 _clock_get_uptime
+_gIOServicePlane
 _kOSBooleanFalse
 _kOSBooleanTrue
 _memcpy
@@ -448,3 +449,4 @@ _sysctl__debug_children
 _sysctl_handle_int
 _sysctl_register_oid
 _sysctl_unregister_oid
+_version_major

@@ -10,9 +10,13 @@
 
 #include <IOKit/IOService.h>
 
+#ifdef MAVERICKS_TERMINAL
+class MavericksTerminalBackend;
+#else
 class VoodooInputSimulatorDevice;
 class VoodooInputActuatorDevice;
 class TrackpointDevice;
+#endif
 
 #ifndef EXPORT
 #define EXPORT __attribute__((visibility("default")))
@@ -23,9 +27,13 @@ class EXPORT VoodooInput : public IOService {
     
     IOService* parentProvider;
     
+#ifdef MAVERICKS_TERMINAL
+    MavericksTerminalBackend* backend;
+#else
     VoodooInputSimulatorDevice* simulator;
     VoodooInputActuatorDevice* actuator;
     TrackpointDevice* trackpoint;
+#endif
     
     UInt8 transformKey;
     
@@ -49,6 +57,10 @@ public:
     bool updateProperties();
 
     IOReturn message(UInt32 type, IOService *provider, void *argument) override;
+
+#ifdef MAVERICKS_TERMINAL
+    void publishBattery(uint8_t pct);   // MT2BTReader hands parsed battery to the backend it owns
+#endif
 };
 
 #endif

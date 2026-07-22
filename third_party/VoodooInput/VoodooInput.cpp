@@ -9,9 +9,15 @@
 #include "VoodooInput.hpp"
 #include "VoodooInputIDs.hpp"
 #include "VoodooInputMultitouch/VoodooInputMessages.h"
+#ifdef MAVERICKS_TERMINAL
+#include <IOKit/IOLib.h>   /* IOLog — pulled in transitively by upstream's toolchain, explicit on the 10.9 SDK */
+#include "../../kext-gesture/MavericksTerminalBackend.h"
+#include <libkern/c++/OSString.h>
+#else
 #include "VoodooInputSimulator/VoodooInputActuatorDevice.hpp"
 #include "VoodooInputSimulator/VoodooInputSimulatorDevice.hpp"
 #include "Trackpoint/TrackpointDevice.hpp"
+#endif
 
 #include "libkern/version.h"
 
@@ -31,6 +37,17 @@ bool VoodooInput::start(IOService *provider) {
         return false;
     }
 
+#ifdef MAVERICKS_TERMINAL
+    // 10.9: our fabricated-AMD terminal backend is the only terminal; the simulator/actuator/trackpoint
+    // subsystem is excluded from this build. Transport (BT default, USB when the satellite advertises it)
+    // mirrors our retired mux. logicalMaxX/Y already read by updateProperties() above.
+    mavericks_amd_terminal_transport_t xport = MAVERICKS_AMD_TERMINAL_XPORT_BT;
+    OSString* tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
+    if (tp && tp->isEqualTo("USB")) xport = MAVERICKS_AMD_TERMINAL_XPORT_USB;
+    backend = OSTypeAlloc(MavericksTerminalBackend);
+    if (backend && !backend->start(this, xport, logicalMaxX, logicalMaxY)) { backend->release(); backend = 0; }
+    if (!backend) IOLog("VoodooInput(MavericksTerminal): backend start failed; no cursor\n");
+#else
     // Allocate the simulator and actuator devices
     simulator = OSTypeAlloc(VoodooInputSimulatorDevice);
     actuator = OSTypeAlloc(VoodooInputActuatorDevice);
@@ -76,6 +93,7 @@ bool VoodooInput::start(IOService *provider) {
         trackpoint->detach(this);
         goto exit;
     }
+#endif
     
     setProperty(VOODOO_INPUT_IDENTIFIER, kOSBooleanTrue);
     
@@ -99,6 +117,9 @@ bool VoodooInput::willTerminate(IOService* provider, IOOptionBits options) {
 }
 
 void VoodooInput::stop(IOService *provider) {
+#ifdef MAVERICKS_TERMINAL
+    if (backend) { backend->stop(this); OSSafeReleaseNULL(backend); }
+#else
     if (simulator) {
         simulator->stop(this);
         simulator->detach(this);
@@ -116,7 +137,7 @@ void VoodooInput::stop(IOService *provider) {
         trackpoint->detach(this);
         OSSafeReleaseNULL(trackpoint);
     }
-    
+#endif
     super::stop(provider);
 }
 
@@ -164,8 +185,13 @@ UInt32 VoodooInput::getLogicalMaxY() {
 IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) {
     switch (type) {
         case kIOMessageVoodooInputMessage:
+#ifdef MAVERICKS_TERMINAL
+            if (provider == parentProvider && argument && backend)
+                backend->handleEvent((const VoodooInputEvent*)argument);
+#else
             if (provider == parentProvider && argument && simulator)
                 simulator->constructReport(*(VoodooInputEvent*)argument);
+#endif
             break;
             
         case kIOMessageVoodooInputUpdateDimensionsMessage:
@@ -173,6 +199,9 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
                 const VoodooInputDimensions& dimensions = *(VoodooInputDimensions*)argument;
                 logicalMaxX = dimensions.max_x - dimensions.min_x;
                 logicalMaxY = dimensions.max_y - dimensions.min_y;
+#ifdef MAVERICKS_TERMINAL
+                if (backend) backend->updateDimensions(logicalMaxX, logicalMaxY);
+#endif
             }
             break;
             
@@ -180,6 +209,7 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
             updateProperties();
             break;
             
+#ifndef MAVERICKS_TERMINAL
         case kIOMessageVoodooTrackpointRelativePointer: {
             if (trackpoint) {
                 const RelativePointerEvent& event = *(RelativePointerEvent*)argument;
@@ -204,6 +234,7 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
                 trackpoint->updateTrackpointProperties();
             }
             break;
+#endif
     }
 
     return super::message(type, provider, argument);
@@ -216,3 +247,7 @@ int VoodooInputGetProductId() {
     
     return kVoodooInputProductMacbook8_1;
 }
+
+#ifdef MAVERICKS_TERMINAL
+void VoodooInput::publishBattery(uint8_t pct) { if (backend) backend->publishBattery(pct); }
+#endif

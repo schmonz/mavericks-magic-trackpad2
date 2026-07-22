@@ -4,7 +4,7 @@
  * frame (mt2_bt_decode), and declare BT config — sensor geometry, the 0xF1 enable, battery
  * poll. SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE — on interrupt
  * bind it advertises VoodooInputSupported + its coordinate span and registerService()s; the
- * mux (MavericksVoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
+ * mux (VoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
  * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No BNBTrackpadDevice is ever started; no fabricated AMD
  * is built here. No decision logic lives in this file.
@@ -37,7 +37,7 @@
 #include "../src/mavericks_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 #include "mavericks_voodoo_translate.h"     /* mavericks_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
-#include "MavericksVoodooInput.h"           /* MavericksVoodooInput::publishBattery() — hands battery to the backend */
+#include "../third_party/VoodooInput/VoodooInput.hpp"   /* VoodooInput::publishBattery() — hands battery to the backend */
 #include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
 /* mavericks_splice_kext.h -> mavericks_splice.h -> vtable_clone.h requires these macros before the include. */
 #define VTC_ALLOC(sz)  IOMalloc(sz)
@@ -58,7 +58,7 @@ OSDefineMetaClassAndStructors(MT2BTReader, IOService)
 /* The bound VoodooInput mux (set by the interrupt reader once it locates its attached mux).
  * The mux owns the terminal fabricated AMD now; the control reader's battery poll publishes
  * BatteryPercent on the mux's AMD node through here. A single global (one device at a time). */
-static MavericksVoodooInput *gBtMux = 0;
+static VoodooInput *gBtMux = 0;
 
 /* The PSM-19 (interrupt) reader instance — the session's active frame source. incomingData
  * translates decoded frames to VoodooInputEvent and messages the mux. */
@@ -153,12 +153,18 @@ IOReturn MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         gInterruptReader = self;
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
         /* Become a VoodooInput satellite. Advertise support + our coordinate span, then
-         * registerService so the mux (MavericksVoodooInput) matches us as its provider and
+         * registerService so the mux (VoodooInput) matches us as its provider and
          * attaches as our client. incomingData emits VoodooInputEvent to that mux; the mux owns
          * the terminal AMD + conditioning (identical MAVERICKS_EVENT_DRIVEN/mavericks_policy_default). */
         self->setProperty("VoodooInputSupported", kOSBooleanTrue);
         self->setProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
         self->setProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
+        /* Upstream VoodooInput::updateProperties() also reads these three (transform + physical max).
+         * transform=0 identity; physical-max = logical-max in device units (mux uses physical only for
+         * its own getters, unused on our terminal path, so mirror logical). */
+        self->setProperty(VOODOO_INPUT_TRANSFORM_KEY, (unsigned long long)0, 8);            // identity transform
+        self->setProperty(VOODOO_INPUT_PHYSICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
+        self->setProperty(VOODOO_INPUT_PHYSICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
         self->setProperty("MT2 Transport", "BT");   /* mux builds a BT-transport fabricated AMD */
         /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> messageClient.
          * listenAt is safe here because no BNB races us for this channel (no manual-start). */
@@ -252,7 +258,7 @@ void MT2BTReader::incomingData(IOService *target,
                 }
                 it->release();
             }
-            if (self->fMux) gBtMux = OSDynamicCast(MavericksVoodooInput, self->fMux);
+            if (self->fMux) gBtMux = OSDynamicCast(VoodooInput, self->fMux);
         }
         if (self->fMux) {
             VoodooInputEvent ev = mavericks_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);

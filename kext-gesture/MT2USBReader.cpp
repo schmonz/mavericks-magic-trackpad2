@@ -4,7 +4,7 @@
  * interrupt-IN pipe, send the MT2 0x02 USB multitouch-enable, and async-read frames.
  * SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE, symmetric with
  * MT2BTReader — on bring-up it advertises VoodooInputSupported + its coordinate span +
- * Transport=USB and registerService()s; the mux (MavericksVoodooInput) attaches as our
+ * Transport=USB and registerService()s; the mux (VoodooInput) attaches as our
  * client. readComplete decodes each raw MT2 0x02 report (mt2_usb_decode -> MavericksTouchFrame),
  * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No AppleUSBMultitouchDriver is ever hosted; no fabricated
@@ -87,6 +87,12 @@ bool MT2USBReader::start(IOService *provider) {
     setProperty("VoodooInputSupported", kOSBooleanTrue);
     setProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
     setProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
+    /* Upstream VoodooInput::updateProperties() also reads these three (transform + physical max).
+     * transform=0 identity; physical-max = logical-max in device units (the mux only uses physical
+     * for its own getters, unused on our terminal path, so mirror logical). */
+    setProperty(VOODOO_INPUT_TRANSFORM_KEY, (unsigned long long)0, 8);            // identity transform
+    setProperty(VOODOO_INPUT_PHYSICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
+    setProperty(VOODOO_INPUT_PHYSICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
     /* We don't advertise Transport=USB here, so the mux defaults the fabricated AMD to Bluetooth transport.
      * This is NOT because of any "USB built-in gating" — that earlier belief was a MYTH (disproven
      * 2026-07-20, open-questions.md "CRACKED: USB gestures"). Every layer (kernel AMD, MultitouchSupport,
