@@ -19,14 +19,18 @@ The programming interface is nearly verbatim from
    `IOBluetoothHIDDriver`, open interrupt pipe / L2CAP channels,
    enable multitouch, decode each raw frame (`mt2_decode`) into a
    `MavericksTouchFrame`, and advertise `VoodooInputSupported`.
-2. **Mux** (`VoodooInput`) attaches to each satellite and
-   routes its `VoodooInputEvent`s to the terminal backend — upstream
-   acidanthera's verbatim `VoodooInput.cpp`, with our terminal path
-   selected in via the `MAVERICKS_TERMINAL` build macro.
-3. **Terminal backend** (`MavericksTerminalBackend`) conditions the
-   stream (`mavericks_session` / `mavericks_pipeline` /
-   `mavericks_lifecycle`) and drives the **terminal**
-   (`MavericksAMDTerminal`), which synthesizes an
+2. **Mux** (`VoodooInput`) — upstream acidanthera's **verbatim**
+   `VoodooInput.cpp` — attaches to each satellite and routes its
+   `VoodooInputEvent`s to a terminal chosen **at runtime by OS version**
+   (`version_major`). On 10.9 that's our `MavericksTerminalBackend`,
+   reached through the generic `VoodooInputTerminal` interface (the
+   satellite advertises the class name) — so the mux carries no
+   MT2-specific code. (On El Capitan+ the same file drives upstream's
+   own simulator.)
+3. **Terminal backend** (`MavericksTerminalBackend`, implementing
+   `VoodooInputTerminal`) conditions the stream (`mavericks_session` /
+   `mavericks_pipeline` / `mavericks_lifecycle`) and drives the
+   **terminal** (`MavericksAMDTerminal`), which synthesizes an
    `AppleMultitouchDevice` and feeds it MT1 frames
    (`mavericks_amd_construct_report`).
 
@@ -83,8 +87,10 @@ the shipping product.
   satellites, the vendored upstream `VoodooInput` router mux, the `MavericksTerminalBackend` (conditioning + the
   `MavericksAMDTerminal` / `MavericksHIDShell` terminal), and the `MavericksVoodooInputHost` nub (an
   always-present `IOResources` sentinel for the boot brick-guard).
-- `third_party/VoodooInput/` — the vendored acidanthera VoodooInput ABI headers and mux source (`VoodooInput.cpp/.hpp`, verbatim + SHA-pinned); the interface
-  our framework is built against and meant to merge into.
+- `third_party/VoodooInput/` — vendored acidanthera VoodooInput sources, **verbatim + SHA-pinned**: the ABI
+  headers, the mux (`VoodooInput.cpp/.hpp`), and the simulator/actuator/trackpoint (compiled but unused on
+  10.9). Plus `VoodooInputTerminal.{hpp,cpp}` — our locally-authored, proposed-upstream terminal interface.
+  This is what our framework builds against and means to merge into.
 - `tools/` — shipped: `mt2_linkstated` (the resident transport link-state coordinator daemon —
   reconnect / USB-handoff / yield / hidd-kick / shutdown-quiesce) and `mt2_reenumerate` (a boot-time
   re-enumerate to reclaim USB interface 1 when the reader loses it to `IOUSBHIDDriver`), plus the
