@@ -69,6 +69,27 @@ pane row's `NSImageView` directly.
 > connect/disconnect check on BT). The "shows a mouse" report predates the owned-BT pivot. RE-SCOPE before
 > implementing: to get the genuine trackpad bezel we'd need a poster BezelServices recognizes (register a
 > `BS_UI_Plugin` for our class, or emit the notification ourselves) — NOT the BNBTrackpadDevice node-seed.
+>
+> **MECHANISM RESOLVED 2026-07-22 (disasm of BezelServices) — the OSD trigger is ACTIVE, not passive.**
+> `-[DriverServices installListenersForClasses:]` scans `/Library/Application Support/Apple/BezelServices/*.plugin`
+> and per declared class arms `IOServiceNameMatching(className)` → on a matching node it `deviceArrived:` and
+> registers an `IOServiceAddInterestNotification`/`IOGeneralInterest` watch on that node. The connect/disconnect
+> OSD is dispatched ONLY when the owning driver posts a **private message `messageClients(0x62736B32 'bsk2', arg)`**
+> on its node: `processMsgForService:` builds key `"<PrefixID>.<arg>"` → `_messageDict` (from the plugin's
+> `Messages`, e.g. `Connected`/`Disconnected`) → `Action` → `_actionDict` → OSD. Node *appear* and
+> `kIOMessageServiceIsTerminated` do NOT fire the OSD (terminate = teardown/battery-timer only). PROOF:
+> `AppleTopCase` (built-in trackpad, class `AppleMultitouchTrackpadHIDEventDriver`) declares only
+> `PreferenceDefaults`, **no `Messages`** — a passive trigger would flash it every boot. So the fix = **(A)** a
+> `BS_UI_Plugin` keyed to `AppleMultitouchDevice` (the class our terminal fabricates + `registerService()`s;
+> live `ioclasscount AppleMultitouchDevice = 1`) with `Connected`/`Disconnected` → trackpad-art actions
+> (`Version=2`), shipped by our installer; **(B)** the **terminal** posts `messageClients(0x62736B32, arg)` on
+> that node on connect (post-registerService, on a short timer to beat the interest-arm race — cf. Apple's
+> `deviceConnectTimerFired`) and on disconnect (before teardown). Belongs in `MavericksAMDTerminal` (framework,
+> reusable), NOT a satellite. REMAINING RE: the exact `'bsk2'` arg encoding for Connected/Disconnected, from
+> `AppleBluetoothMultitouch.kext`'s `messageClients` call sites, so we replicate the proven contract.
+> `IOServiceNameMatching` matches the node's registry name string exactly (no subclasses) → the plugin key must
+> be exactly `AppleMultitouchDevice`.
+>
 > Genuine-BNB-era analysis retained below.
 
 **Bezel HUD (connect/disconnect) — RE'd 2026-07-06 (mechanism found; NOT the CoD vault).** The earlier
