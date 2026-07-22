@@ -355,6 +355,31 @@ Raised while cleaning up the SIMBL-only prefpane cut. Recorded so they aren't re
   `IOProviderClass`, so they cannot collapse into one personality). There is no duplicated imperative
   eviction logic to centralize; each satellite just carries a high probe score, the standard IOKit idiom.
 
+### Owned mux split into a thin router + a terminal backend (shipped 2026-07-21, `d1ca858`+`4ba745a`)
+First step of aligning the OWNED path with upstream VoodooInput's shape (goal: contributable AND cleaner
+for us). `com_schmonz_MavericksVoodooInput` used to do two jobs — route `VoodooInputEvent`s AND own+drive
+the session/conditioning engine + fabricated-AMD terminal. Split:
+- **`MavericksTerminalBackend`** (new, `kext-gesture/MavericksTerminalBackend.{h,cpp}`) — an `OSObject`
+  (so it can own its `IOTimerEventSource`; also mirrors upstream, whose terminal is an OSObject) that owns
+  `fSession` + the fabricated AMD + workloop/idle-timer/lock/sink trampolines + `mavericks_frame_from_voodoo`
+  translation. Interface: `start(nub, transport, lmaxX, lmaxY)` / `handleEvent(VoodooInputEvent*)` /
+  `updateDimensions` / `stop(nub)`.
+- **The mux** is now a thin router: match `VoodooInputSupported`, hold one backend, `provider==fProvider`
+  fence, forward `message()` → `handleEvent`/`updateDimensions`, `start/stop` → backend. Nothing about
+  sessions/terminals lives there. This is upstream's `VoodooInput.cpp` shape, so the later steps (a
+  `version_major`-gated terminal seam, then swapping in upstream's verbatim mux) become drop-ins.
+- **Byte-identical** (pure move); on-device USB cursor+gestures unchanged; 31/31 host tests green.
+- **Owned path only.** The genuine `MavericksVoodooInputHost` session machinery is DORMANT (no reader
+  calls its `submitFrame`; readers `messageClient` the mux) — untouched here, a later removal candidate.
+- **Why our mux carries a session engine at all** (upstream's thin router does not): our ① fabricated-AMD
+  terminal does its own gesture conditioning, whereas upstream's ③ simulator lets macOS's
+  `AppleMultitouchDriver` do it. So the engine belongs to OUR 10.9 terminal backend, not the router — which
+  this split makes explicit, and is the prerequisite for adopting upstream's thin mux.
+- **FOLLOW-UP (layer violation, noted by review):** `MT2BTReader` reaches the fabricated-AMD ctx via a
+  global `gBtMux->synthCtx()` (battery poll), kept working by a one-line `synthCtx()` forward on the mux.
+  Now that the backend is a first-class object, the reader should hold a `MavericksTerminalBackend*`
+  directly and the mux's `synthCtx()` delegation can go. Small, in-scope for the next alignment pass.
+
 ### Override the cached `ClassOfDevice` to fix the Bluetooth-pane picture — *not functioning*
 The pane's device picture is chosen from the device's Class-of-Device via `IOBluetoothDeviceImageVault`
 (see explanation.md "Bluetooth prefpane device identity"). We hoped to override the MT2's CoD in
