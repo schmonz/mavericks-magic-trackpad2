@@ -1916,15 +1916,19 @@ Orientation for when we pick it up (verify against code, don't assume):
 
 ## Custom assets across the UI — BACKLOG (user-flagged 2026-07-06)
 
-User reminder ("haven't forgotten that"): we want to **swap in our own custom assets** in a number of
-places across the UI rather than reusing Apple's art. Current Apple-art reuse spots:
-- The updater app icon (`tools/mt2_updater/MavericksTrackpad2Updater.icns`) = Apple's `TrackpadPicture.png`.
-- The BT-pane row-icon swizzle = Apple's `Trackpad.prefPane` `TrackpadPicture.png` (see `explanation.md`
-  → Bluetooth prefpane device identity → Picture).
-- (The bezel-HUD trackpad art is Apple's `BtTrackpad.pdf` — Apple's config, so that one is fine.)
-
-Not urgent, but a deliberate pass to give the product its own visual identity (app/product icon, pane art,
-updater icon, maybe an About-tab logo) is wanted, tied to the public-Apple-UX polish goal.
+**REFRAMED 2026-07-22 — mostly a NON-GOAL now.** The project is primarily a compatibility **layer** that makes
+the MT2 present *as a genuine Apple trackpad by reusing Apple's own stack*. So there are two art categories,
+and only one was ever a real want:
+- **Device-presentation art** (the connect/disconnect **bezel HUD** = Apple's `BtTrackpad.pdf`; the **BT-pane
+  row icon** = Apple's `TrackpadPicture.png`): reusing Apple's art here is the **intended design, not a
+  placeholder** — the device SHOULD look like a genuine Apple trackpad. Custom art would work against the
+  goal. Keep reusing Apple's; don't ship our own (the bezel plugin even copies Apple's art at install rather
+  than bundling it — nothing Apple-derived in our payload). NOT a backlog item.
+- **Product/branding art** (updater app icon `tools/mt2_updater/…icns`, an About-tab logo, a product mark):
+  the only place custom art could belong — OUR installer/updater/companion, which is our software, not the
+  device. But per the user (2026-07-22): "not sure it's important to ship custom art at all anymore if what
+  we're delivering is primarily a layer." So this is **deprioritized to optional/low-value**, not a committed
+  goal. Revisit only if the product ever wants a distinct visual identity.
 
 ---
 
