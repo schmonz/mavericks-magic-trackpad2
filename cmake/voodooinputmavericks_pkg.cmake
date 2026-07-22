@@ -9,20 +9,33 @@ if(NOT MAVERICKS_PKG_VERSION)
   set(MAVERICKS_PKG_VERSION ${MAVERICKS_VERSION})
 endif()
 set(PKG_OUT ${CMAKE_BINARY_DIR}/voodooinputmavericks-${MAVERICKS_PKG_VERSION}.pkg)
-# Updater app: staged into the pkg only when a Sparkle build is configured.
-# _UPD_PKG_STAGE expands to the copy COMMAND at configure time; empty otherwise.
+# pkgbuild --scripts wants ONE dir holding every install script. dist/scripts is the source of ours,
+# but stage_updater.sh generates one more (agent-load.sh), so assemble the dir in the build tree
+# rather than writing generated files back into the checkout.
+set(PKG_SCRIPTS ${CMAKE_BINARY_DIR}/pkg-scripts)
+# Updater app + its update-check LaunchAgent + the agent-load snippet our postinstall sources: all
+# staged by mavericks-shared-cmake, so this product renders the same plist and runs the same load
+# logic as every sibling. Only in a Sparkle build -- a build with no updater must also ship no agent,
+# or login gets an agent pointing at an app that was never installed.
+# _UPD_PKG_STAGE expands to the COMMAND at configure time; empty otherwise.
 if(MT2_SPARKLE_FRAMEWORK)
   set(_UPD_PKG_STAGE
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-      ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater.app
-      ${PKGROOT}/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app)
-  set(_UPD_PKG_DEP MavericksTrackpad2Updater)
+    COMMAND sh ${MavericksSharedCMake_SCRIPTS}/stage_updater.sh
+      --stage ${PKGROOT}
+      --app ${CMAKE_BINARY_DIR}/Trackpad2Updater.app
+      --app-dir "/Library/Application Support/ModernMavericks"
+      --agent-label dev.modernmavericks.voodooinputmavericks.updatecheck
+      --snippet-out ${PKG_SCRIPTS}/agent-load.sh)
+  set(_UPD_PKG_DEP Trackpad2Updater)
 else()
   set(_UPD_PKG_STAGE "")
   set(_UPD_PKG_DEP "")
 endif()
 add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E remove_directory ${PKGROOT}
+  # Fresh scripts dir first: _UPD_PKG_STAGE drops the generated agent-load.sh into it below.
+  COMMAND ${CMAKE_COMMAND} -E remove_directory ${PKG_SCRIPTS}
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/dist/scripts ${PKG_SCRIPTS}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/lib/voodooinputmavericks
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/sbin
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchDaemons
@@ -48,10 +61,6 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_linkstated ${PKGROOT}/usr/local/libexec/
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.linkstated.plist ${PKGROOT}/Library/LaunchDaemons/
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
-  # Scheduled background update check: per-user LaunchAgent that runs the updater in --background mode
-  # (daily + at login). Only useful when the updater app is staged (Sparkle build), but the plist is a
-  # static file with no build dependency, so always ship it; the postinstall loads it best-effort.
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.updatecheck.plist ${PKGROOT}/Library/LaunchAgents/
   # Stage the SIMBL plugin bundle in a holding area; postinstall installs it into the SIMBL Plugins dir.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/share/voodooinputmavericks
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/VoodooInputMavericksPane.bundle ${PKGROOT}/usr/local/share/voodooinputmavericks/VoodooInputMavericksPane.bundle
@@ -67,7 +76,7 @@ add_custom_target(pkg
   COMMAND pkgbuild --analyze --root ${PKGROOT} ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/pkg_no_version_check.sh ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
   COMMAND pkgbuild --root ${PKGROOT} --component-plist ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
-          --scripts ${CMAKE_SOURCE_DIR}/dist/scripts
+          --scripts ${PKG_SCRIPTS}
           --identifier dev.modernmavericks.voodooinputmavericks --version ${MAVERICKS_PKG_VERSION} --install-location /
           ${CMAKE_BINARY_DIR}/voodooinputmavericks-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml

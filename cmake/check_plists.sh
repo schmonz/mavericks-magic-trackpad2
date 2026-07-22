@@ -20,7 +20,7 @@ BUILD=$1
 PLISTS="
 $BUILD/VoodooInputMavericksPane.bundle/Contents/Info.plist
 $BUILD/VoodooInputMavericks.kext/Contents/Info.plist
-$BUILD/MavericksTrackpad2Updater.app/Contents/Info.plist
+$BUILD/Trackpad2Updater.app/Contents/Info.plist
 "
 
 fail=0
@@ -37,7 +37,7 @@ for p in $PLISTS; do
 done
 
 # Updater self-update config: SUFeedURL + SUPublicEDKey must be present and non-empty.
-UPD_PLIST="$BUILD/MavericksTrackpad2Updater.app/Contents/Info.plist"
+UPD_PLIST="$BUILD/Trackpad2Updater.app/Contents/Info.plist"
 if [ -f "$UPD_PLIST" ]; then
   for key in SUFeedURL SUPublicEDKey; do
     val=$(/usr/libexec/PlistBuddy -c "Print :$key" "$UPD_PLIST" 2>/dev/null || true)

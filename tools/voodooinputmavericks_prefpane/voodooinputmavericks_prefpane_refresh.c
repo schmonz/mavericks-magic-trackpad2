@@ -87,7 +87,7 @@ static int responds(id obj, SEL s) {
  * on-device 2026-07-06: Autoupdate stuck waiting on a host pid that had already exited). The updater is
  * now a normal foreground app (not LSUIElement), so `open` also brings its Sparkle dialog to the front. */
 static void mavericks_launch_updater(void) {
-    const char *app = "/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app";
+    const char *app = "/Library/Application Support/ModernMavericks/Trackpad2Updater.app";
     if (access(app, F_OK) != 0) { LOG("updater: %s not installed", app); return; }
     /* --args --user: this is an EXPLICIT summon, so the updater runs its interactive check and reports
      * status. Without it the opt-in updater treats the launch as a silent probe and shows nothing. */
@@ -786,7 +786,7 @@ static id mavericks_make_button(CGRect frame, CFStringRef title, SEL action) {
  * to compile-baked. CF-only (no ObjC syntax) so it stays GC-neutral. */
 static CFStringRef mavericks_installed_version_copy(void) {
     CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
-        CFSTR("/usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app/Contents/Info.plist"),
+        CFSTR("/Library/Application Support/ModernMavericks/Trackpad2Updater.app/Contents/Info.plist"),
         kCFURLPOSIXPathStyle, false);
     if (!url) return NULL;
     CFReadStreamRef s = CFReadStreamCreateWithFile(kCFAllocatorDefault, url);

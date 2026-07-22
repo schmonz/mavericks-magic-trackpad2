@@ -84,7 +84,7 @@ jobs:
           MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.mt2-sdk-cache
         run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_10_9_sdk.sh")" >> "$GITHUB_OUTPUT"
 
-      # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for MavericksTrackpad2Updater.app. The fetch script
+      # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for Trackpad2Updater.app. The fetch script
       # (URL + pinned SHA) now lives in mavericks-shared-cmake, so key the cache on MSC_REF.
       - name: Cache the Sparkle framework
         uses: actions/cache@v6

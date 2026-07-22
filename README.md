@@ -58,6 +58,7 @@ sudo kextunload -b dev.modernmavericks.VoodooInputMavericks
 sudo rm -rf /Library/LaunchDaemons/dev.modernmavericks.voodooinputmavericks*.plist \
     /Library/LaunchAgents/dev.modernmavericks.voodooinputmavericks*.plist \
     "/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle" \
+    "/Library/Application Support/ModernMavericks/Trackpad2Updater.app" \
     /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
     /usr/local/libexec/mt2_linkstated \
     /usr/local/lib/voodooinputmavericks /usr/local/{var,share}/voodooinputmavericks \

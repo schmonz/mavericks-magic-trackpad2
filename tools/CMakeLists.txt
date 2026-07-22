@@ -92,14 +92,14 @@ add_custom_target(linkstate-uninstall
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_linkstated.sh uninstall
   COMMENT "Uninstalling the mt2_linkstated LaunchDaemon")
 
-# ---- MavericksTrackpad2Updater.app (shared MavericksSparkle) --------------------------------------
+# ---- Trackpad2Updater.app (shared MavericksSparkle) --------------------------------------
 # Built only when a fetched Sparkle framework path is provided (MT2_SPARKLE_FRAMEWORK); otherwise the
 # rest of the tree still builds without the network fetch. The updater host now lives in
 # mavericks-shared-cmake (templated main.m/Info.plist); we just configure it per product here.
 if(MT2_SPARKLE_FRAMEWORK)
   include(MavericksSparkle)
   mavericks_add_updater_app(
-    NAME MavericksTrackpad2Updater
+    NAME Trackpad2Updater
     PRODUCT_NAME "Mavericks Trackpad 2"
     BUNDLE_ID dev.modernmavericks.Trackpad2Updater
     FEED_URL "https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml"
@@ -114,14 +114,14 @@ if(MT2_SPARKLE_FRAMEWORK)
     RELAUNCH_MARKER "/tmp/.mt2updater-relaunched"
     PANE_HINT_KEY "MT2AvailableUpdateVersion")
 
-  mavericks_compat_guard(MavericksTrackpad2Updater)
+  mavericks_compat_guard(Trackpad2Updater)
 
   add_custom_target(updater-install
-    COMMAND sudo ${CMAKE_COMMAND} -E rm -rf /usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app
-    COMMAND sudo ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/MavericksTrackpad2Updater.app /usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app
-    COMMAND ${CMAKE_COMMAND} -E echo "Installed /usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app"
-    COMMENT "Installing MavericksTrackpad2Updater.app")
-  add_dependencies(updater-install MavericksTrackpad2Updater)
+    COMMAND sudo ${CMAKE_COMMAND} -E rm -rf "/Library/Application Support/ModernMavericks/Trackpad2Updater.app"
+    COMMAND sudo ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Trackpad2Updater.app "/Library/Application Support/ModernMavericks/Trackpad2Updater.app"
+    COMMAND ${CMAKE_COMMAND} -E echo "Installed /Library/Application Support/ModernMavericks/Trackpad2Updater.app"
+    COMMENT "Installing Trackpad2Updater.app")
+  add_dependencies(updater-install Trackpad2Updater)
 endif()
 
 # ---- Native EdDSA signer + keygen (shared MavericksSparkle) --------------------------------------

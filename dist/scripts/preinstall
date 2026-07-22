@@ -36,6 +36,11 @@ rm -rf /Library/Extensions/MT2USBClaim.kext /Library/Extensions/MT2Claim.kext 2>
 # a re-install over an older layout doesn't leave them behind.
 rm -rf /usr/local/lib/voodooinputmavericks/MT2USBClaim.kext /usr/local/lib/voodooinputmavericks/MT2Claim.kext 2>/dev/null || true
 rm -f /usr/local/sbin/mt2_gesture_feed 2>/dev/null || true
+# The updater .app moved out of the kext's dir to /Library/Application Support/ModernMavericks (and
+# lost its Mavericks prefix). Nothing overwrites the old copy, and a stale one there would keep
+# answering the prefpane's "check for updates" with an outdated feed. Purge both old names.
+rm -rf /usr/local/lib/voodooinputmavericks/MavericksTrackpad2Updater.app \
+       /usr/local/lib/voodooinputmavericks/Trackpad2Updater.app 2>/dev/null || true
 # Remove the retired synthesis daemon + prior product layouts (pre-rename: mt2d / mt2d-run,
 # and the legacy /usr/local/bin location) so a re-install never leaves stale binaries behind.
 rm -f /usr/local/bin/mt2d /usr/local/bin/mt2_reenumerate /usr/local/bin/mt2d-run 2>/dev/null || true
