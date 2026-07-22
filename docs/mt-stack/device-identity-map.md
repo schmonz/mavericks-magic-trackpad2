@@ -265,6 +265,25 @@ KeyboardPresent`) instead match the IOKit service class `IOAppleBluetoothHIDDriv
   `BluetoothHCIReadLocalOOBData`/`RemoteOOBDataRequestReply`, `pairSSPWithJustWorks:`/`…NumericComparison:`.
   `IOBluetoothAutomaticDeviceSetup deviceSetupWithDelegate:…notifyWhenMousePluggedIn:` = the auto-pair-on-plug hook.
 
+> **FEASIBILITY RESOLVED 2026-07-22 (disasm) — silent native pair is achievable WITHOUT OOB key injection; the
+> risky rung is OFF the critical path.** `-[IOBluetoothDevicePair userConfirmationRequest:numericValue:]`
+> (IOBluetooth.framework `@0x5edfc`): with NO UI delegate it auto-replies `BluetoothHCIUserConfirmationRequestReply`
+> itself → **silent SSP just-works pair, no dialog** (`start@0x5d3e2` is pure protocol, no NSAlert). So the whole
+> feature = drive `IOBluetoothDevicePair` with no UI delegate; we never touch `blued`'s key store, never
+> `WriteStoredLinkKey`, never RE the device key-write report. CORRECTIONS to the "auto-pair-on-plug hook" note
+> above: (1) `IOBluetoothAutomaticDeviceSetup` lives ONLY in `IOBluetooth.framework` and only runs while
+> **`Bluetooth Setup Assistant.app` is open** — there is NO always-on Apple auto-pair daemon (live: only `blued`
+> resident). (2) Its trigger `registerForMouseNotifications@0x4b879` watches for an **`IOHIPointing`** IORegistry
+> node, then just signals "scan now" (`mouseConnectNotification:@0x4bcbf`; the USB branch reads no BT addr — it's
+> a bare hint). (3) **Our USB reader STARVES that trigger** — we out-bid `IOUSBHIDDriver` so no `IOHIPointing`
+> node is published for the USB MT2 → Apple's native watcher never fires for us anyway. So the design wires OUR
+> OWN trigger (the USB reader's device-arrival) → `IOBluetoothDevicePair`. NB: this is over-the-air SSP (inquiry
+> + page + SSP); the USB plug is only the UX trigger, NOT a cable pairing channel — the MT2 must be discoverable/
+> pairable when triggered (on-device unknown: does USB-plug put it in pairing mode?). This yields a PAIR only —
+> NOT the login-time HW-reconnect (that's the separate HID-emulation / mouse-CoD rung, open-questions.md ~L1294).
+> Safety: `IOBluetoothDevicePair start` MUTATES the paired-device store → reversibility guard + user go (deferred
+> to a real on-device unpaired-plug test; the RE here was read-only).
+
 ## Top actionable unlocks (ranked)
 
 1. ~~Seed `PnPVendorID` → `isApple` → Apple art everywhere~~ **ABANDONED 2026-07-04 — dead end.** `isApple`
