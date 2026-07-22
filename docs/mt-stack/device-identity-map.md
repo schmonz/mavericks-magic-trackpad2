@@ -103,6 +103,21 @@ pane row's `NSImageView` directly.
 > only if OUR plugin (keyed `AppleMultitouchDevice`) is installed + loginwindow has scanned it → the plugin
 > takes effect on next login/reboot; validate accordingly. FULLY SPEC-READY.
 >
+> **RENAME-vs-PLUGIN blast radius RE 2026-07-22 (decision-grade).** Alternative to shipping our own plugin:
+> `setName("BNBTrackpadDevice")` on the fabricated node (CLASS stays `AppleMultitouchDevice`; only the registry
+> NAME changes) so Apple's ALREADY-LOADED `AppleBluetoothMultitouch.plugin` (name-keyed `BNBTrackpadDevice`)
+> watches it — no custom plugin, no installer artifact, no reboot. Blast radius (name-match vs class-match, per
+> consumer): **BezelServices = NAME** (`IOServiceNameMatching`, imports confirmed) → AFFECTED = the win.
+> **Prefpane BT detect = CLASS** (`IOServiceMatching("BNBTrackpadDevice")`→`{IOProviderClass}`, disasm
+> `0x232e/0x2397/0x23a0`) → NOT affected → **the rename does NOT shed the osax/SIMBL pane-help; the pane needs
+> the CLASS, not the name (a bigger, rejected change — bare subclass panics, decisions.md ②).** hidd/MT
+> adoption = PROPERTY (`MTHIDDevice`/`IOCFPlugInTypes`), our presence SMs = reader-CLASS, tools `ioreg -c` =
+> class filter → all NEUTRAL (input/teardown safe). Even with the rename the terminal STILL posts the `'bsk2'`
+> message (active trigger). COLLISION caveat: a co-connected genuine Magic Trackpad 1 also presents
+> `BNBTrackpadDevice` → could double-fire the bezel; none present in the default single-MT2 case (genuine BNB
+> count 0). NET: rename simplifies ONLY the bezel (drops our plugin + reboot); it does not simplify the pane or
+> icons (those are class/CoD-keyed).
+>
 > Genuine-BNB-era analysis retained below.
 
 **Bezel HUD (connect/disconnect) — RE'd 2026-07-06 (mechanism found; NOT the CoD vault).** The earlier
