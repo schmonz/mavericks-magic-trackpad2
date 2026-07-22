@@ -40,10 +40,11 @@ target_include_directories(mt2gesture_kext PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputMultitouch)
 
-# The vendored upstream mux compiles verbatim; our MavericksTerminalBackend is selected in via
-# this seam (simulator/actuator/trackpoint #ifndef'd out). It MUST be target-wide, not per-source:
-# MT2BTReader.cpp includes VoodooInput.hpp and calls gBtMux->publishBattery(), which exists only
-# under MAVERICKS_TERMINAL — every TU that includes the header must see the SAME class layout.
+# The vendored upstream mux + simulator/actuator/trackpoint compile verbatim (always); our terminal is
+# selected in at runtime via the MAVERICKS_TERMINAL seam in VoodooInput.{cpp,hpp,IDs.hpp}. It MUST be
+# target-wide, not per-source: multiple TUs include VoodooInput.hpp (the mux itself AND upstream's
+# VoodooInputSimulatorDevice), and all must see the SAME VoodooInput class layout — the guarded
+# `legacyTerminal` member. A per-source define would give one TU a different layout -> vtable/ABI mismatch.
 target_compile_definitions(mt2gesture_kext PRIVATE MAVERICKS_TERMINAL)
 
 # Compile the shared .c as C++ (kext mangling must match the .cpp callers; some shared

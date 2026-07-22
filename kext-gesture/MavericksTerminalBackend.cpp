@@ -4,10 +4,11 @@
 #include <IOKit/IOLocks.h>
 #include <kern/clock.h>
 #include <libkern/c++/OSNumber.h>
+#include <libkern/c++/OSString.h>
 #include "mavericks_voodoo_translate.h"  // mavericks_frame_from_voodoo (extern "C")
 #include "mavericks_log.h"               // MAVERICKS_DLOG + gMavericksBattOverride
 
-OSDefineMetaClassAndStructors(MavericksTerminalBackend, OSObject)
+OSDefineMetaClassAndStructors(MavericksTerminalBackend, VoodooInputTerminal)
 
 static uint32_t uptime_ms(void) {
     uint64_t abs_t, ns;
@@ -38,21 +39,33 @@ void MavericksTerminalBackend::idleTick(OSObject *owner, IOTimerEventSource *) {
     if (self->fLock) IOLockUnlock(self->fLock);
 }
 
-bool MavericksTerminalBackend::start(IOService *nub, mavericks_amd_terminal_transport_t transport,
-                                     uint32_t logicalMaxX, uint32_t logicalMaxY) {
-    fLogicalMaxX = logicalMaxX;
-    fLogicalMaxY = logicalMaxY;
+bool MavericksTerminalBackend::start(IOService *mux, IOService *provider) {
+    fProvider = provider;
+    /* Self-read config from the satellite (was passed in by the mux; now the mux is generic). */
+    OSNumber *nx = OSDynamicCast(OSNumber, provider->getProperty(VOODOO_INPUT_LOGICAL_MAX_X_KEY));
+    OSNumber *ny = OSDynamicCast(OSNumber, provider->getProperty(VOODOO_INPUT_LOGICAL_MAX_Y_KEY));
+    fLogicalMaxX = nx ? nx->unsigned32BitValue() : 0;
+    fLogicalMaxY = ny ? ny->unsigned32BitValue() : 0;
     if (!fLogicalMaxX || !fLogicalMaxY)
         IOLog("MavericksTerminalBackend: WARNING zero logical max (X=%u Y=%u); coordinates unscaled\n",
               fLogicalMaxX, fLogicalMaxY);
+    mavericks_amd_terminal_transport_t transport = MAVERICKS_AMD_TERMINAL_XPORT_BT;
+    OSString *tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
+    if (tp && tp->isEqualTo("USB")) transport = MAVERICKS_AMD_TERMINAL_XPORT_USB;
+
     fSynth = 0; fWL = 0; fIdle = 0; fLock = IOLockAlloc(); fLastBattPct = -1;
-    fSynth = mavericks_amd_terminal_build(nub, transport);   /* fail-soft */
+    fSynth = mavericks_amd_terminal_build(mux, transport);   /* fail-soft; AMD attaches under the mux nub */
     if (!fSynth) IOLog("MavericksTerminalBackend: WARNING synthetic AMD build failed; no cursor\n");
     fWL = IOWorkLoop::workLoop();
     fIdle = fWL ? IOTimerEventSource::timerEventSource(this, &idleTick) : 0;
     if (fIdle) fWL->addEventSource(fIdle);
     mavericks_session_connect(&fSession, (uintptr_t)this, MAVERICKS_EVENT_DRIVEN,
                               &mavericks_policy_default, (uint32_t)uptime_ms());
+    /* Register ourselves on the satellite so its battery poll can reach us directly (mux stays generic).
+     * NB: keep this the LAST step before `return true`. On start failure the mux release()s us WITHOUT
+     * calling stop(), so any future early `return false` added after this line must removeProperty(
+     * "MT2TerminalBackend") first, or the provider's property-table retain leaks us. */
+    provider->setProperty("MT2TerminalBackend", this);
     return true;
 }
 
@@ -70,6 +83,7 @@ void MavericksTerminalBackend::updateDimensions(uint32_t logicalMaxX, uint32_t l
 }
 
 void MavericksTerminalBackend::stop(IOService *nub) {
+    if (fProvider) { fProvider->removeProperty("MT2TerminalBackend"); fProvider = 0; }
     /* Barrier: drain any handleEvent holding fLock before we tear down fSynth / free fLock (UAF-safe,
      * matches the old mux stop()). The mux clears its provider fence BEFORE calling this, so no new
      * handleEvent enters. */

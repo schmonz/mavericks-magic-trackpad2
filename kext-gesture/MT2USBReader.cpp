@@ -93,6 +93,7 @@ bool MT2USBReader::start(IOService *provider) {
     setProperty(VOODOO_INPUT_TRANSFORM_KEY, (unsigned long long)0, 8);            // identity transform
     setProperty(VOODOO_INPUT_PHYSICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
     setProperty(VOODOO_INPUT_PHYSICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
+    setProperty("VoodooInputLegacyTerminalClass", "MavericksTerminalBackend");
     /* We don't advertise Transport=USB here, so the mux defaults the fabricated AMD to Bluetooth transport.
      * This is NOT because of any "USB built-in gating" — that earlier belief was a MYTH (disproven
      * 2026-07-20, open-questions.md "CRACKED: USB gestures"). Every layer (kernel AMD, MultitouchSupport,

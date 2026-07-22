@@ -37,7 +37,7 @@
 #include "../src/mavericks_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 #include "mavericks_voodoo_translate.h"     /* mavericks_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
-#include "../third_party/VoodooInput/VoodooInput.hpp"   /* VoodooInput::publishBattery() — hands battery to the backend */
+#include "MavericksTerminalBackend.h"   /* MavericksTerminalBackend::publishBattery() — the battery sink */
 #include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
 /* mavericks_splice_kext.h -> mavericks_splice.h -> vtable_clone.h requires these macros before the include. */
 #define VTC_ALLOC(sz)  IOMalloc(sz)
@@ -55,10 +55,10 @@ OSDefineMetaClassAndStructors(MT2BTReader, IOService)
  * local aliases so the numbers exist in exactly one place (no doc/build drift). */
 #define L2CAP_DELEGATE_CB_OFF       MAVERICKS_OFF_L2CAP_DELEGATE_CB     /* L2CAP delegate cb (+8 = target)*/
 
-/* The bound VoodooInput mux (set by the interrupt reader once it locates its attached mux).
- * The mux owns the terminal fabricated AMD now; the control reader's battery poll publishes
- * BatteryPercent on the mux's AMD node through here. A single global (one device at a time). */
-static VoodooInput *gBtMux = 0;
+/* The terminal backend (read off our own MT2TerminalBackend property, which the backend self-registers
+ * on this reader in its start()). The backend owns the fabricated AMD node now; the control reader's
+ * battery poll publishes BatteryPercent through it directly. A single global (one device at a time). */
+static MavericksTerminalBackend *gBtBackend = 0;
 
 /* The PSM-19 (interrupt) reader instance — the session's active frame source. incomingData
  * translates decoded frames to VoodooInputEvent and messages the mux. */
@@ -95,14 +95,15 @@ static void bt_conntrace(csm_state_t st, csm_event_t ev, const void *chan,
 }
 
 /* If `data`/`len` is a battery report (0x90, optional 0xA1 transport byte), hand the capacity to the
- * terminal backend (through the located mux), which publishes it as "BatteryPercent" on the fabricated
- * AMD node IT owns — the reader no longer reaches that node. The backend applies the debug.mt2_batt
- * override, dedups, and self-fences until its AMD is up; gBtMux is NULL until the reader locates the mux.
- * The pure parse is host-tested (tests/test_battery.c). No-op when the packet isn't 0x90. */
+ * terminal backend, which publishes it as "BatteryPercent" on the fabricated AMD node IT owns — the
+ * reader no longer reaches that node. The backend is located via our own MT2TerminalBackend property
+ * (the backend self-registers there in its start()); gBtBackend is NULL until then. The backend applies
+ * the debug.mt2_batt override, dedups, and self-fences until its AMD is up. The pure parse is host-tested
+ * (tests/test_battery.c). No-op when the packet isn't 0x90. */
 static void mavericks_maybe_publish_battery(const void *data, size_t len) {
     uint8_t pct;
     if (!mt2_parse_battery_report((const uint8_t *)data, len, &pct)) return;
-    if (gBtMux) gBtMux->publishBattery(pct);
+    if (gBtBackend) gBtBackend->publishBattery(pct);
 }
 
 /* CONTROL-channel (PSM 17) delegate shim. Unlike the interrupt shim (which consumes touch frames),
@@ -166,6 +167,7 @@ IOReturn MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         self->setProperty(VOODOO_INPUT_PHYSICAL_MAX_X_KEY, (unsigned long long)MT2_SPAN_X, 32);
         self->setProperty(VOODOO_INPUT_PHYSICAL_MAX_Y_KEY, (unsigned long long)MT2_SPAN_Y, 32);
         self->setProperty("MT2 Transport", "BT");   /* mux builds a BT-transport fabricated AMD */
+        self->setProperty("VoodooInputLegacyTerminalClass", "MavericksTerminalBackend");
         /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> messageClient.
          * listenAt is safe here because no BNB races us for this channel (no manual-start). */
         self->fChannel->listenAt(self, &MT2BTReader::incomingData);
@@ -246,7 +248,8 @@ void MT2BTReader::incomingData(IOService *target,
 
     /* Cross the seam as a VoodooInput satellite: translate to a wire event and message the mux
      * (found lazily — it attaches async after registerService; pre-attach frames drop). The mux
-     * owns terminal conditioning + the fabricated AMD; gBtMux bridges the battery poll to it. */
+     * owns terminal conditioning + the fabricated AMD; gBtBackend (read off our own
+     * MT2TerminalBackend property) bridges the battery poll to the backend directly. */
     if (self) {
         if (!self->fMux) {
             OSIterator *it = self->getClientIterator();
@@ -258,7 +261,7 @@ void MT2BTReader::incomingData(IOService *target,
                 }
                 it->release();
             }
-            if (self->fMux) gBtMux = OSDynamicCast(VoodooInput, self->fMux);
+            if (self->fMux) gBtBackend = OSDynamicCast(MavericksTerminalBackend, self->getProperty("MT2TerminalBackend"));
         }
         if (self->fMux) {
             VoodooInputEvent ev = mavericks_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
@@ -447,7 +450,7 @@ void MT2BTReader::stop(IOService *provider) {
     /* We are a VoodooInput satellite: as this provider stops, IOKit detaches + stops the mux
        (our client), which tears down its own terminal AMD. Just drop our borrowed references. */
     fMux = 0;
-    if (gBtMux) gBtMux = 0;   /* forget the located mux (its backend owns the battery node + dedup) */
+    gBtBackend = 0;   /* forget the backend (it owns the battery node + dedup; torn down as the mux detaches) */
     /* Deregister our incoming-data callback in-gate BEFORE we can be freed, or the
      * channel's newDataIn will dereference a dangling pointer (use-after-free panic
      * seen when the installer unloaded the live kext while the trackpad streamed). */

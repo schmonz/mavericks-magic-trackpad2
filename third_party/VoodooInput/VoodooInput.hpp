@@ -14,7 +14,7 @@ class VoodooInputSimulatorDevice;
 class VoodooInputActuatorDevice;
 class TrackpointDevice;
 #ifdef MAVERICKS_TERMINAL
-class MavericksTerminalBackend;
+class VoodooInputTerminal;
 #endif
 
 #ifndef EXPORT
@@ -30,7 +30,7 @@ class EXPORT VoodooInput : public IOService {
     VoodooInputActuatorDevice* actuator;
     TrackpointDevice* trackpoint;
 #ifdef MAVERICKS_TERMINAL
-    MavericksTerminalBackend* backend;
+    VoodooInputTerminal* legacyTerminal;
 #endif
     
     UInt8 transformKey;
@@ -56,9 +56,6 @@ public:
 
     IOReturn message(UInt32 type, IOService *provider, void *argument) override;
 
-#ifdef MAVERICKS_TERMINAL
-    void publishBattery(uint8_t pct);   // MT2BTReader hands parsed battery to the backend it owns
-#endif
 };
 
 #endif

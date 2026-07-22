@@ -14,7 +14,7 @@
 #include "Trackpoint/TrackpointDevice.hpp"
 #ifdef MAVERICKS_TERMINAL
 #include <IOKit/IOLib.h>
-#include "../../kext-gesture/MavericksTerminalBackend.h"
+#include "VoodooInputTerminal.hpp"
 #include <libkern/c++/OSString.h>
 #endif
 
@@ -37,16 +37,22 @@ bool VoodooInput::start(IOService *provider) {
     }
 
 #ifdef MAVERICKS_TERMINAL
-    // 10.9 (< El Capitan): the OS multitouch AMD spawns only from a real USB transport driver, so upstream's
-    // simulator/actuator/trackpoint can't dispatch here (U2, see docs/mt-stack). Drive our fabricated-AMD
-    // terminal instead and skip the simulator subsystem. Same VoodooInputEvent stream (MavericksTerminalBackend).
+    // 10.9 (< El Capitan): upstream's simulator/actuator/trackpoint can't dispatch here because the OS
+    // multitouch stack won't bind a virtual IOHIDDevice. Drive a provider-advertised concrete terminal
+    // instead and skip the simulator subsystem. Same VoodooInputEvent stream (VoodooInputTerminal).
     if (version_major < kVoodooInputVersionElCapitan) {
-        mavericks_amd_terminal_transport_t xport = MAVERICKS_AMD_TERMINAL_XPORT_BT;
-        OSString* tp = OSDynamicCast(OSString, provider->getProperty("MT2 Transport"));
-        if (tp && tp->isEqualTo("USB")) xport = MAVERICKS_AMD_TERMINAL_XPORT_USB;
-        backend = OSTypeAlloc(MavericksTerminalBackend);
-        if (backend && !backend->start(this, xport, logicalMaxX, logicalMaxY)) { backend->release(); backend = 0; }
-        if (!backend) IOLog("VoodooInput(MavericksTerminal): backend start failed; no cursor\n");
+        // On this OS the multitouch stack won't bind a virtual IOHIDDevice, so use the concrete terminal
+        // the provider advertises (by class name) instead of the simulator. The mux stays device-agnostic.
+        OSString* cls = OSDynamicCast(OSString, provider->getProperty("VoodooInputLegacyTerminalClass"));
+        if (cls) {
+            OSObject* o = OSMetaClass::allocClassWithName(cls->getCStringNoCopy());
+            legacyTerminal = OSDynamicCast(VoodooInputTerminal, o);
+            if (o && !legacyTerminal) o->release();   // advertised class wasn't a VoodooInputTerminal
+            if (legacyTerminal && !legacyTerminal->start(this, provider)) {
+                legacyTerminal->release(); legacyTerminal = 0;
+            }
+        }
+        if (!legacyTerminal) IOLog("VoodooInput: no legacy terminal (none advertised, or start failed); no cursor\n");
         goto terminals_ready;
     }
 #endif
@@ -124,7 +130,7 @@ bool VoodooInput::willTerminate(IOService* provider, IOOptionBits options) {
 
 void VoodooInput::stop(IOService *provider) {
 #ifdef MAVERICKS_TERMINAL
-    if (backend) { backend->stop(this); OSSafeReleaseNULL(backend); }
+    if (legacyTerminal) { legacyTerminal->stop(this); OSSafeReleaseNULL(legacyTerminal); }
 #endif
     if (simulator) {
         simulator->stop(this);
@@ -191,8 +197,8 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
     switch (type) {
         case kIOMessageVoodooInputMessage:
 #ifdef MAVERICKS_TERMINAL
-            if (provider == parentProvider && argument && backend) {
-                backend->handleEvent((const VoodooInputEvent*)argument);
+            if (provider == parentProvider && argument && legacyTerminal) {
+                legacyTerminal->handleEvent((const VoodooInputEvent*)argument);
                 break;
             }
 #endif
@@ -206,7 +212,7 @@ IOReturn VoodooInput::message(UInt32 type, IOService *provider, void *argument) 
                 logicalMaxX = dimensions.max_x - dimensions.min_x;
                 logicalMaxY = dimensions.max_y - dimensions.min_y;
 #ifdef MAVERICKS_TERMINAL
-                if (backend) backend->updateDimensions(logicalMaxX, logicalMaxY);
+                if (legacyTerminal) legacyTerminal->updateDimensions(logicalMaxX, logicalMaxY);
 #endif
             }
             break;
@@ -251,7 +257,3 @@ int VoodooInputGetProductId() {
     
     return kVoodooInputProductMacbook8_1;
 }
-
-#ifdef MAVERICKS_TERMINAL
-void VoodooInput::publishBattery(uint8_t pct) { if (backend) backend->publishBattery(pct); }
-#endif
