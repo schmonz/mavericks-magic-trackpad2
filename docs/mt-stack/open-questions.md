@@ -1,5 +1,38 @@
 # Open questions — things we need to understand but don't yet
 
+## ⚠️ CONFIRMED BUG (2026-07-22): reboot-while-on-BT hangs the warm restart at EFI (kext BT teardown un-quiesced)
+
+The predicted risk from `docs/superpowers/plans/2026-07-21-ondevice-satellite-validation.md` Task 1
+("Reboot while BT-connected — HIGH RISK") **materialized on-device 2026-07-22.** User rebooted while on BT
+(for bezel validation); the machine went dark and **stayed off ~7h** until a manual power-on. Evidence:
+`linkstated` quiesce fired at the shutdown (`quiesced BT for sigterm` at 10:51:24) but the daemon is IDLE
+when BT is connected, so it's not the culprit; the next `linkstated: armed` was 17:58:26 (7h gap = machine
+down). No new kernel panic; `boot.state=ok`. `EFIBluetoothDelay` NVRAM = `%b8%0b` (0x0bb8 = 3000) → firmware
+waits on BT at boot.
+
+**Root cause:** the **kext** (`MT2BTReader`) holds both L2CAP channels (PSM17 ctrl + PSM19 int) and has
+evicted Apple's `IOBluetoothHIDDriver`, and it has **NO shutdown/power hook** (grep: zero
+`IORegisterForSystemPower`/`kIOMessageSystemWillPowerOff`/`WillRestart` in `kext-gesture/`). So at shutdown it
+leaves the BT controller dirty → EFI's boot-time BT init (gated by `EFIBluetoothDelay`) **hangs the warm
+restart before video** → machine appears "stayed shut down"; only a cold power-cycle recovers. Same failure
+CLASS as the 2026-07-20 daemon-paging bug, DIFFERENT cause (daemon fix quiesces paging; the kext's BT
+ownership is un-quiesced). The brick-guard (`voodooinputmavericks-run`, skips the kext on an unhealthy macOS
+boot) CANNOT help — the hang is at EFI, before macOS.
+
+**Impact / safety:** every reboot/restart WHILE ON BT will likely recur → needs a cold power-cycle (bad
+remotely). Rebooting on USB is safe (`MT2BTReader=0`, kext isn't holding BT channels). So: don't reboot on BT
+until fixed; this BLOCKS the bezel validation (which needs a reboot).
+
+**Fix direction (design first — HIGH-RISK shutdown-path kext change; validate at desk with cold-cycle
+recovery available):** the kext registers for system power (`IORegisterForSystemPower`) and, on
+`kIOMessageSystemWillPowerOff`/`kIOMessageSystemWillRestart`, cleanly quiesces BT so EFI's init doesn't hang —
+close the L2CAP channels and release/settle the controller (open Q: does EFI choke on the open channels, the
+evicted `IOBluetoothHIDDriver`, or a HID-emulation/link-key residue? — determine what state EFI actually
+waits on before writing the teardown). Mirrors the daemon's `quiesce_for_shutdown` but for the kext's channel
+ownership. Do NOT iterate this remotely (a bug worsens the hang and you can't cold-cycle over VNC).
+
+---
+
 Genuine known-unknowns about driving the 10.9 multitouch stack: behaviours we've *observed* but
 can't yet *explain*, and things we haven't measured. Distinct from `decisions.md` (which records
 choices we've already resolved). When one of these gets understood, fold the finding into
