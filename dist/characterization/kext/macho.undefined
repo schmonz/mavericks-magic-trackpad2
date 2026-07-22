@@ -462,6 +462,7 @@ __ZTV11IOHIDDevice
 __ZTV12IOHIPointing
 __ZTV12IOUserClient
 __ZTV9IOService
+___cxa_pure_virtual
 ___stack_chk_fail
 ___stack_chk_guard
 _absolutetime_to_nanoseconds

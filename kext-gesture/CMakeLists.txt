@@ -7,6 +7,7 @@ set(KEXT_LOCAL_CPP
   MavericksVoodooInputHost.cpp MavericksVoodooInputHostUserClient.cpp MT2BTReader.cpp MT2USBReader.cpp
   mavericks_log.cpp mavericks_diag.cpp mavericks_splice_kext.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInput.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputTerminal.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputSimulatorDevice.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputActuatorDevice.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/Trackpoint/TrackpointDevice.cpp
@@ -56,6 +57,7 @@ set_source_files_properties(${KEXT_SHARED_SRCS} PROPERTIES LANGUAGE CXX COMPILE_
 set_source_files_properties(
   MT2USBReader.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_conn_trace.c
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInput.cpp MavericksTerminalBackend.cpp ${CMAKE_SOURCE_DIR}/src/mavericks_voodoo_translate.cpp
+  ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputTerminal.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputSimulatorDevice.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/VoodooInputSimulator/VoodooInputActuatorDevice.cpp
   ${CMAKE_SOURCE_DIR}/third_party/VoodooInput/Trackpoint/TrackpointDevice.cpp

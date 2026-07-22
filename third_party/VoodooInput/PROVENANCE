@@ -22,3 +22,9 @@ VoodooInputMultitouch/MultitouchHelpers.h
   local mods: none (pristine). Compiled on 10.9 as the always-present >=ElCapitan terminal branch; selected
     only at runtime by version_major (never on our 10.9 target). IOLog/IOMalloc reach them via a
     -include <IOKit/IOLib.h> compile flag (upstream gets it from its umbrella) — the sources stay verbatim.
+
+VoodooInputTerminal.hpp, VoodooInputTerminal.cpp
+  source: LOCAL ORIGIN — authored by this project as a proposed-upstream interface (NOT fetched from
+    acidanthera). Intended for contribution alongside the version_major legacy-terminal gate.
+  created: 2026-07-22
+  license: GPLv2 (same as the rest of the vendored tree)
