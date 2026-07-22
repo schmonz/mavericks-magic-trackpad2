@@ -71,3 +71,33 @@ spawn/dispatch on 10.9) FIRST — its answer picks (a) vs (b).
 
 Source read: acidanthera/VoodooInput `master`, `VoodooInput/{Info.plist, VoodooInput.cpp, VoodooInput.hpp,
 VoodooInputSimulator/VoodooInputSimulatorDevice.hpp}`, 2026-07-19.
+
+## Adopting upstream's VoodooInput.cpp verbatim — what the REAL source reveals (2026-07-21)
+
+Fetched acidanthera/VoodooInput `master` `VoodooInput.{cpp,hpp}` (218/54 lines) to plan piece 3 (run
+upstream's mux with our `MavericksTerminalBackend` as the `< ElCapitan` terminal). Three things the design
+sketch missed, from the actual code:
+
+1. **The mux is ENTANGLED with the whole simulator/actuator/trackpoint subsystem.** `start()` unconditionally
+   `OSTypeAlloc`s `VoodooInputSimulatorDevice` + `VoodooInputActuatorDevice` + `TrackpointDevice` and
+   inits/attaches/starts all three; `message()` calls `simulator->constructReport(...)`,
+   `trackpoint->updateRelativePointer/…`. To compile+link "verbatim" we must vendor AND 10.9-port ALL THREE
+   — including `VoodooInputSimulatorDevice`, the IOHIDDevice ③ terminal whose 10.9 spawn/dispatch is the
+   still-open U2 question — even though our 10.9 build never uses them. Alternative: `#ifdef` them out for
+   the 10.9 build (then it's not verbatim). This materially enlarges piece 3 vs the "just add a version
+   branch" sketch. → the "verbatim mux" decision should be revisited with this cost known.
+2. **`start()` calls `updateProperties()` which HARD-REQUIRES 5 provider keys** (`VOODOO_INPUT_TRANSFORM_KEY`,
+   `LOGICAL_MAX_X/Y_KEY`, `PHYSICAL_MAX_X/Y_KEY`); missing any → `updateProperties` false → `start` returns
+   false → mux never starts. **Our satellites advertise only `LOGICAL_MAX_X/Y`.** Adopting upstream's mux
+   requires our satellites to also advertise `TRANSFORM_KEY` + `PHYSICAL_MAX_X/Y` (a small satellite change,
+   but required).
+3. **The mux `open()`s its provider** (`parentProvider->open(this)`) and closes on `willTerminate`. Our
+   satellites don't expect to be opened; their teardown must tolerate it.
+4. Confirmed GOOD: upstream's `start()` DOES `setProperty(VOODOO_INPUT_IDENTIFIER, kOSBooleanTrue)` — so our
+   satellites' mux-locator works unchanged. And `version_major` is used ONLY in `VoodooInputGetProductId`
+   (>= Monterey), NOT for terminal selection — so our seam ADDS a terminal-gate, it doesn't extend one.
+
+Net: piece 3 is bigger + more coupled than designed. Decide the fork before planning: (A) vendor+10.9-port
+the full simulator/actuator/trackpoint subsystem (heavy; reopens U2 for the simulator's compile), or (B)
+vendor VoodooInput.cpp with a 10.9 `#ifdef`/seam that excludes the unused subsystem (small, but the shipped
+file diverges from upstream — though the CONTRIBUTED diff to upstream is still just the `< ElCapitan` branch).
