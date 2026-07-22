@@ -1,4 +1,4 @@
-CFBundleIdentifier=com.schmonz.VoodooInputMavericks
+CFBundleIdentifier=dev.modernmavericks.VoodooInputMavericks
 com.apple.driver.AppleMultitouchDriver = 193.8
 com.apple.iokit.IOBluetoothFamily = 2.0.0
 com.apple.iokit.IOHIDFamily = 1.5

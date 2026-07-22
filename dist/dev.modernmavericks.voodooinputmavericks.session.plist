@@ -6,7 +6,7 @@
          so voodooinputmavericks-run runs post-session and takes the MT2 over for multitouch. Pre-login (no Aqua
          session) it never runs, so the login screen stays on Apple's generic HID. -->
     <key>Label</key>
-    <string>com.schmonz.voodooinputmavericks.session</string>
+    <string>dev.modernmavericks.voodooinputmavericks.session</string>
     <key>LimitLoadToSessionType</key>
     <string>Aqua</string>
     <key>RunAtLoad</key>

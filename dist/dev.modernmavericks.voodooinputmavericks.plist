@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.schmonz.voodooinputmavericks</string>
+    <string>dev.modernmavericks.voodooinputmavericks</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/sbin/voodooinputmavericks-run</string>

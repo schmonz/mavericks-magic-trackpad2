@@ -85,7 +85,7 @@ add_custom_target(prefpane-refresh-simbl-uninstall
 # USB-appear hidd gesture-kick, shutdown quiesce (see the mt2_linkstated.m header). Reuses the target.
 add_custom_target(linkstate-install
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/dev_linkstated.sh install
-          ${CMAKE_BINARY_DIR}/sbin/mt2_linkstated ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.linkstated.plist
+          ${CMAKE_BINARY_DIR}/sbin/mt2_linkstated ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.linkstated.plist
   COMMENT "Installing + loading the mt2_linkstated LaunchDaemon")
 add_dependencies(linkstate-install mt2_linkstated)
 add_custom_target(linkstate-uninstall
@@ -101,7 +101,7 @@ if(MT2_SPARKLE_FRAMEWORK)
   mavericks_add_updater_app(
     NAME MavericksTrackpad2Updater
     PRODUCT_NAME "Mavericks Trackpad 2"
-    BUNDLE_ID com.schmonz.MavericksTrackpad2Updater
+    BUNDLE_ID dev.modernmavericks.Trackpad2Updater
     FEED_URL "https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml"
     ED_PUBKEY "E8ZTStxLUfSWtTDg24bwnanLII20R27NVm+RxZtElGs="
     ICON "${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_updater/MavericksTrackpad2Updater.icns"

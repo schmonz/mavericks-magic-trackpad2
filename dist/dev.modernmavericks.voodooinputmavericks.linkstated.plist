@@ -8,7 +8,7 @@
          Must be a Daemon so it runs regardless of GUI session; needs root for IOBluetooth openConnection
          outside an Aqua session, and for killall hidd. -->
     <key>Label</key>
-    <string>com.schmonz.voodooinputmavericks.linkstated</string>
+    <string>dev.modernmavericks.voodooinputmavericks.linkstated</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/libexec/mt2_linkstated</string>

@@ -49,11 +49,11 @@ cmake --build build-native --target install-pkg
 ## Uninstall
 
 ```sh
-sudo launchctl unload /Library/LaunchDaemons/com.schmonz.voodooinputmavericks.plist
-launchctl unload /Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist
-sudo kextunload -b com.schmonz.VoodooInputMavericks
-sudo rm -rf /Library/LaunchDaemons/com.schmonz.voodooinputmavericks*.plist \
-    /Library/LaunchAgents/com.schmonz.voodooinputmavericks*.plist \
+sudo launchctl unload /Library/LaunchDaemons/dev.modernmavericks.voodooinputmavericks.plist
+launchctl unload /Library/LaunchAgents/dev.modernmavericks.voodooinputmavericks.updatecheck.plist
+sudo kextunload -b dev.modernmavericks.VoodooInputMavericks
+sudo rm -rf /Library/LaunchDaemons/dev.modernmavericks.voodooinputmavericks*.plist \
+    /Library/LaunchAgents/dev.modernmavericks.voodooinputmavericks*.plist \
     "/Library/Application Support/SIMBL/Plugins/VoodooInputMavericksPane.bundle" \
     /usr/local/sbin/voodooinputmavericks-run /usr/local/sbin/mt2_reenumerate \
     /usr/local/libexec/mt2_linkstated \

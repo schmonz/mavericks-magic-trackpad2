@@ -31,7 +31,7 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_reenumerate ${PKGROOT}/usr/local/sbin/
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/voodooinputmavericks-run        ${PKGROOT}/usr/local/sbin/
   COMMAND chmod +x ${PKGROOT}/usr/local/sbin/voodooinputmavericks-run
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.plist ${PKGROOT}/Library/LaunchDaemons/
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.plist ${PKGROOT}/Library/LaunchDaemons/
   # Login-screen basic HID: the session-start trigger + the per-user LaunchAgent that touches it. The
   # voodooinputmavericks daemon WatchPaths this file; the agent touches it at login so voodooinputmavericks-run runs post-session (its
   # /dev/console guard makes the boot RunAtLoad a no-op). File is world-writable so any Aqua session can
@@ -40,18 +40,18 @@ add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E touch ${PKGROOT}/usr/local/var/voodooinputmavericks/session.trigger
   COMMAND chmod 666 ${PKGROOT}/usr/local/var/voodooinputmavericks/session.trigger
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.session.plist ${PKGROOT}/Library/LaunchAgents/
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.session.plist ${PKGROOT}/Library/LaunchAgents/
   # Prefpane live-refresh: shipped ONLY as a SIMBL plugin (staged below). The postinstall installs it into
   # the SIMBL Plugins dir; if the target has no SIMBL it points the user at mavericksforever.com/SIMBL.pkg.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/libexec
   # USB->BT handoff daemon (wakes BT on cable unplug, no click): its watcher binary + a root LaunchDaemon.
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/sbin/mt2_linkstated ${PKGROOT}/usr/local/libexec/
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.linkstated.plist ${PKGROOT}/Library/LaunchDaemons/
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.linkstated.plist ${PKGROOT}/Library/LaunchDaemons/
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/Library/LaunchAgents
   # Scheduled background update check: per-user LaunchAgent that runs the updater in --background mode
   # (daily + at login). Only useful when the updater app is staged (Sparkle build), but the plist is a
   # static file with no build dependency, so always ship it; the postinstall loads it best-effort.
-  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/com.schmonz.voodooinputmavericks.updatecheck.plist ${PKGROOT}/Library/LaunchAgents/
+  COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.updatecheck.plist ${PKGROOT}/Library/LaunchAgents/
   # Stage the SIMBL plugin bundle in a holding area; postinstall installs it into the SIMBL Plugins dir.
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/share/voodooinputmavericks
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/VoodooInputMavericksPane.bundle ${PKGROOT}/usr/local/share/voodooinputmavericks/VoodooInputMavericksPane.bundle
@@ -68,7 +68,7 @@ add_custom_target(pkg
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/pkg_no_version_check.sh ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
   COMMAND pkgbuild --root ${PKGROOT} --component-plist ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
           --scripts ${CMAKE_SOURCE_DIR}/dist/scripts
-          --identifier com.schmonz.voodooinputmavericks --version ${MAVERICKS_PKG_VERSION} --install-location /
+          --identifier dev.modernmavericks.voodooinputmavericks --version ${MAVERICKS_PKG_VERSION} --install-location /
           ${CMAKE_BINARY_DIR}/voodooinputmavericks-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --resources ${CMAKE_SOURCE_DIR}/dist/resources

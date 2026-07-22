@@ -5,7 +5,7 @@
 # tolerance is why this is a script, not inline CMake COMMANDs.
 # Usage: dev_linkstated.sh install <daemon_bin> <plist> | uninstall
 set -e
-DAEMON=/Library/LaunchDaemons/com.schmonz.voodooinputmavericks.linkstated.plist
+DAEMON=/Library/LaunchDaemons/dev.modernmavericks.voodooinputmavericks.linkstated.plist
 BIN=/usr/local/libexec/mt2_linkstated
 case "$1" in
   install)

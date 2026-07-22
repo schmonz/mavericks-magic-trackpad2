@@ -63,7 +63,7 @@
 #endif
 
 /* Sparkle + the daily auto-check agent read this key from the updater's own prefs domain. */
-#define MAVERICKS_UPDATER_DOMAIN CFSTR("com.schmonz.MavericksTrackpad2Updater")
+#define MAVERICKS_UPDATER_DOMAIN CFSTR("dev.modernmavericks.Trackpad2Updater")
 
 /* ============================================================================================
  * 1. GENERIC HELPERS — objc dispatch shims + core cross-section state

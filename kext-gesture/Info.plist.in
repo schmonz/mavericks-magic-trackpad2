@@ -7,7 +7,7 @@
     <key>CFBundleExecutable</key>
     <string>VoodooInputMavericks</string>
     <key>CFBundleIdentifier</key>
-    <string>com.schmonz.VoodooInputMavericks</string>
+    <string>dev.modernmavericks.VoodooInputMavericks</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -27,7 +27,7 @@
         <key>MavericksVoodooInputHost</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.VoodooInputMavericks</string>
+            <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MavericksVoodooInputHost</string>
             <key>IOProviderClass</key>
@@ -120,7 +120,7 @@
         <key>MT2BTControl</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.VoodooInputMavericks</string>
+            <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
             <key>IOProviderClass</key>
@@ -139,7 +139,7 @@
         <key>MT2BTInterrupt</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.VoodooInputMavericks</string>
+            <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2BTReader</string>
             <key>IOProviderClass</key>
@@ -163,7 +163,7 @@
         <key>MT2USB</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.VoodooInputMavericks</string>
+            <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MT2USBReader</string>
             <key>IOProviderClass</key>
@@ -187,7 +187,7 @@
         <key>VoodooInputMavericks</key>
         <dict>
             <key>CFBundleIdentifier</key>
-            <string>com.schmonz.VoodooInputMavericks</string>
+            <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
             <string>com_schmonz_MavericksVoodooInput</string>
             <key>IOProviderClass</key>

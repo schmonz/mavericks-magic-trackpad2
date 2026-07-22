@@ -29,7 +29,7 @@
  *                       (EFIBluetoothDelay makes firmware wait on BT); root-caused + fixed 2026-07-20.
  *
  * All BT action targets CoD-0x594 paired devices only (mt2_cod_match.h), so a co-connected non-MT2 Apple
- * device is never touched. Root LaunchDaemon (dist/com.schmonz.voodooinputmavericks.linkstated.plist)
+ * device is never touched. Root LaunchDaemon (dist/dev.modernmavericks.voodooinputmavericks.linkstated.plist)
  * so it runs regardless of GUI session.
  *
  *   clang -fobjc-arc -mmacosx-version-min=10.9 -framework Foundation -framework IOBluetooth \
@@ -67,7 +67,7 @@ static mavericks_presence_observer_t *g_obs;   /* the shared presence SM: single
 static dispatch_queue_t reconnect_queue(void) {
     static dispatch_queue_t q;
     static dispatch_once_t once;
-    dispatch_once(&once, ^{ q = dispatch_queue_create("com.schmonz.mt2.reconnect", DISPATCH_QUEUE_SERIAL); });
+    dispatch_once(&once, ^{ q = dispatch_queue_create("dev.modernmavericks.mt2.reconnect", DISPATCH_QUEUE_SERIAL); });
     return q;
 }
 

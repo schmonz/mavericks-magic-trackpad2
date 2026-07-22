@@ -16,7 +16,7 @@ case "$1" in
     # running — a false green where "loaded" ran old code. Unload-first makes load always
     # replace. (|| true: tolerates "not loaded" and, if busy, the kextload below still reports
     # the real failure rather than a phantom success.)
-    sudo kextunload -b com.schmonz.VoodooInputMavericks || true
+    sudo kextunload -b dev.modernmavericks.VoodooInputMavericks || true
     # Apple's multitouch kexts first (best-effort): the genuine paths allocClassWithName
     # AppleUSBMultitouchDriver / BNBTrackpadDevice from these (NULL class otherwise).
     sudo kextload /System/Library/Extensions/AppleUSBMultitouch.kext || true
@@ -24,7 +24,7 @@ case "$1" in
     sudo kextload /tmp/VoodooInputMavericks.kext
     ;;
   unload)
-    sudo kextunload -b com.schmonz.VoodooInputMavericks || true
+    sudo kextunload -b dev.modernmavericks.VoodooInputMavericks || true
     ;;
   *)
     echo "usage: $0 load <kext_bundle> | unload" >&2; exit 2 ;;

@@ -7,7 +7,7 @@
 set -e
 KEXT="$1"; BT_BOUNCE="$2"; REENUM="$3"
 
-sudo kextunload -b com.schmonz.VoodooInputMavericks || true
+sudo kextunload -b dev.modernmavericks.VoodooInputMavericks || true
 echo "reload: waiting for our nub + BNB to drain (async teardown)..."
 for i in $(seq 1 50); do
   ioreg -lw0 | grep -q '"com_schmonz_MavericksVoodooInputHost"=1\|"BNBTrackpadDevice"=1' || break

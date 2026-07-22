@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string>VoodooInputMavericksPane</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.schmonz.VoodooInputMavericksPane</string>
+	<string>dev.modernmavericks.VoodooInputMavericksPane</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
