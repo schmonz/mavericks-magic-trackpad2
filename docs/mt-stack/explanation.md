@@ -65,7 +65,7 @@ arming + removal-window HOLD timer + supersession), consumed by BOTH userspace o
 osax (uses the SM's rendered action) and the USB→BT handoff daemon (keys on the raw event
 `PRESENCE_EV_USB_REMOVE`, since a HOLD action can't tell a USB drop from a BT drop). Canonical service
 names `AppleUSBMultitouchDriver` (USB) + `BNBTrackpadDevice` (BT); the observer replaced the handoff's
-ad-hoc `com_schmonz_MT2USBReader`-terminate edge (measured coincident within ~0.038 ms on-device
+ad-hoc `MT2USBReader`-terminate edge (measured coincident within ~0.038 ms on-device
 2026-07-09, so no perceptible handoff delay). The kext's single-transport ARBITRATION stayed separate
 (the device self-arbitrates — cabling USB drops BT — so `mt2_coordinator` is a deliberately EMPTY
 composition seam); a transition-heavy future device plugs into that seam or swaps a richer
@@ -149,9 +149,9 @@ behaviour matches BT — not a regression).
 - **`AppleMultitouchDevice` (AMD)** — Apple's multitouch device; its recognizer plugin (kernel
   `MultitouchHID`) turns contact frames into pointer/gesture/click events. Userspace
   `MultitouchSupport` caches geometry at first attach.
-- **Our `com_schmonz_MT2BTReader`** — wins the BT L2CAP channels, manually starts the genuine BNB,
+- **Our `MT2BTReader`** — wins the BT L2CAP channels, manually starts the genuine BNB,
   interposes a translation shim, and injects geometry + the button gate.
-- **Our `com_schmonz_MavericksVoodooInputHost`** — the session/conditioning nub (shared MT2→MT1 pipeline) and the
+- **Our `MavericksVoodooInputHost`** — the session/conditioning nub (shared MT2→MT1 pipeline) and the
   click sink; also owns the `debug.mt2_log` sysctl.
 
 ## End-to-end data flow (full-BNB — RETIRED genuine-BNB era, NOT current)
@@ -290,7 +290,7 @@ several of these findings are reusable for the "97% API" mission and were not ob
 
 **The fabricated AMD nub (the strict-cast story).** We `allocClassWithName("AppleMultitouchDevice")`,
 `init`'d it with **`IsFake=false`**, installed an enable stub + geometry handler, then `attach`+`start`
-under our `com_schmonz_MavericksVoodooInputHost` nub. `AppleMultitouchDevice::start` reads `getProperty("IsFake")`:
+under our `MavericksVoodooInputHost` nub. `AppleMultitouchDevice::start` reads `getProperty("IsFake")`:
 - **`IsFake=true`** → LENIENT: best-effort event-service lookup, always continues `start()`.
 - **`IsFake=false`** → STRICT: walks the IOService plane to the parent provider and **requires it cast
   to `AppleMultitouchHIDEventDriverV2`/`…EventDriver`/`…EventService`**, else logs "Could not cast our

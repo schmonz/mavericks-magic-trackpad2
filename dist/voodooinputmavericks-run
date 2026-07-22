@@ -56,9 +56,9 @@ recover_full() {
         log "recovery attempt $i/$RECOVER_TRIES: bounce BT (close->open) to re-offer both L2CAP channels"
         $BOUNCE >/dev/null 2>&1 || true
         sleep "$HEALTHY_DELAY"
-        btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
-        usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
-        cnt="$("$IOCLASSCOUNT" com_schmonz_MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')"
+        btn="$("$IOCLASSCOUNT" MT2BTReader 2>/dev/null | awk '{print $NF}')"
+        usbn="$("$IOCLASSCOUNT" MT2USBReader 2>/dev/null | awk '{print $NF}')"
+        cnt="$("$IOCLASSCOUNT" MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')"
         if [ "$("$0" --health-verdict "$btn" "$usbn" "$cnt")" = "healthy" ]; then
             echo ok > "$STATE_FILE" 2>/dev/null || true
             log "recovery succeeded on attempt $i: BT=$btn USB=$usbn nub=$cnt — full-gesture healthy"
@@ -181,12 +181,12 @@ log "attempting full-gesture mode"
 # (won-on-load = reader already resident from a re-trigger -> nonzero instantly; cold boot never wins ->
 # 0 -> reclaim). Replaces a fixed 5s->1s settle the timing breakdown (2026-07-21) showed was pure margin.
 settle=0
-while [ "$("$IOCLASSCOUNT" com_schmonz_MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')" = "0" ] \
+while [ "$("$IOCLASSCOUNT" MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')" = "0" ] \
       && [ "$settle" -lt "${MT2D_SETTLE_TRIES:-25}" ]; do
     settle=$((settle + 1)); sleep 0.2
 done
 on_usb=0
-if [ "$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')" != "0" ]; then
+if [ "$("$IOCLASSCOUNT" MT2USBReader 2>/dev/null | awk '{print $NF}')" != "0" ]; then
     log "USB reader won interface 1 on load; skipping re-enumerate"
     on_usb=1
 elif "$SBIN/mt2_reenumerate" >/dev/null 2>&1; then
@@ -222,12 +222,12 @@ fi
 # and skip-loading the next boot. Device binding is a FUNCTIONALITY concern below,
 # never a sentinel gate.)
 sleep "$HEALTHY_DELAY"
-cnt="$("$IOCLASSCOUNT" com_schmonz_MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')"
+cnt="$("$IOCLASSCOUNT" MavericksVoodooInputHost 2>/dev/null | awk '{print $NF}')"
 # Reader counts are diagnostics + the recovery trigger, not a sentinel gate. The nub
 # (cnt) is IOResources-matched so it loads with the kext regardless of device; BT>0
 # means MT2BTReader bound the L2CAP channels, USB>0 means MT2USBReader bound interface 1.
-btn="$("$IOCLASSCOUNT" com_schmonz_MT2BTReader 2>/dev/null | awk '{print $NF}')"
-usbn="$("$IOCLASSCOUNT" com_schmonz_MT2USBReader 2>/dev/null | awk '{print $NF}')"
+btn="$("$IOCLASSCOUNT" MT2BTReader 2>/dev/null | awk '{print $NF}')"
+usbn="$("$IOCLASSCOUNT" MT2USBReader 2>/dev/null | awk '{print $NF}')"
 log "transport readers bound: BT=$btn USB=$usbn (gesture nub=$cnt)"
 # USB gesture-open is now owned SOLELY by mt2_linkstated, NOT the wrapper. The daemon arms its
 # presence observers early in boot (measured 2026-07-21: armed 45s before the reclaim), so the USB

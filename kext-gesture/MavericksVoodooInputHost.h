@@ -27,8 +27,8 @@ typedef struct {
     void *ctx;
 } mavericks_transport_sink_t;
 
-class com_schmonz_MavericksVoodooInputHost : public IOService {
-    OSDeclareDefaultStructors(com_schmonz_MavericksVoodooInputHost)
+class MavericksVoodooInputHost : public IOService {
+    OSDeclareDefaultStructors(MavericksVoodooInputHost)
     mavericks_session_t fSession;               /* pure functional core: owns all post-decode logic */
     mavericks_session_sink_t fSink;             /* effects seam handed to the session: trampolines below */
     mavericks_transport_sink_t fXport;          /* the ACTIVE reader's delivery, registered at

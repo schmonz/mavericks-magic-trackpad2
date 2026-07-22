@@ -4,7 +4,7 @@
  * interrupt-IN pipe, send the MT2 0x02 USB multitouch-enable, and async-read frames.
  * SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE, symmetric with
  * MT2BTReader — on bring-up it advertises VoodooInputSupported + its coordinate span +
- * Transport=USB and registerService()s; the mux (com_schmonz_MavericksVoodooInput) attaches as our
+ * Transport=USB and registerService()s; the mux (MavericksVoodooInput) attaches as our
  * client. readComplete decodes each raw MT2 0x02 report (mt2_usb_decode -> MavericksTouchFrame),
  * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No AppleUSBMultitouchDriver is ever hosted; no fabricated
@@ -38,9 +38,9 @@
 /* The reader instance (single device -> one global). Set/cleared across start/stop. */
 static IOService *gUsbReader = 0;
 
-OSDefineMetaClassAndStructors(com_schmonz_MT2USBReader, IOService)
+OSDefineMetaClassAndStructors(MT2USBReader, IOService)
 
-bool com_schmonz_MT2USBReader::start(IOService *provider) {
+bool MT2USBReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
     fIntf = OSDynamicCast(IOUSBInterface, provider);
     if (!fIntf) { IOLog("MT2USBReader: provider not IOUSBInterface\n"); return false; }
@@ -102,18 +102,18 @@ bool com_schmonz_MT2USBReader::start(IOService *provider) {
     return true;
 }
 
-void com_schmonz_MT2USBReader::armRead(void) {
+void MT2USBReader::armRead(void) {
     if (fStopping || !fPipe || !fBuf) return;
     IOUSBCompletion c;
-    c.target = this; c.action = &com_schmonz_MT2USBReader::readComplete; c.parameter = 0;
+    c.target = this; c.action = &MT2USBReader::readComplete; c.parameter = 0;
     fBuf->setLength(fMaxPacket ? fMaxPacket : 64);
     IOReturn r = fPipe->Read(fBuf, 0, 0, &c);
     if (r != kIOReturnSuccess) IOLog("MT2USBReader: Read arm failed 0x%x\n", r);
 }
 
-void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
+void MT2USBReader::readComplete(void *target, void * /*param*/,
                                             IOReturn status, UInt32 remaining) {
-    com_schmonz_MT2USBReader *self = (com_schmonz_MT2USBReader *)target;
+    MT2USBReader *self = (MT2USBReader *)target;
     if (!self || self->fStopping) return;
     if (status == kIOReturnSuccess) {
         UInt32 cap = self->fMaxPacket ? self->fMaxPacket : 64;
@@ -156,7 +156,7 @@ void com_schmonz_MT2USBReader::readComplete(void *target, void * /*param*/,
  * We opened fIntf ourselves, so close it here; abort the pipe so the async read callback
  * returns kIOReturnAborted and stops re-arming. The fabricated AMD teardown is deferred to
  * stop() (mirrors SP2) so quiesceDelivery runs after connectionClosed. */
-void com_schmonz_MT2USBReader::releaseInterface(void) {
+void MT2USBReader::releaseInterface(void) {
     fStopping = true;
 
     /* Abort the in-flight async read so readComplete stops re-arming.
@@ -175,12 +175,12 @@ void com_schmonz_MT2USBReader::releaseInterface(void) {
     }
 }
 
-bool com_schmonz_MT2USBReader::willTerminate(IOService *provider, IOOptionBits options) {
+bool MT2USBReader::willTerminate(IOService *provider, IOOptionBits options) {
     releaseInterface();
     return IOService::willTerminate(provider, options);
 }
 
-void com_schmonz_MT2USBReader::stop(IOService *provider) {
+void MT2USBReader::stop(IOService *provider) {
     releaseInterface();                          /* no-op if willTerminate already did it */
 
     /* No terminal AMD to tear down here — the mux owns it and cleans up when it detaches as our

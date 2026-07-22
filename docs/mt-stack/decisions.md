@@ -150,7 +150,7 @@ so a real MT2 needs *our* front-half bus driver — complementary, not drop-in.
   panic — already HARDENED `22bbf1a`; ledger in [[genuine-vs-owned-device-reeval]] / the REPLACE entry).
 
 **IMPLEMENTED + ON-DEVICE VALIDATED (2026-07-16).** The genuine-USB terminal was recovered from `9573611^`
-(last genuine `start()`) and reconciled onto HEAD: OUR `com_schmonz_MT2USBReader` is the sole matcher of the
+(last genuine `start()`) and reconciled onto HEAD: OUR `MT2USBReader` is the sole matcher of the
 MT2's `IOUSBInterface` (PID 613 / 0x265 is not in Apple's `idProductArray`), then manual-starts Apple's genuine
 `AppleUSBMultitouchDriver` and instance-scoped-clones its `handleReport` (vtable byte offset `0x8b8` = slot 279,
 **re-verified this session** against the live `/S/L/E` driver via `re vtable`; button `handleButton` @ `0xb28`).
@@ -357,7 +357,7 @@ Raised while cleaning up the SIMBL-only prefpane cut. Recorded so they aren't re
 
 ### Owned mux split into a thin router + a terminal backend (shipped 2026-07-21, `d1ca858`+`4ba745a`)
 First step of aligning the OWNED path with upstream VoodooInput's shape (goal: contributable AND cleaner
-for us). `com_schmonz_MavericksVoodooInput` used to do two jobs — route `VoodooInputEvent`s AND own+drive
+for us). `MavericksVoodooInput` used to do two jobs — route `VoodooInputEvent`s AND own+drive
 the session/conditioning engine + fabricated-AMD terminal. Split:
 - **`MavericksTerminalBackend`** (new, `kext-gesture/MavericksTerminalBackend.{h,cpp}`) — an `OSObject`
   (so it can own its `IOTimerEventSource`; also mirrors upstream, whose terminal is an OSObject) that owns
@@ -398,7 +398,7 @@ Before retiring the Makefiles we proved parity of the load-bearing artifact: the
 **same 594 symbols (identical type+name set)** as the Makefile kext (`nm` name+type diff empty; only
 addresses differ from link order), both `MH_KEXTBUNDLE` x86_64 `NOUNDEFS`. Then the real gate: unloaded the
 running kext, staged the CMake kext root-owned in `/tmp`, `kextload`ed it (resolved deps `<120 88 37 30 5 4
-3 1>`, nub `com_schmonz_MavericksVoodooInputHost` registered/matched/active/busy 0), and the user exercised the full
+3 1>`, nub `MavericksVoodooInputHost` registered/matched/active/busy 0), and the user exercised the full
 gesture set — **confirmed working on both USB and BT**. The CMake kext is behavior-equivalent to the
 Makefile build. (The installed boot copy under `/usr/local/lib/mt2d` was untouched; this was a runtime swap.)
 

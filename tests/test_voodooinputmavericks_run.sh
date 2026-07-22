@@ -61,11 +61,11 @@ rec="$TMP/rec"; mkdir -p "$rec"
 cat > "$rec/ioclasscount" <<EOF
 #!/bin/sh
 case "\$1" in
-  com_schmonz_MT2BTReader)
+  MT2BTReader)
     n="\$(cat "$rec/btcalls" 2>/dev/null || echo 0)"; n=\$((n+1)); echo "\$n" > "$rec/btcalls"
     if [ "\$n" -le 1 ]; then echo "x 1"; else echo "x 2"; fi ;;
-  com_schmonz_MT2USBReader) echo "x 0" ;;
-  com_schmonz_MavericksVoodooInputHost)   echo "x 1" ;;
+  MT2USBReader) echo "x 0" ;;
+  MavericksVoodooInputHost)   echo "x 1" ;;
 esac
 EOF
 chmod +x "$rec/ioclasscount"
@@ -89,9 +89,9 @@ nod="$TMP/nod"; mkdir -p "$nod/sbin"
 cat > "$nod/ioclasscount" <<EOF
 #!/bin/sh
 case "\$1" in
-  com_schmonz_MT2BTReader)  echo "x 0" ;;
-  com_schmonz_MT2USBReader) echo "x 0" ;;
-  com_schmonz_MavericksVoodooInputHost)   echo "x 1" ;;
+  MT2BTReader)  echo "x 0" ;;
+  MT2USBReader) echo "x 0" ;;
+  MavericksVoodooInputHost)   echo "x 1" ;;
 esac
 EOF
 chmod +x "$nod/ioclasscount"
@@ -125,9 +125,9 @@ usbk="$TMP/usbk"; mkdir -p "$usbk/sbin"
 cat > "$usbk/ioclasscount" <<EOF
 #!/bin/sh
 case "\$1" in
-  com_schmonz_MT2BTReader)  echo "x 0" ;;
-  com_schmonz_MT2USBReader) echo "x 1" ;;
-  com_schmonz_MavericksVoodooInputHost)   echo "x 1" ;;
+  MT2BTReader)  echo "x 0" ;;
+  MT2USBReader) echo "x 1" ;;
+  MavericksVoodooInputHost)   echo "x 1" ;;
 esac
 EOF
 chmod +x "$usbk/ioclasscount"
@@ -151,11 +151,11 @@ recl="$TMP/recl"; mkdir -p "$recl/sbin"
 cat > "$recl/ioclasscount" <<EOF
 #!/bin/sh
 case "\$1" in
-  com_schmonz_MT2BTReader)  echo "x 0" ;;
-  com_schmonz_MT2USBReader)
+  MT2BTReader)  echo "x 0" ;;
+  MT2USBReader)
     n=\$(cat "$recl/usb_reads" 2>/dev/null || echo 0); n=\$((n + 1)); echo "\$n" > "$recl/usb_reads"
     if [ "\$n" -ge 2 ]; then echo "x 1"; else echo "x 0"; fi ;;
-  com_schmonz_MavericksVoodooInputHost) echo "x 1" ;;
+  MavericksVoodooInputHost) echo "x 1" ;;
 esac
 EOF
 chmod +x "$recl/ioclasscount"

@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
     io_connect_t conn = IO_OBJECT_NULL;
     if (feed) {
         io_service_t s = IOServiceGetMatchingService(kIOMasterPortDefault,
-            IOServiceMatching("com_schmonz_MavericksVoodooInputHost"));
+            IOServiceMatching("MavericksVoodooInputHost"));
         if (!s) { fprintf(stderr, "MavericksVoodooInputHost service not found (kext loaded?)\n"); return 1; }
         if (IOServiceOpen(s, mach_task_self(), 0, &conn) != KERN_SUCCESS) {
             fprintf(stderr, "IOServiceOpen failed\n"); return 1; }

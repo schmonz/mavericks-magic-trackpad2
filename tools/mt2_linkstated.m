@@ -140,7 +140,7 @@ static void bounce_bt_mt2(void) {
 
 /* Shared presence-observer callback. We need the raw USB-removal EDGE (cable pulled), not the SM's
  * rendered action — a HOLD action can't tell a USB drop from a BT drop — so we key on the event.
- * This is the exact trigger the old ad-hoc com_schmonz_MT2USBReader-terminate notifier fired on;
+ * This is the exact trigger the old ad-hoc MT2USBReader-terminate notifier fired on;
  * the canonical AppleUSBMultitouchDriver terminate the observer watches fires within ~0.04 ms of it
  * (measured on-device 2026-07-09). ASYMMETRIC BY DESIGN preserved: only USB_REMOVE wakes BT. */
 /* USB gesture-open: kick hidd so a fresh instance opens the frames client

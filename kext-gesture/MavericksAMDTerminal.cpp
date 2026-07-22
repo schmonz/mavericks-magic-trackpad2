@@ -36,7 +36,7 @@ extern "C" {
 
 struct mavericks_amd_terminal_ctx {
     mavericks_synth_regs_t          regs;
-    com_schmonz_MavericksHIDShell  *shell;
+    MavericksHIDShell  *shell;
     AppleMultitouchDevice    *amd;
     bool                      ready;  /* feed fence: amd() returns NULL until built, and again once teardown starts */
     IOWorkLoop               *wl;     /* retained AMD workloop; released LAST (VoodooInput invariant) */
@@ -139,7 +139,7 @@ mavericks_amd_terminal_ctx *mavericks_amd_terminal_build(IOService *nub, maveric
      *    continues (the AMD may still start in lenient mode). */
     ctx->shell = 0;
     {
-        com_schmonz_MavericksHIDShell *hid = new com_schmonz_MavericksHIDShell;
+        MavericksHIDShell *hid = new MavericksHIDShell;
         OSDictionary *hp = makeHidProps(transport);
         if (hid && hp && hid->init(hp)) {
             if (hid->attach(nub) && hid->start(nub)) {

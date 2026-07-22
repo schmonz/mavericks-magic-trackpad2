@@ -15,8 +15,8 @@
    multitouch-enable, async-reads frames (armRead/readComplete -> mt2_usb_decode ->
    submitFrame), and drives a SP1-hardened fabricated AppleMultitouchDevice (gUsbAmdCtx)
    via kUsbSink. No genuine AppleUSBMultitouchDriver is started. */
-class com_schmonz_MT2USBReader : public IOService {
-    OSDeclareDefaultStructors(com_schmonz_MT2USBReader)
+class MT2USBReader : public IOService {
+    OSDeclareDefaultStructors(MT2USBReader)
     IOUSBInterface *fIntf;
     IOUSBPipe      *fPipe;
     IOBufferMemoryDescriptor *fBuf;

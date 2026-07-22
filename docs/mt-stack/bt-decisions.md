@@ -14,7 +14,7 @@ the two transports to opposite terminals. Read `decisions.md` → "Terminal desi
 `AppleMultitouchDevice`.** This is terminal **① fabricate-AMD**. No Apple `BNBTrackpadDevice` is manual-started;
 single ownership top to bottom.
 
-1. **Match.** `com_schmonz_MT2BTReader` matches the MT2's BT-SIG identity (VID 76 / PID 613 / source 1) as an
+1. **Match.** `MT2BTReader` matches the MT2's BT-SIG identity (VID 76 / PID 613 / source 1) as an
    IOKit personality. (We cannot make Apple's own driver bind — the matcher reads the real DID from the
    controller-side store, not from a personality; `decisions.md` "VID/PID match path — not functioning". So a
    genuine BT terminal could only ever be reached by *manual-start*, §3.)

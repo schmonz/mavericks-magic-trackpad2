@@ -12,8 +12,8 @@ class IOTimerEventSource;
  * itself as the L2CAP delegate (listenAt -> incomingData) and builds a fabricated AMD;
  * on the control channel it owns the 0xF1 multitouch enable + battery poll. No
  * BNBTrackpadDevice is ever started. The BT counterpart of the USB transport. */
-class com_schmonz_MT2BTReader : public IOService {
-    OSDeclareDefaultStructors(com_schmonz_MT2BTReader)
+class MT2BTReader : public IOService {
+    OSDeclareDefaultStructors(MT2BTReader)
     IOBluetoothL2CAPChannel *fChannel;
     bool fIsControl;        /* set in-gate: PSM 17 (control) — owns the 0xF1 enable + battery poll */
     IOTimerEventSource *fInterposeTimer;  /* fires the deferred 0xF1 enable + battery poll */
@@ -27,7 +27,7 @@ public:
 
     /* Runs inside the channel's Bluetooth workloop gate (via getCommandGate()->runAction):
      * sends the 0xF1 enable and registers the incoming-data listener. IOBluetoothFamily
-     * REQUIREs these calls happen in-gate. arg0 = the com_schmonz_MT2BTReader. */
+     * REQUIREs these calls happen in-gate. arg0 = the MT2BTReader. */
     static IOReturn setupInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
 
     /* In-gate teardown: clears our listenAt callback so the channel's newDataIn stops

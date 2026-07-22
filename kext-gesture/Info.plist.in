@@ -29,11 +29,11 @@
             <key>CFBundleIdentifier</key>
             <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
-            <string>com_schmonz_MavericksVoodooInputHost</string>
+            <string>MavericksVoodooInputHost</string>
             <key>IOProviderClass</key>
             <string>IOResources</string>
             <key>IOMatchCategory</key>
-            <string>com_schmonz_MavericksVoodooInputHost</string>
+            <string>MavericksVoodooInputHost</string>
             <key>IOResourceMatch</key>
             <string>IOKit</string>
         </dict>
@@ -115,14 +115,14 @@
              (which matches PSM 17, default category, probe score 0) and win on our high
              IOProbeScore + specific VID/PID, EXCLUDING it. That hands us the device so
              our interrupt listener is the sole reader. Two personalities (control PSM 17,
-             interrupt PSM 19); both resolve to com_schmonz_MT2BTReader, which branches on
+             interrupt PSM 19); both resolve to MT2BTReader, which branches on
              getPSM(): send the 0xF1 enable on control, listenAt on both. -->
         <key>MT2BTControl</key>
         <dict>
             <key>CFBundleIdentifier</key>
             <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
-            <string>com_schmonz_MT2BTReader</string>
+            <string>MT2BTReader</string>
             <key>IOProviderClass</key>
             <string>IOBluetoothL2CAPChannel</string>
             <key>PSM</key>
@@ -141,7 +141,7 @@
             <key>CFBundleIdentifier</key>
             <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
-            <string>com_schmonz_MT2BTReader</string>
+            <string>MT2BTReader</string>
             <key>IOProviderClass</key>
             <string>IOBluetoothL2CAPChannel</string>
             <key>PSM</key>
@@ -157,7 +157,7 @@
         </dict>
         <!-- Bind interface 1 of the cabled Magic Trackpad 2 (idVendor 1452 /
              idProduct 613). High IOProbeScore beats IOUSBHIDDriver so our active
-             reader owns the interrupt-IN pipe. Resolves to com_schmonz_MT2USBReader
+             reader owns the interrupt-IN pipe. Resolves to MT2USBReader
              (in this kext), which feeds the nub as MT2_STREAMING. Replaces the
              inert MT2USBClaim kext + the userspace feeder. -->
         <key>MT2USB</key>
@@ -165,7 +165,7 @@
             <key>CFBundleIdentifier</key>
             <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
-            <string>com_schmonz_MT2USBReader</string>
+            <string>MT2USBReader</string>
             <key>IOProviderClass</key>
             <string>IOUSBInterface</string>
             <key>idVendor</key>
@@ -189,11 +189,11 @@
             <key>CFBundleIdentifier</key>
             <string>dev.modernmavericks.VoodooInputMavericks</string>
             <key>IOClass</key>
-            <string>com_schmonz_MavericksVoodooInput</string>
+            <string>MavericksVoodooInput</string>
             <key>IOProviderClass</key>
             <string>IOService</string>
             <key>IOMatchCategory</key>
-            <string>com_schmonz_MavericksVoodooInput</string>
+            <string>MavericksVoodooInput</string>
             <key>IOPropertyMatch</key>
             <dict>
                 <key>VoodooInputSupported</key>

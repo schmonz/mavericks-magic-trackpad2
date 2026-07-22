@@ -162,7 +162,7 @@ re-validates the whole matrix under that force. **The device-truth oracle CHANGE
 
 ## Updated oracle (run per step; mark `LB=$(wc -l < /var/log/system.log)` BEFORE the physical action)
 ```sh
-tools/re ioreg-class com_schmonz_MT2BTReader com_schmonz_MT2USBReader   # 1 = that transport bound (= truth)
+tools/re ioreg-class MT2BTReader MT2USBReader   # 1 = that transport bound (= truth)
 tools/re ioreg-class AppleMultitouchDevice                             # our fabricated AMD (1 = present)
 sudo sed -n "$((LB+1)),\$p" /var/log/system.log | grep -aE "MT2PaneRefresh|MT2Presence"
 ```

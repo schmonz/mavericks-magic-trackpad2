@@ -13,7 +13,7 @@ here. Read `decisions.md` → "Terminal design space" first for the ①/②/③ 
 Not our own fabricated device (①), not a subclass (②), not an IOKit-matched virtual device (③) — a fourth
 thing: we run Apple's genuine `AppleUSBMultitouchDriver` ourselves and reframe the bytes flowing through it.
 
-1. **Sole match.** `com_schmonz_MT2USBReader` matches the MT2's `IOUSBInterface`. Apple's own
+1. **Sole match.** `MT2USBReader` matches the MT2's `IOUSBInterface`. Apple's own
    `AppleUSBMultitouchDriver` does **not** match it — the MT2's `idProduct` 613 (`0x265`) is absent from
    Apple's `idProductArray` — so we are the *only* matcher. (⚠️ Do **not** "fix" this by injecting 613 into
    Apple's match: Apple then wins the interface at score 99000, our reader gets 0 instances, the trackpad
@@ -181,8 +181,8 @@ which is precisely the axis we've committed to re-open, not resolve, when we go 
 
 ## U1a — owned-USB co-residence probe (on-device observation, 2026-07-19; zero-risk)
 
-Read-only `kextstat`/`ioclasscount`/`ioreg` on the live 10.9 box (MT2 on BT: `com_schmonz_MT2BTReader`=2,
-one `AppleMultitouchDevice`; USB interface `0x613` present/plugged for power; `com_schmonz_MT2USBReader`=0):
+Read-only `kextstat`/`ioclasscount`/`ioreg` on the live 10.9 box (MT2 on BT: `MT2BTReader`=2,
+one `AppleMultitouchDevice`; USB interface `0x613` present/plugged for power; `MT2USBReader`=0):
 
 - **Apple's `com.apple.driver.AppleUSBMultitouch (240.10)` IS resident** — loaded, but **refcount 0** and
   **`AppleUSBMultitouchDriver` = 0 instances**. Loaded-and-idle, bound to nothing. Our running kext

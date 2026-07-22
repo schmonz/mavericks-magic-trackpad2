@@ -9,7 +9,7 @@
 #include <libkern/c++/OSString.h>
 #include "MavericksHIDShell.h"
 
-OSDefineMetaClassAndStructors(com_schmonz_MavericksHIDShell, IOHIDDevice)
+OSDefineMetaClassAndStructors(MavericksHIDShell, IOHIDDevice)
 
 /* The REAL Apple Magic Trackpad HID report descriptor (verbatim, identical to
  * src/mavericks_vhid_mt1.c kMT1Desc). Top-level Generic Desktop / Mouse collection so it
@@ -35,7 +35,7 @@ static const unsigned char kMT1Desc[] = {
     0xc0
 };
 
-IOReturn com_schmonz_MavericksHIDShell::newReportDescriptor(IOMemoryDescriptor **descriptor) const {
+IOReturn MavericksHIDShell::newReportDescriptor(IOMemoryDescriptor **descriptor) const {
     if (!descriptor) {
         return kIOReturnBadArgument;
     }
@@ -48,21 +48,21 @@ IOReturn com_schmonz_MavericksHIDShell::newReportDescriptor(IOMemoryDescriptor *
     return kIOReturnSuccess;
 }
 
-OSString *com_schmonz_MavericksHIDShell::newTransportString() const {
+OSString *MavericksHIDShell::newTransportString() const {
     return OSString::withCString("Bluetooth");
 }
-OSString *com_schmonz_MavericksHIDShell::newProductString() const {
+OSString *MavericksHIDShell::newProductString() const {
     return OSString::withCString("Magic Trackpad");
 }
-OSString *com_schmonz_MavericksHIDShell::newManufacturerString() const {
+OSString *MavericksHIDShell::newManufacturerString() const {
     return OSString::withCString("Apple Inc.");
 }
-OSNumber *com_schmonz_MavericksHIDShell::newVendorIDNumber() const {
+OSNumber *MavericksHIDShell::newVendorIDNumber() const {
     return OSNumber::withNumber((unsigned long long)1452, 32);
 }
-OSNumber *com_schmonz_MavericksHIDShell::newProductIDNumber() const {
+OSNumber *MavericksHIDShell::newProductIDNumber() const {
     return OSNumber::withNumber((unsigned long long)782, 32);
 }
-OSNumber *com_schmonz_MavericksHIDShell::newVendorIDSourceNumber() const {
+OSNumber *MavericksHIDShell::newVendorIDSourceNumber() const {
     return OSNumber::withNumber((unsigned long long)2, 32);
 }

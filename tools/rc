@@ -45,7 +45,7 @@ case "${1:-}" in
   shot)
     OUT="/tmp/rc-${2:-shot}.png"; screencapture -x "$OUT" && echo "$OUT";;
   state)
-    ioreg -lw0 2>/dev/null | grep -aoE '"(com_schmonz_MT2USBReader|com_schmonz_MT2BTReader|BNBTrackpadDevice|AppleMultitouchDevice)"=[0-9]+' | sort -u
+    ioreg -lw0 2>/dev/null | grep -aoE '"(MT2USBReader|MT2BTReader|BNBTrackpadDevice|AppleMultitouchDevice)"=[0-9]+' | sort -u
     "$HERE/multitouch_transport" 2>/dev/null | grep -iE "surfaceW|familyID|sensorRows" | head -1;;
   svc)
     case "${2:-tail}" in

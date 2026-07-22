@@ -2,8 +2,8 @@
 #define VOODOO_INPUT_MUX_H
 #include <IOKit/IOService.h>
 #include "MavericksTerminalBackend.h"    // owned backend; forwards all input work
-class com_schmonz_MavericksVoodooInput : public IOService {
-    OSDeclareDefaultStructors(com_schmonz_MavericksVoodooInput)
+class MavericksVoodooInput : public IOService {
+    OSDeclareDefaultStructors(MavericksVoodooInput)
 public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;

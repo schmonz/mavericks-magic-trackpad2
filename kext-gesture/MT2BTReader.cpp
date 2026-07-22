@@ -4,7 +4,7 @@
  * frame (mt2_bt_decode), and declare BT config — sensor geometry, the 0xF1 enable, battery
  * poll. SHARED INTERFACE (the ~97%): this reader is a VoodooInput SATELLITE — on interrupt
  * bind it advertises VoodooInputSupported + its coordinate span and registerService()s; the
- * mux (com_schmonz_MavericksVoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
+ * mux (MavericksVoodooInput) attaches as our client. incomingData decodes to a MavericksTouchFrame,
  * mavericks_voodoo_from_frame's it to a VoodooInputEvent, and messageClient()s the mux, which owns
  * the terminal AMD + conditioning. No BNBTrackpadDevice is ever started; no fabricated AMD
  * is built here. No decision logic lives in this file.
@@ -37,7 +37,7 @@
 #include "../src/mavericks_coordinator.h"  /* transport-coordinator seam (no-op for MT2) */
 #include "mavericks_voodoo_translate.h"     /* mavericks_voodoo_from_frame (satellite emit) + MT2_SPAN_* via mt2_coord_range.h */
 #include "voodoo_wire.h"              /* VoodooInputEvent + VOODOO_INPUT_* keys + kIOMessageVoodooInputMessage */
-#include "MavericksVoodooInput.h"           /* com_schmonz_MavericksVoodooInput::publishBattery() — hands battery to the backend */
+#include "MavericksVoodooInput.h"           /* MavericksVoodooInput::publishBattery() — hands battery to the backend */
 #include "../src/mt2_coord_range.h"   /* MT2_SPAN_X / MT2_SPAN_Y (advertised logical max + emit scaling) */
 /* mavericks_splice_kext.h -> mavericks_splice.h -> vtable_clone.h requires these macros before the include. */
 #define VTC_ALLOC(sz)  IOMalloc(sz)
@@ -49,7 +49,7 @@
  * slowly; 30 s keeps the prefpane number fresh without churning the control channel. */
 #define MAVERICKS_BATTERY_POLL_MS  30000
 
-OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
+OSDefineMetaClassAndStructors(MT2BTReader, IOService)
 
 /* Field offsets: canonical values + re/ commands live in ../src/mavericks_stack.h. These are readable
  * local aliases so the numbers exist in exactly one place (no doc/build drift). */
@@ -58,7 +58,7 @@ OSDefineMetaClassAndStructors(com_schmonz_MT2BTReader, IOService)
 /* The bound VoodooInput mux (set by the interrupt reader once it locates its attached mux).
  * The mux owns the terminal fabricated AMD now; the control reader's battery poll publishes
  * BatteryPercent on the mux's AMD node through here. A single global (one device at a time). */
-static com_schmonz_MavericksVoodooInput *gBtMux = 0;
+static MavericksVoodooInput *gBtMux = 0;
 
 /* The PSM-19 (interrupt) reader instance — the session's active frame source. incomingData
  * translates decoded frames to VoodooInputEvent and messages the mux. */
@@ -136,9 +136,9 @@ static const mavericks_splice_row_t kBtControlRow = {
 
 /* Runs in-gate (the channel's Bluetooth workloop): the only place IOBluetoothFamily
  * allows IOBluetoothObject calls. arg0 is the reader. */
-IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
+IOReturn MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
                                               void * /*a1*/, void * /*a2*/, void * /*a3*/) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    MT2BTReader *self = (MT2BTReader *)arg0;
     if (!self || !self->fChannel) return kIOReturnNoDevice;
 
     unsigned short psm = self->fChannel->getPSM();
@@ -153,7 +153,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         gInterruptReader = self;
         bt_conntrace(CSM_INTERRUPT_BOUND, CSM_EV_INTERRUPT_PUBLISHED, self->fChannel, 0, 0, 0);
         /* Become a VoodooInput satellite. Advertise support + our coordinate span, then
-         * registerService so the mux (com_schmonz_MavericksVoodooInput) matches us as its provider and
+         * registerService so the mux (MavericksVoodooInput) matches us as its provider and
          * attaches as our client. incomingData emits VoodooInputEvent to that mux; the mux owns
          * the terminal AMD + conditioning (identical MAVERICKS_EVENT_DRIVEN/mavericks_policy_default). */
         self->setProperty("VoodooInputSupported", kOSBooleanTrue);
@@ -162,7 +162,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
         self->setProperty("MT2 Transport", "BT");   /* mux builds a BT-transport fabricated AMD */
         /* Register OUR delegate on the interrupt channel: incomingData decodes 0x31 -> messageClient.
          * listenAt is safe here because no BNB races us for this channel (no manual-start). */
-        self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::incomingData);
+        self->fChannel->listenAt(self, &MT2BTReader::incomingData);
         /* Genuine handshake step 4 (reference.md "BT connect handshake"): WAIT for the interrupt
          * channel to reach OPEN before publishing — accept-then-wait, don't race the device. */
         self->fChannel->waitForChannelState(kIOBluetoothL2CAPChannelStateOpen);
@@ -182,7 +182,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
          * (listenAt) then WAIT for it to reach OPEN, writing no HID byte first. This acceptance is the
          * wire action that provokes the device to open its device-initiated PSM 19 interrupt channel;
          * omitting it is the ~1s flap where PSM 19 never opens. The 0xF1 enable stays deferred (below). */
-        self->fChannel->listenAt(self, &com_schmonz_MT2BTReader::controlData);
+        self->fChannel->listenAt(self, &MT2BTReader::controlData);
         self->fChannel->waitForChannelState(kIOBluetoothL2CAPChannelStateOpen);
         /* Genuine handshake step 5 = deviceReady (reference.md "BT connect handshake"): the HID device
          * setup Apple's IOBluetoothHIDDriver does on connect that owned-BT skipped entirely —
@@ -206,7 +206,7 @@ IOReturn com_schmonz_MT2BTReader::setupInGate(OSObject * /*owner*/, void *arg0,
  * We register this as OUR delegate on the interrupt channel (listenAt) — no BNB needed, no interpose.
  * The genuine path COULD NOT do this (BNB's listenAt would 0xe00002bc → panic; §S2.5/§S2.6); without
  * BNB the channel is ours from the start and listenAt is clean. */
-void com_schmonz_MT2BTReader::incomingData(IOService *target,
+void MT2BTReader::incomingData(IOService *target,
                                            IOBluetoothL2CAPChannel *channel,
                                            unsigned short length, void *data) {
     (void)channel;
@@ -228,7 +228,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
 
     /* STEADY: first real frame → set fStreaming on self (target = the reader) so the
      * re-enable timer stops retrying 0xF1. Also mirrors bt_interpose_shim's gSteadyConn gate. */
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)target;
+    MT2BTReader *self = (MT2BTReader *)target;
     if (self && !self->fStreaming) {
         self->fStreaming = true;
         if (gSteadyConn != gConnId) { gSteadyConn = gConnId;
@@ -252,7 +252,7 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
                 }
                 it->release();
             }
-            if (self->fMux) gBtMux = OSDynamicCast(com_schmonz_MavericksVoodooInput, self->fMux);
+            if (self->fMux) gBtMux = OSDynamicCast(MavericksVoodooInput, self->fMux);
         }
         if (self->fMux) {
             VoodooInputEvent ev = mavericks_voodoo_from_frame(&tf, MT2_SPAN_X, MT2_SPAN_Y);
@@ -266,11 +266,11 @@ void com_schmonz_MT2BTReader::incomingData(IOService *target,
  * genuine IOBluetoothHIDDriver does to provoke the device to open PSM 19. It derefs nothing (not even
  * target), so it is safe to be called on an already-freed reader — which the battery interpose's
  * restore can leave in place. Battery GET_REPORT(0x90) sniffing lives in bt_control_shim, not here. */
-void com_schmonz_MT2BTReader::controlData(IOService * /*target*/, IOBluetoothL2CAPChannel * /*channel*/,
+void MT2BTReader::controlData(IOService * /*target*/, IOBluetoothL2CAPChannel * /*channel*/,
                                           unsigned short /*length*/, void * /*data*/) {
 }
 
-bool com_schmonz_MT2BTReader::start(IOService *provider) {
+bool MT2BTReader::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
     resetTransportState();
 
@@ -291,7 +291,7 @@ bool com_schmonz_MT2BTReader::start(IOService *provider) {
 }
 
 /* Step: zero the per-connection fields (extracted from start()). */
-void com_schmonz_MT2BTReader::resetTransportState() {
+void MT2BTReader::resetTransportState() {
     fIsControl = false;
     fInterposeTimer = 0;
     fInterposeTries = 0;
@@ -303,7 +303,7 @@ void com_schmonz_MT2BTReader::resetTransportState() {
 /* Step: run setupInGate on the channel's command gate. IOBluetoothFamily REQUIREs every
  * IOBluetoothObject call to run inside its workloop gate (calling sendTo/listenAt from this start()
  * thread panics "NOT called in IOWorkLoop"). Returns false if the channel has no gate. */
-bool com_schmonz_MT2BTReader::marshalSetupInGate() {
+bool MT2BTReader::marshalSetupInGate() {
     IOCommandGate *gate = fChannel->getCommandGate();
     if (!gate) {
         IOLog("MT2BTReader: channel has no command gate; cannot enable\n");
@@ -311,7 +311,7 @@ bool com_schmonz_MT2BTReader::marshalSetupInGate() {
     }
     IOLog("MT2BTReader: [diag] calling setupInGate via runAction (PSM=%u isInactive=%d)\n",
           fChannel->getPSM(), fChannel->isInactive());
-    gate->runAction(&com_schmonz_MT2BTReader::setupInGate, this);
+    gate->runAction(&MT2BTReader::setupInGate, this);
     IOLog("MT2BTReader: [diag] runAction(setupInGate) returned (isInactive=%d)\n",
           fChannel->isInactive());
     return true;
@@ -320,12 +320,12 @@ bool com_schmonz_MT2BTReader::marshalSetupInGate() {
 /* Step: arm the async timer for the deferred 0xF1 enable + battery poll. The enable is deferred
  * because firing it before the channel is OPEN flaps the link (~14s block; §B1-drive).
  * Invariant: fInterposeTimer != 0 => it is attached to the workloop. */
-void com_schmonz_MT2BTReader::armInterposeTimer() {
+void MT2BTReader::armInterposeTimer() {
     fInterposeTries = 0;
     IOWorkLoop *wl = getWorkLoop();
     if (wl) {
         fInterposeTimer = IOTimerEventSource::timerEventSource(
-            this, &com_schmonz_MT2BTReader::interposeTimerFired);
+            this, &MT2BTReader::interposeTimerFired);
         if (fInterposeTimer) {
             if (wl->addEventSource(fInterposeTimer) == kIOReturnSuccess)
                 fInterposeTimer->setTimeoutMS(100);
@@ -337,9 +337,9 @@ void com_schmonz_MT2BTReader::armInterposeTimer() {
 /* In-gate: null our listenAt callback. newDataIn bails when the callback (channel+0x110)
  * is NULL before it derefs the target (channel+0x118), so this makes it safe for the
  * channel to outlive us. Same-target listenAt(self, NULL) is accepted by the family. */
-IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg0,
+IOReturn MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg0,
                                                  void * /*a1*/, void * /*a2*/, void * /*a3*/) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    MT2BTReader *self = (MT2BTReader *)arg0;
     /* Clear our listenAt delegate before we can be freed, else the channel's newDataIn derefs a
      * dangling reader (UAF panic). BOTH channels now register a delegate (interrupt = incomingData,
      * control = controlData), so clear whichever channel this reader owns. */
@@ -351,7 +351,7 @@ IOReturn com_schmonz_MT2BTReader::teardownInGate(OSObject * /*owner*/, void *arg
  * so we can sniff GET_REPORT(0x90) responses. Same save-and-swap as the (removed) interrupt
  * interpose but on separate state (gBtControlState). arg0 = the control channel.
  * Returns NotReady if the slot is not set (no prior delegate; Task 3 addresses this). */
-IOReturn com_schmonz_MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, void *arg0,
+IOReturn MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, void *arg0,
                                                          void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
     int rc = mavericks_splice_install(&kBtControlRow, ch, &mavericks_splice_kext_ops, &gBtControlState);
@@ -364,7 +364,7 @@ IOReturn com_schmonz_MT2BTReader::controlInterposeInGate(OSObject * /*owner*/, v
 }
 
 /* In-gate: restore the original control-channel callback before we tear down. arg0 = channel. */
-IOReturn com_schmonz_MT2BTReader::controlRestoreInGate(OSObject * /*owner*/, void *arg0,
+IOReturn MT2BTReader::controlRestoreInGate(OSObject * /*owner*/, void *arg0,
                                                        void * /*a1*/, void * /*a2*/, void * /*a3*/) {
     IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
     mavericks_splice_restore(ch, &kBtControlRow, &mavericks_splice_kext_ops, &gBtControlState);
@@ -375,9 +375,9 @@ IOReturn com_schmonz_MT2BTReader::controlRestoreInGate(OSObject * /*owner*/, voi
  * request { 0x41, 0x90 } on the control channel (mirrors reEnableInGate's SET_REPORT enable). The
  * device answers with [0xA1][0x90][flags][cap] on the same channel, which bt_control_shim catches.
  * arg0 = the control reader; its fChannel is the PSM-17 control channel. */
-IOReturn com_schmonz_MT2BTReader::pollBatteryInGate(OSObject * /*owner*/, void *arg0,
+IOReturn MT2BTReader::pollBatteryInGate(OSObject * /*owner*/, void *arg0,
                                                     void * /*a1*/, void * /*a2*/, void * /*a3*/) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    MT2BTReader *self = (MT2BTReader *)arg0;
     if (!self || !self->fChannel) return kIOReturnNoDevice;
     static const uint8_t kGetBattery[] = { MAVERICKS_HIDP_GET_REPORT_INPUT, MAVERICKS_BATTERY_REPORT_ID };
     self->fChannel->sendTo((void *)kGetBattery, sizeof(kGetBattery), 0, self, 0, 0);
@@ -388,9 +388,9 @@ IOReturn com_schmonz_MT2BTReader::pollBatteryInGate(OSObject * /*owner*/, void *
  * HIDP SET_REPORT(feature) payload setupInGate sends). Without BNB the device can remain in
  * mouse mode (report 0x02) after our initial enable, so this forces it back to multitouch
  * (report 0x31). arg0 = the control reader; its fChannel is the PSM-17 control channel. */
-IOReturn com_schmonz_MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg0,
+IOReturn MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg0,
                                                  void * /*a1*/, void * /*a2*/, void * /*a3*/) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)arg0;
+    MT2BTReader *self = (MT2BTReader *)arg0;
     if (!self || !self->fChannel) return kIOReturnNoDevice;
     static const uint8_t kEnable[] = { MAVERICKS_HIDP_SET_REPORT_FEATURE, MAVERICKS_ENABLE_REPORT_ID, 0x02, 0x01 };
     self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
@@ -401,15 +401,15 @@ IOReturn com_schmonz_MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg
  * incomingData delivers the first real frame (gSteadyConn==gConnId / fStreaming). Once streaming,
  * switch to battery polling. The deferred enable is still required: sendTo before the channel is
  * OPEN blocks ~14s and tears the link (the B1-drive root cause, 2026-06-21; §B1-drive). */
-void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventSource *ts) {
-    com_schmonz_MT2BTReader *self = (com_schmonz_MT2BTReader *)owner;
+void MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventSource *ts) {
+    MT2BTReader *self = (MT2BTReader *)owner;
 
     IOCommandGate *cg = self->fChannel
         ? ((IOBluetoothObject *)self->fChannel)->getCommandGate() : 0;
 
     if (gSteadyConn != gConnId) {
         /* Still waiting for first frame: re-send 0xF1. */
-        if (cg) cg->runAction(&com_schmonz_MT2BTReader::reEnableInGate, self);
+        if (cg) cg->runAction(&MT2BTReader::reEnableInGate, self);
         self->fReEnableCount++;
         if (self->fReEnableCount == 8)
             IOLog("MT2BTReader: initial re-enable push done; retrying gently until first frame\n");
@@ -427,13 +427,13 @@ void com_schmonz_MT2BTReader::interposeTimerFired(OSObject *owner, IOTimerEventS
     /* Battery: install the CONTROL-channel shim (once) so we can catch GET_REPORT(0x90)
      * responses. Retry each tick until the slot is populated; idempotent once installed. */
     if (!gCtrlInterposedChannel && cg)
-        cg->runAction(&com_schmonz_MT2BTReader::controlInterposeInGate, self->fChannel);
+        cg->runAction(&MT2BTReader::controlInterposeInGate, self->fChannel);
 
-    if (cg) cg->runAction(&com_schmonz_MT2BTReader::pollBatteryInGate, self);
+    if (cg) cg->runAction(&MT2BTReader::pollBatteryInGate, self);
     ts->setTimeoutMS(MAVERICKS_BATTERY_POLL_MS);
 }
 
-void com_schmonz_MT2BTReader::stop(IOService *provider) {
+void MT2BTReader::stop(IOService *provider) {
     bt_conntrace(CSM_IDLE, CSM_EV_DISCONNECT, fChannel, 0, 0, 0);
     /* If we're the interrupt reader that armed the session source, clear it so the
      * direct shim stops feeding through a freed instance. */
@@ -447,7 +447,7 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
      * seen when the installer unloaded the live kext while the trackpad streamed). */
     if (fChannel) {
         IOCommandGate *gate = fChannel->getCommandGate();
-        if (gate) gate->runAction(&com_schmonz_MT2BTReader::teardownInGate, this);
+        if (gate) gate->runAction(&MT2BTReader::teardownInGate, this);
     }
     /* Cancel and remove the timer (order: cancel -> remove -> release, so an in-flight
      * handler always returns before we free it — IOWorkLoop::removeEventSource closes the
@@ -462,7 +462,7 @@ void com_schmonz_MT2BTReader::stop(IOService *provider) {
      * about-to-be-freed bt_control_shim is never called. */
     if (gCtrlInterposedChannel) {
         IOCommandGate *gate = ((IOBluetoothObject *)gCtrlInterposedChannel)->getCommandGate();
-        if (gate) gate->runAction(&com_schmonz_MT2BTReader::controlRestoreInGate, gCtrlInterposedChannel);
+        if (gate) gate->runAction(&MT2BTReader::controlRestoreInGate, gCtrlInterposedChannel);
         gCtrlInterposedChannel = 0;
     }
     /* No terminal AMD to tear down here anymore — the mux owns it and cleans it up when it

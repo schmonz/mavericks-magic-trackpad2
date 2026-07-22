@@ -27,8 +27,8 @@
  * PrimaryUsage[Page] from the property table we pass to init(); we override only
  * the pure-virtual newReportDescriptor().
  */
-class com_schmonz_MavericksHIDShell : public IOHIDDevice {
-    OSDeclareDefaultStructors(com_schmonz_MavericksHIDShell)
+class MavericksHIDShell : public IOHIDDevice {
+    OSDeclareDefaultStructors(MavericksHIDShell)
 public:
     virtual IOReturn newReportDescriptor(IOMemoryDescriptor **descriptor) const override;
 

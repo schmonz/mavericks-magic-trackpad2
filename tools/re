@@ -624,7 +624,7 @@ sub_deployed() {  # what MT2 driver is ACTUALLY loaded + driving right now, and 
   fi
 
   echo "== SATELLITE DRIVING? (live instance count) =="
-  for c in com_schmonz_MT2USBReader com_schmonz_MT2BTReader com_schmonz_MavericksVoodooInput com_schmonz_MavericksHIDShell; do
+  for c in MT2USBReader MT2BTReader MavericksVoodooInput MavericksHIDShell; do
     printf "  %-34s %s\n" "$c" "$(cnt "$c")"
   done
   printf "  %-34s %s   <- 1 = scroll/swipe/tap LIVE\n" "AppleMultitouchDeviceUserClient" "$(cnt AppleMultitouchDeviceUserClient)"

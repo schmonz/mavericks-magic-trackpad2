@@ -6,8 +6,8 @@
 #include "mavericks_amd_probe.h"
 #include "MavericksAMDTerminal.h"
 
-class com_schmonz_MavericksVoodooInputHost;
-extern com_schmonz_MavericksVoodooInputHost *gActiveMavericksVoodooInputHost;   /* engine nub (defined in MavericksVoodooInputHost.cpp) */
+class MavericksVoodooInputHost;
+extern MavericksVoodooInputHost *gActiveMavericksVoodooInputHost;   /* engine nub (defined in MavericksVoodooInputHost.cpp) */
 
 static mavericks_amd_terminal_ctx *gProbeCtx = 0;
 static int gProbeVal = 0;

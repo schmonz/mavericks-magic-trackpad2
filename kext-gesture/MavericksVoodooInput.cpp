@@ -4,14 +4,14 @@
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 
-OSDefineMetaClassAndStructors(com_schmonz_MavericksVoodooInput, IOService)
+OSDefineMetaClassAndStructors(MavericksVoodooInput, IOService)
 
 static uint32_t read_u32_prop(IOService *p, const char *key, uint32_t dflt) {
     OSNumber *n = OSDynamicCast(OSNumber, p->getProperty(key));
     return n ? (uint32_t)n->unsigned32BitValue() : dflt;
 }
 
-bool com_schmonz_MavericksVoodooInput::start(IOService *provider) {
+bool MavericksVoodooInput::start(IOService *provider) {
     if (!IOService::start(provider)) return false;
     fProvider = provider;
     uint32_t lmx = read_u32_prop(provider, VOODOO_INPUT_LOGICAL_MAX_X_KEY, 0);
@@ -33,13 +33,13 @@ bool com_schmonz_MavericksVoodooInput::start(IOService *provider) {
     return true;
 }
 
-void com_schmonz_MavericksVoodooInput::stop(IOService *provider) {
+void MavericksVoodooInput::stop(IOService *provider) {
     fProvider = 0;   // routing fence: a late message() drops on the provider==fProvider check
     if (fBackend) { fBackend->stop(this); fBackend->release(); fBackend = 0; }
     IOService::stop(provider);
 }
 
-IOReturn com_schmonz_MavericksVoodooInput::message(UInt32 type, IOService *provider, void *argument) {
+IOReturn MavericksVoodooInput::message(UInt32 type, IOService *provider, void *argument) {
     if (type == kIOMessageVoodooInputMessage && provider == fProvider && argument) {
         if (fBackend) fBackend->handleEvent((const VoodooInputEvent *)argument);
         return kIOReturnSuccess;

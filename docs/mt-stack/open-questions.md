@@ -576,7 +576,7 @@ byte[len-2..len-1] = 16-bit additive checksum   sum of bytes[0..len-3], little-e
 - **Instance acquisition = (A) MANUAL-START** (mirrors the BT manual-start of BNB; endorsed by
   [[reuse-apple-code-construct-seam]]). `AppleUSBMultitouchDriver::gMetaClass` is an external symbol and its
   `MetaClass::alloc`/`init`/ctor are present → the class is externally constructable at runtime via
-  `OSMetaClass::getMetaClassWithName("AppleUSBMultitouchDriver")`. Our `com_schmonz_MT2USBReader` matches the
+  `OSMetaClass::getMetaClassWithName("AppleUSBMultitouchDriver")`. Our `MT2USBReader` matches the
   `IOUSBInterface` (vid 1452/pid 613/iface 1), instantiates + `init`/`attach`/`start`s the genuine driver on that
   interface, holds the pointer, clones slot `0x117`, and chains the saved original. **CRITICAL: our reader must NOT
   open the interrupt pipe in this route** — Apple's driver opens it itself; double-open would conflict. Route (B)
@@ -587,7 +587,7 @@ byte[len-2..len-1] = 16-bit additive checksum   sum of bytes[0..len-3], little-e
 build is complete on branch `genuine-usb-translate-feed` (checksum + reframe host-tested; manual-start +
 `handleReport` interpose, flag `kGenuineUsb`). First on-device load: Apple's `AppleUSBMultitouchDriver`
 bound the interface directly (matched `idProduct 613`, bundle `com.apple.driver.AppleUSBMultitouch`,
-score 99000), our `com_schmonz_MT2USBReader` had **0 instances** and never ran `startGenuine` → no
+score 99000), our `MT2USBReader` had **0 instances** and never ran `startGenuine` → no
 interpose, no multitouch-enable → device emitted only 8-byte mouse-mode packets, all rejected. But 613
 is **NOT in Apple's on-disk personalities** (`tools/re plist AppleUSBMultitouch` → zero "613"), and the box
 had **not rebooted since the 2026-06-24 spike** that injected a live IOCatalogue personality
@@ -924,11 +924,11 @@ the detection puzzle.
 > Left recorded (not chased) — revisit only if the osax still needs an in-`SysPref` USB poll for some other
 > reason (e.g. battery/transport UI), where the same discrepancy could resurface.
 
-The osax's `presence_observer_reconcile` (polls `service_present("com_schmonz_MT2USBReader")` =
+The osax's `presence_observer_reconcile` (polls `service_present("MT2USBReader")` =
 `IOServiceMatching`+`IOServiceGetMatchingService`) reports **usb=0 inside System Preferences** (no
 `reconcile … -> action`, no `perform: ON_USB` in syslog for pids 17113/21615), so even with reconcile-at-open
 (committed, deployed 19:18 build is current) the pane is never driven to the trackpad view. YET:
-- a standalone probe (`clang`; `IOServiceGetMatchingService("com_schmonz_MT2USBReader")`) as the **same uid
+- a standalone probe (`clang`; `IOServiceGetMatchingService("MT2USBReader")`) as the **same uid
   501, unsandboxed** returns **FOUND (0x1007)**, stably (4×);
 - the node is `registered, matched, active`, `IOProviderClass=IOUSBInterface`;
 - System Preferences is **not** sandboxed (0 app-sandbox entitlement, no sandboxd denials);
@@ -962,7 +962,7 @@ whole anomaly moot for the view (native match, no poll).
 ### Reconnection mechanism — RE'd 2026-07-16 (corrects the "owned lost Apple's hook" hypothesis)
 
 **Ground truth of the current owned reader (reconciles the stale genuine-BNB RE elsewhere in the KB).**
-`com_schmonz_MT2BTReader::start` takes the matched `IOBluetoothL2CAPChannel` as its provider
+`MT2BTReader::start` takes the matched `IOBluetoothL2CAPChannel` as its provider
 (`MT2BTReader.cpp:270`), then `listenAt(self, incomingData)` on the interrupt channel (PSM 19 = 0x13) and
 sends the deferred `0xF1` on control (PSM 17 = 0x11). **No BNB is manual-started, no delegate is interposed**
 — those descriptions in `reference.md`/`explanation.md` are genuine-BNB-era (deleted `89cad00`). Our reader is
@@ -1485,7 +1485,7 @@ login screen; (d) does relocating the load reopen the ownership/panic reasons we
 **2026-07-19 — (B) primitive VALIDATED post-login (chosen direction; mission fit = "a layer that can drive ANY device",
 not a mouse/keyboard-only UHE hack).** With the MT2 connected, `tools/mt2_bt_bounce 04-4b-ed-ec-02-07` (a non-blued root
 process): `closeConnection -> 0x0`, `openConnection -> 0x0 (CoD 0x594)`, MT2 back to `Connected: Yes`, our reader
-`com_schmonz_MT2BTReader` (×4) re-bound, cursor drives. So a userland `openConnection` re-establishes the link on demand
+`MT2BTReader` (×4) re-bound, cursor drives. So a userland `openConnection` re-establishes the link on demand
 — the whole of (B). (`BNBTrackpadDevice` shows count 0 in `ioreg -c` even while working — our manual-start doesn't leave
 a persistently-enumerated instance under that class name; not a regression, just a probe caveat.) **REMAINING RISK,
 reboot-only:** (1) does a `RunAtLoad` LaunchDaemon's `openConnection` succeed PRE-login (blued is up early — pid 45 — so
@@ -1694,7 +1694,7 @@ battery already repointed (`gBtMux->synthCtx()`); USB + full pane wiring = the p
 Charging state = never surfaced; same pattern if we want it (reader reads, publishes a property).
 
 **Auto-pair / USB↔BT handoff — reader/daemon layer, intact.** Connection lifecycle, not contact events.
-The presence observer + handoff daemon key on our reader classes (`com_schmonz_MT2BTReader`/`MT2USBReader`),
+The presence observer + handoff daemon key on our reader classes (`MT2BTReader`/`MT2USBReader`),
 which persist unchanged as satellites — so the machinery survives. Pre-existing (NOT satellite-caused)
 gaps remain: deep-idle BT wake / `openConnection` not 100% reliable; the "plug in once → auto-pair →
 unplug to go wireless" OOB idea designed-not-built (see the handoff sections above).

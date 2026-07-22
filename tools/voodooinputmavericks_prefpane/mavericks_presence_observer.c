@@ -94,10 +94,10 @@ mavericks_presence_observer_t *presence_observer_create(void *runloop, int remov
      * BT side has TWO reader instances (control PSM17 + interrupt PSM19), so appear/remove fire twice — the
      * SM's duplicate-edge tolerance (PRESENCE_ACT_NONE) coalesces them. */
     static const struct { const char *cls; const char *type; presence_event_t ev; const char *tag; } specs[4] = {
-        {"com_schmonz_MT2USBReader", kIOFirstMatchNotification, PRESENCE_EV_USB_APPEAR, "USB+"},
-        {"com_schmonz_MT2USBReader", kIOTerminatedNotification, PRESENCE_EV_USB_REMOVE, "USB-"},
-        {"com_schmonz_MT2BTReader",  kIOFirstMatchNotification, PRESENCE_EV_BT_APPEAR,  "BT+"},
-        {"com_schmonz_MT2BTReader",  kIOTerminatedNotification, PRESENCE_EV_BT_REMOVE,  "BT-"},
+        {"MT2USBReader", kIOFirstMatchNotification, PRESENCE_EV_USB_APPEAR, "USB+"},
+        {"MT2USBReader", kIOTerminatedNotification, PRESENCE_EV_USB_REMOVE, "USB-"},
+        {"MT2BTReader",  kIOFirstMatchNotification, PRESENCE_EV_BT_APPEAR,  "BT+"},
+        {"MT2BTReader",  kIOTerminatedNotification, PRESENCE_EV_BT_REMOVE,  "BT-"},
     };
     for (int i = 0; i < 4; i++) {
         o->cbctx[i].o = o; o->cbctx[i].ev = specs[i].ev; o->cbctx[i].tag = specs[i].tag;
@@ -131,8 +131,8 @@ presence_state_t presence_observer_state(const mavericks_presence_observer_t *o)
 /* Reconcile against device truth (poll): self-heal for missed/manually-started edges. */
 void presence_observer_reconcile(mavericks_presence_observer_t *o) {
     if (!o) return;
-    int bt  = service_present("com_schmonz_MT2BTReader");    /* our fabricated-AMD readers = the transport */
-    int usb = service_present("com_schmonz_MT2USBReader");   /* signal now (BNB/AppleUSBMultitouch are gone) */
+    int bt  = service_present("MT2BTReader");    /* our fabricated-AMD readers = the transport */
+    int usb = service_present("MT2USBReader");   /* signal now (BNB/AppleUSBMultitouch are gone) */
     presence_result_t r = presence_reconcile(o->state, bt, usb);
     if (r.action != PRESENCE_ACT_NONE) LOG("reconcile bt=%d usb=%d -> action", bt, usb);
     o->state = r.next;

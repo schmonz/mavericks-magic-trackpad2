@@ -8,7 +8,7 @@
 
 int main(void) {
     io_service_t s = IOServiceGetMatchingService(kIOMasterPortDefault,
-        IOServiceMatching("com_schmonz_MavericksVoodooInputHost"));
+        IOServiceMatching("MavericksVoodooInputHost"));
     if (!s) { printf("service not found\n"); return 1; }
     io_connect_t c;
     kern_return_t kr = IOServiceOpen(s, mach_task_self(), 0, &c);
