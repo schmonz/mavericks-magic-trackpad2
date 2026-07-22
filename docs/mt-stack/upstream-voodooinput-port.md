@@ -1,5 +1,9 @@
 # Porting to real upstream VoodooInput (forward-looking sizing, 2026-07-19)
 
+> **✅ PIECE 3 SHIPPED 2026-07-22 — fork (B) chosen. Upstream's verbatim `VoodooInput.cpp` IS our mux now;
+> `MavericksVoodooInput` retired. See "SHIPPED" section at the bottom for the as-built record. The sizing +
+> the (A)/(B) analysis below are preserved as the reasoning that led there.**
+
 **Context.** We currently *vendor* only the 3 VoodooInput ABI headers (verbatim, SHA-pinned) and run our
 OWN reimplemented mux (`com_schmonz_VoodooInput`) + fabricated-AMD terminal. The end-state ambition: fork
 **real** acidanthera/VoodooInput and contribute (1) the MT2 as a genuine satellite and (2) a **Mavericks
@@ -101,3 +105,46 @@ Net: piece 3 is bigger + more coupled than designed. Decide the fork before plan
 the full simulator/actuator/trackpoint subsystem (heavy; reopens U2 for the simulator's compile), or (B)
 vendor VoodooInput.cpp with a 10.9 `#ifdef`/seam that excludes the unused subsystem (small, but the shipped
 file diverges from upstream — though the CONTRIBUTED diff to upstream is still just the `< ElCapitan` branch).
+
+## SHIPPED — fork (B), verbatim mux with a `MAVERICKS_TERMINAL` seam (2026-07-22)
+
+Chose **(B)**. Upstream's `VoodooInput.cpp/.hpp` are vendored in `third_party/VoodooInput/` (SHA-pinned
+`d897813`, the same pin as the ABI headers) and compiled as the kext's mux; our hand-written
+`MavericksVoodooInput.{cpp,h}` is deleted. A build macro `MAVERICKS_TERMINAL` gates the file:
+
+- `#ifdef MAVERICKS_TERMINAL` → the mux holds a `MavericksTerminalBackend* backend`, allocs/starts it in
+  `start()`, routes `kIOMessageVoodooInputMessage` to `backend->handleEvent()`, feeds
+  `kIOMessageVoodooInputUpdateDimensionsMessage` to `backend->updateDimensions()`, tears down in `stop()`,
+  and exposes `publishBattery()` (the BT reader's battery bridge calls it). The four trackpoint cases are
+  `#ifndef`-excluded.
+- `#else` → upstream's simulator/actuator/trackpoint path, **byte-identical to pristine**. Verified with
+  `unifdef -UMAVERICKS_TERMINAL … | diff` against the pristine vendor commit — empty. **That guaranteed-clean
+  diff (guard directives + guarded `< ElCapitan` code only) IS the contributable-upstream artifact.**
+
+**The three predicted requirements, all handled:**
+1. Subsystem coupling → resolved by the `#ifdef` seam (fork B); we did NOT vendor/port
+   simulator/actuator/trackpoint.
+2. 5-key `updateProperties()` gate → both satellites now also advertise `VOODOO_INPUT_TRANSFORM_KEY` (0),
+   `VOODOO_INPUT_PHYSICAL_MAX_X/Y_KEY` (= `MT2_SPAN_X/Y`, mirroring logical since our path never reads
+   physical) alongside the pre-existing logical-max keys. Confirmed at runtime — the mux `start()`s.
+3. Mux `open()`s its provider → **audited as a no-op**: neither reader overrides `handleOpen/Close`, asserts
+   on `isOpen()`, or self-terminates; the mux (a client) closes before the reader (its provider) at teardown
+   by IOKit ordering; the USB reader's own `fIntf->open()` is on a *different* service (Apple's interface),
+   no collision. No code change needed.
+
+Also folded in: the outbound `VoodooInputEvent` transducer is now fully populated
+(`isValid/type=FINGER/fingerType/supportsPressure/timestamp=0/previousCoordinates`) in
+`mavericks_voodoo_from_frame`, so the SAME satellites can drive upstream's simulator terminal on newer OSes;
+our 10.9 backend ignores these fields (it consumes the *inbound* `frame_from_voodoo`), so no on-device change.
+
+**As-built:** kext IOClass `VoodooInput` (plist), target-wide `-DMAVERICKS_TERMINAL` (every TU that includes
+`VoodooInput.hpp` — notably `MT2BTReader.cpp` calling `publishBattery` — must see the same class layout, or
+ODR/layout mismatch). Commits `59e69c5` (pristine vendor) → `f226695` (seam+satellites+CMake+retire) →
+`ee204ab` (transducer completeness) on `main`.
+
+**Validation:** 31/31 host tests green; on-device USB confirmed — `ioclasscount VoodooInput = 1`,
+`MT2USBReader = 1`, `MavericksVoodooInput = <no such class>`; clean-start log (no "could not open" / "could
+not get provider properties" / "backend start failed"); user confirmed cursor + gestures + clean
+unplug/replug (the teardown-ordering panic candidate). **⚠️ BT path NOT exercised** (device was on USB;
+`MT2BTReader = 0`) — the BT reader binding + the retyped `gBtMux` battery bridge are shared-code but
+unvalidated at runtime. Follow-up: BT cold-boot + battery-%-in-pane check.
