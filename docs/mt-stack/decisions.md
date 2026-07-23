@@ -686,6 +686,32 @@ install. Validated on-device 2026-07-10: 0.4.4→0.4.5 self-update actually move
 **Reopening criterion:** only reconsider if we ever sign the kext and move it to `/Library/Extensions`
 (which has its own versioning/staging semantics) — then re-evaluate whether the OS should manage upgrades.
 
+### Kexts can't be hot-swapped over a live driver — stage-and-apply-at-reboot (2026-07-23)
+A kext driving the connected MT2 cannot be unloaded in place: its terminal publishes a synthetic
+`IOHIDDevice` the system HID stack retains (`VoodooInput` / `VoodooInputTerminal` / `MavericksTerminalBackend`
+/ `MavericksHIDShell` all show live instances), so `kextunload` does a PARTIAL teardown — it kills the
+reader (trackpad goes dead) and then FAILS on the retained terminal (`classes have instances … kext is in
+use or retained`). A same-bundle-id new kext then can't load over the stuck image (`nub absent after load —
+kext load failed`), leaving the trackpad DEAD until reboot. Proven on-device 2026-07-23 by a same-version
+`.pkg` reinstall: the kext stayed at the old addr/version, its reader unbound, the new one never loaded.
+
+This was **intermittently masked**: the 0.4.4→0.4.5 self-update (2026-07-10, above) DID move `kextstat`
+because the kext happened to be unloadable at that instant — the unload only fails when the driver is
+actively bound to a live device. Upstream VoodooInput has the same constraint (its
+`VoodooInputSimulatorDevice` *is* an `IOHIDDevice`) and no hot-swap machinery; the whole kext ecosystem
+(Apple included) stages and applies at reboot — Hackintosh VoodooInput is injected at boot and updated by
+replace-file-then-reboot.
+
+**Decision: don't hot-swap a running driver. Fresh installs load immediately; updates STAGE the new kext,
+leave the old one driving the trackpad, and notify the user to restart — the new kext loads cleanly at the
+next boot (nothing resident then, the collision-free path we verified).** preinstall stops `kextunload`-ing
+running kexts (that partial teardown was the breakage) but still removes old loaders/plists/binaries so the
+old identity can't relaunch; postinstall gates the load on `kextstat` (fresh → touch the WatchPaths trigger;
+update → `maybe_notify_user` "restart to finish"). `cmake/dev_reload.sh` (unload→drain→load→bounce) stays a
+DEV convenience, not a user-update guarantee. (`cdd2181`.) **Reopening criterion:** only if we build a
+genuinely reliable busy-driver hot-reload (disconnect device → drain instances → unload → load → reconnect)
+and validate it against a live-streaming device — the naive version is proven unreliable.
+
 ### Show update UI from the scheduled background check — *not desirable* (2026-07-10)
 Sparkle 1.x `checkForUpdatesInBackground` presents its update dialog when an update EXISTS. On the daily
 LaunchAgent (pane closed, nobody watching) that leaves a blocking dialog up forever — the "updater stuck
