@@ -11,9 +11,13 @@ for old in voodooinputmavericks voodooinputmavericks.linkstated; do
     rm -f "/Library/LaunchDaemons/com.schmonz.$old.plist" 2>/dev/null || true
 done
 # Same for the per-user agents (they stay loaded in the GUI session until logout; removing the
-# plists is what stops them coming back).
+# plists is what stops them coming back). Covers the intermediate com.schmonz.voodooinputmavericks.*
+# names AND v0.4.5's com.schmonz.mt2updatecheck / com.schmonz.mt2panewatch (their binaries are purged
+# below with /usr/local/lib/mt2d, so the removed plists can't relaunch anything).
 rm -f /Library/LaunchAgents/com.schmonz.voodooinputmavericks.session.plist \
-      /Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist 2>/dev/null || true
+      /Library/LaunchAgents/com.schmonz.voodooinputmavericks.updatecheck.plist \
+      /Library/LaunchAgents/com.schmonz.mt2updatecheck.plist \
+      /Library/LaunchAgents/com.schmonz.mt2panewatch.plist 2>/dev/null || true
 # The link-state daemon was renamed twice: mt2_usb_bt_handoff (label .usbbthandoff) -> mt2_bluetooth_linkstated
 # (.bluetoothlinkstated) -> mt2_linkstated (.linkstated). Purge BOTH superseded labels + their binaries so
 # neither lingers and tries to load a removed binary at the next boot.
@@ -22,14 +26,19 @@ for lbl in bluetoothlinkstated usbbthandoff; do
     rm -f "/Library/LaunchDaemons/com.schmonz.voodooinputmavericks.$lbl.plist" 2>/dev/null || true
 done
 rm -f /usr/local/libexec/mt2_bluetooth_linkstated /usr/local/libexec/mt2_usb_bt_handoff 2>/dev/null || true
-# Legacy daemon labels from pre-rename installs (product was mt2d / MavericksVoodooInputHost).
+# Legacy daemon labels from pre-rename installs (product was mt2d / MavericksVoodooInputHost). Unload
+# AND remove the plists -- unload alone leaves them in /Library/LaunchDaemons to relaunch a removed
+# binary at the next boot.
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
+rm -f /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist 2>/dev/null || true
+rm -f /Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist 2>/dev/null || true
 kextunload -b dev.modernmavericks.VoodooInputMavericks 2>/dev/null || true
 kextunload -b com.schmonz.VoodooInputMavericks 2>/dev/null || true       # legacy kext id from pre-org-move installs
 kextunload -b com.schmonz.MavericksVoodooInputHost 2>/dev/null || true   # legacy kext id from pre-rename installs
 kextunload -b com.schmonz.MT2USBClaim 2>/dev/null || true
-kextunload -b com.schmonz.MT2Claim 2>/dev/null || true   # legacy id from pre-rename installs
+kextunload -b com.schmonz.MT2Claim 2>/dev/null || true      # legacy id from pre-rename installs
+kextunload -b com.schmonz.MT2Gesture 2>/dev/null || true    # v0.4.5's gesture kext id -- was missing, so the old kext stayed resident beside the new one on update
 rm -rf /Library/Extensions/MT2USBClaim.kext /Library/Extensions/MT2Claim.kext 2>/dev/null || true
 # Both transports now run in-kernel inside VoodooInputMavericks: the USB-claim + legacy claim
 # kexts and the userspace feeder are retired. Remove them from the loose load dir so
