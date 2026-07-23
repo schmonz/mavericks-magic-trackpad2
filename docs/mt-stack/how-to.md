@@ -226,26 +226,41 @@ update = (fetch/accept) + (install new pkg over old). Verify each half.
 (`E8ZT…lGs=`). So a v0.4.5 updater will see the 0.5.0 GitHub release and accept a pkg signed with the
 unchanged key. `git show v0.4.5:tools/mt2_updater/Info.plist.in` vs `tools/CMakeLists.txt` FEED_URL/ED_PUBKEY.
 
-**Migration completeness (static):** `tests/test_preinstall_migration.sh` asserts the preinstall tears down
-every legacy identity; it was cross-checked against the *genuine* v0.4.5 pkg's install manifest (1:1):
+**Model A — the update does NOT hot-swap the kext.** A kext driving the live MT2 can't be unloaded in place
+(retained synthetic `IOHIDDevice`; see decisions.md "Kexts can't be hot-swapped over a live driver"). So an
+update STAGES the new kext, leaves the old one driving the trackpad, notifies "restart to finish," and the
+new kext loads cleanly at the next boot. A FRESH install (no prior kext resident) loads immediately, no
+reboot. Test both halves accordingly.
+
+**Migration completeness (static):** completeness means the old LOADERS/plists/binaries/kext-files are
+removed so nothing reloads the old identity at that boot — NOT that we `kextunload` a running driver (that
+partial-teardown is what left a user dead-until-reboot). `tests/test_preinstall_migration.sh` asserts it
+against the *genuine* v0.4.5 pkg manifest:
 ```sh
 gh release download v0.4.5 -p '*.pkg' -D /tmp/mig            # genuine 0.4.5 pkg
 pkgutil --expand /tmp/mig/mt2d-0.4.5.pkg /tmp/mig/x
 lsbom /tmp/mig/x/mt2d-component.pkg/Bom | awk '{print $1}' | grep -iE 'LaunchDaemons|LaunchAgents|mt2d'
-# every plist/kext/path it lists must appear in a teardown command in dist/scripts/preinstall
+# every plist/loader/kext-file it lists must be rm'd in dist/scripts/preinstall; preinstall must NOT kextunload
 ```
 
-**Migration (definitive, on-device — pkg-over-pkg, no signing/feed needed):** this exercises the exact
-`installer -pkg` step Sparkle runs after download. Disruptive (downgrades then upgrades the live driver);
-have a backup pointer; reversible by reinstalling 0.5.0.
+**Migration (definitive, on-device — pkg-over-pkg, no signing/feed needed):** a THREE-step test (install old,
+install new, REBOOT). The trackpad keeps working on the old version throughout; nothing breaks pre-reboot.
 ```sh
-sudo installer -pkg /tmp/mig/mt2d-0.4.5.pkg -target /        # genuine 0.4.5 -> old identity on disk
-# confirm the OLD identity is present:
-launchctl list | grep com.schmonz.mt2 ; kextstat | grep -i MT2Gesture ; ls /usr/local/lib/mt2d
-sudo installer -pkg build-native/voodooinputmavericks-0.5.0.pkg -target /   # 0.5.0 preinstall migrates
-sh tools/spikes/verify_migration.sh                          # oracle: exit 0 == no residue + new identity
-# then log out/in (or reboot), touch the pad, re-run the oracle for the loaded-kext line.
+sudo installer -pkg /tmp/mig/mt2d-0.4.5.pkg -target /        # genuine 0.4.5 -> old identity loads + drives
+kextstat | grep -i MT2Gesture ; launchctl list | grep com.schmonz.mt2 ; ls /usr/local/lib/mt2d  # OLD present
+
+sudo installer -pkg build-native/voodooinputmavericks-0.5.0.pkg -target /   # UPDATE: stages, does NOT hot-swap
+# EXPECT (this is correct Model-A behavior, not errors): a "restart to finish" notice appears; the OLD kext
+# is STILL resident (kextstat unchanged) and still driving; the new kext files are on disk. So the oracle is
+# NOT clean yet -- it should report the old kext still resident PRE-reboot:
+sh tools/spikes/verify_migration.sh          # pre-reboot: expect residue/old-kext WARN, NOT exit 0
+
+sudo reboot                                   # apply: nothing resident at boot -> new kext loads clean
+# after login + a touch on the pad:
+sh tools/spikes/verify_migration.sh          # NOW expect exit 0 == no old residue + new kext resident
 ```
+For the FRESH-install path (no prior kext), the postinstall fires the WatchPaths trigger and the kext comes
+up immediately — `verify_migration` is clean with no reboot.
 
 **Full Sparkle path (optional, needs the private signing key):** sign the 0.5.0 pkg + `gen_appcast.sh`,
 serve `appcast.xml`+pkg locally, `defaults write com.schmonz.MavericksTrackpad2Updater SUFeedURL
