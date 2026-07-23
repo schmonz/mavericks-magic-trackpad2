@@ -674,6 +674,91 @@ the genuine sequence and `how-to.md` → fix the connect flap. Relates to [[mt2-
 
 ---
 
+## BT boot/resume reconnect: ~7s of the gap is blued serializing on a paired-but-ABSENT device (measured 2026-07-23)
+
+**The sub-question answered:** on a normal boot the MT2 doesn't reconnect over BT for ~10s. Of that, a
+~7–8s slice is `blued`'s post-controller-online reconnect, NOT the controller coming up and NOT anything
+of ours.
+
+**Method (repeatable, off-boot):** a real boot bunches all pre-`syslogd` log lines at one second, so the
+gap is untimeable from the boot log. Reproduce the controller bring-up on demand with clean per-line
+timestamps by USB-suspend/resuming the controller: `IOBluetoothPreferenceSetControllerPowerState(0)` then
+`(1)` — `tools/spikes/bt_powercycle.m`. This replays blued's `hostControllerOnline → reconnect paired
+devices` with real timestamps.
+
+**Measured, single-variable (the only thing changed between runs = one paired device present/absent):**
+- **WITH** a paired-but-absent 2nd device (Magic Mouse `34-15-9e-cd-0e-2c`, powered off): kernel
+  `HostControllerUSBTransport … Resume` → blued `link key found` (start of the reconnect batch) ≈ **7–8s**.
+  blued logs `hostControllerOnline` *immediately* at resume, then its main thread sits **idle in `kevent64`**
+  ~7s (dtrace, `tools/spikes/blued_stall.d`) with **zero** kernel-BT or blued log lines in the window.
+  Consistent across the real boot (20:52:13→20:52:21) and multiple resumes (06:06:47→06:06:55,
+  06:09:48→06:09:56).
+- **AFTER** unpairing that absent device (`-[IOBluetoothDevice remove]`, `tools/spikes/bt_unpair.m`), MT2
+  the sole paired device: Resume `06:27:42` → blued `link key found` `06:27:43` → `MT2BTReader satellite up`
+  `06:27:43` ≈ **1s**.
+- **Δ ≈ 7s.** blued serializes its reconnect and waits out a page/reconnect timeout on the unreachable
+  device before servicing the batch; the MT2's reconnect rides that same batch.
+
+**Falsified along the way (so a future dig doesn't repeat them):**
+- *Cold firmware/DFU load* — refuted: a pure USB suspend/resume (no re-enumerate, no patchram reload)
+  reproduces the full ~8s.
+- *blued busy/slow* — refuted: dtrace shows it idle in `kevent64`, not computing.
+- *Controller not ready* — refuted: blued logs `hostControllerOnline` at t≈0 (resume).
+
+**Honest caveats:** one post-removal sample (1s) vs several consistent ~8s before — strongly suggestive,
+not proven; "~7s per absent device" is extrapolation from a single device. **Not an our-side sink:** the
+keeper's `openConnection` rides blued's batch and was observed landing *after* it every run — we can't jump
+the queue, and we can't manage a user's pairings, so there is **no shippable optimization here.** Removing
+the dev box's unused Magic Mouse sped *this machine's* boot ~7s; that is a dev-box cleanup, not a product fix.
+
+**DECOMPOSED (2026-07-23):** this ~8s is only ONE slice — the full login→gestures timeline is now walked in
+the next section, which found a *second, shippable* ~8s sink (our own loader's launchd throttle) and fixed it.
+Relates to [[② BT power-on tap-to-stream]] below and [[Cold-boot and sleep/wake flap rate]] above.
+
+---
+
+## Login → gestures timeline decomposed; ~8s loader launchd-throttle FIXED (2026-07-23)
+
+**Method:** continuous-circle oracle (like the USB dig) — reboot, keep a finger circling *through* the moment
+the trackpad comes alive, so `MT2BTReader: multitouch confirmed (first frame after N enables)` fires the
+instant the pipeline is ready (removes the "waiting for a touch" confound). Every gap between boot markers is
+then a candidate sink. Real timestamps (post-`syslogd`) for everything after login.
+
+**Baseline (2026-07-23, Magic Mouse already removed per the section above), boot→first-frame ≈ 15s:**
+```
+07:24:27 boot → :29 BT controller up → :30-31 blued online + link key (MT2, ~1s) → :31 mt2_linkstated armed
+:33 launchd "voodooinputmavericks: Throttling respawn: Will start in 8 seconds"   ← THE SINK
+… 8s throttle … :41 kext loads → satellite up + 0xF1 → :42 first frame (1 enable)
+```
+
+**Root cause (OUR code, shippable):** the loader LaunchDaemon `dev.modernmavericks.voodooinputmavericks`
+had `RunAtLoad=true`. At boot it ran `voodooinputmavericks-run`, which hits the `/dev/console` session
+guard and **no-ops out** (login screen stays on Apple generic HID) — but that wasted launch armed launchd's
+**~10s respawn throttle** (`KeepAlive=false`, so not a respawn — just the min-interval-between-starts). When
+the per-user LaunchAgent then touched the `session.trigger` WatchPath at login (~:33), launchd **delayed the
+real load until the throttle expired (~:41)** — ~8s of pure bookkeeping, not real work.
+
+**Fix:** delete `RunAtLoad` from the loader plist → the job is `WatchPaths`-only, runs *only* when the login
+trigger is touched, no boot no-op, no throttle armed. **Verified the load path is unaffected** by an isolated
+launchd probe: on 10.9, `WatchPaths` does **not** fire at job-load even when the watched file already exists
+(only on subsequent change) — so removing `RunAtLoad` loses no load trigger. `KeepAlive=false` unchanged.
+
+**Measured after fix (reboot + circle), boot→first-frame ≈ 8s** (Δ ≈ **7s, every boot, every user**):
+```
+08:47:30 boot → :31 controller up → :32 blued online + link key (MT2) → :33 armed
+(NO "Throttling respawn" line) → :36 kext loads → satellite up + 0xF1 → :38 first frame (1 enable)
+```
+
+**Residual (~8s, now all genuine work, not artifacts):** controller up ~1s · blued reconnect ~1s ·
+login→trigger→`kextload` ~4s · enable→first-frame ~2s. The login→kextload ~4s is the next candidate if we
+ever want more, but it's real (loginwindow + session start + the actual kext load), not a throttle.
+
+**Tools:** `tools/spikes/bt_powercycle.m` (suspend/resume controller replay), `blued_stall.d` (dtrace),
+`bt_unpair.m` (unpair by address). Fix commit touches `dist/dev.modernmavericks.voodooinputmavericks.plist`
+(+ stale-comment fixes in `voodooinputmavericks-run` and `voodooinputmavericks_pkg.cmake`).
+
+---
+
 ## Which control-channel transition does the device key on to open PSM 19?
 
 **Known (RE'd):** PSM 19 is device-initiated, and the genuine driver provokes it only by *correctly
