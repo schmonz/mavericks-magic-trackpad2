@@ -20,11 +20,11 @@ else
 fi
 
 # 2. Postinstall gates the load: fire the WatchPaths trigger only when NO prior kext is resident (fresh
-#    install), and notify restart otherwise (update -> apply at reboot).
-if grep -q "kextstat" "$POST" && grep -q 'touch "$TRIGGER"' "$POST" && grep -q "maybe_notify_user" "$POST"; then
-    echo "PASS: postinstall gates load fresh-vs-update (touch trigger on fresh, notify on update)"
+#    install); on an update it stages silently (the Trackpad pane surfaces the restart nudge -- no dialog).
+if grep -q "kextstat" "$POST" && grep -q 'touch "$TRIGGER"' "$POST"; then
+    echo "PASS: postinstall gates load on kextstat -> touch trigger only on a fresh install"
 else
-    echo "FAIL: postinstall must gate on kextstat -> touch trigger (fresh) / maybe_notify_user (update)"; fail=1
+    echo "FAIL: postinstall must gate on kextstat and touch the trigger on a fresh install"; fail=1
 fi
 
 # 3. Loader stays WatchPaths-only (no RunAtLoad -> avoids the ~8s boot throttle); the fresh-install touch
