@@ -96,21 +96,44 @@ static void reconnect_matched_async(const char *why) {
     dispatch_async(reconnect_queue(), ^{ reconnect_matched(why); });
 }
 
-/* Drop the BT link on our matched device(s) WITHOUT re-opening. Two uses: the --disconnect-once CLI
- * (exercise the keeper deterministically) and the USB-appear yield (close any BT link the single-
- * transport device must not hold once it's on the cable). Idempotent: skips non-matching + already-
- * disconnected devices. Never touches BT during shutdown quiesce. */
-static void disconnect_matched(const char *why) {
-    if (g_terminating) return;
+/* Drop the BT link on our matched device(s) WITHOUT re-opening. The UNGUARDED core, so it can run during
+ * shutdown/restart too: a live ACL at a WARM restart (which does NOT power-cycle the BT controller) rides
+ * into EFI's boot-time Bluetooth init and HANGS the boot before video — a dark machine, cold power-cycle the
+ * only recovery (confirmed on-device 2026-07-22). Closing it here leaves the controller connection-free so
+ * EFI's init (gated by the EFIBluetoothDelay NVRAM) completes. Idempotent: skips non-matching/already-down. */
+static int do_disconnect_mt2(const char *why) {
+    int closed = 0;
     @autoreleasepool {
         NSArray *devs = [IOBluetoothDevice pairedDevices];
         for (IOBluetoothDevice *d in devs) {
             if (!mt2_cod_is_mt2([d getClassOfDevice])) continue;
             if (![d isConnected]) continue;
-            IOReturn rc = [d closeConnection];
+            IOReturn rc = [d closeConnection];   /* synchronous: returns after the link is down */
             NSLog(@"mt2_linkstated: [%s] closeConnection %@ -> 0x%08x", why, [d addressString], rc);
+            closed++;
         }
     }
+    return closed;
+}
+/* Guarded wrapper for the runtime paths (--disconnect-once CLI + the USB-appear yield): the keeper/yield
+ * must stay hands-off once shutdown quiesce has latched g_terminating. The shutdown quiesce calls
+ * do_disconnect_mt2 directly BECAUSE it must run to clear the ACL for EFI. */
+static void disconnect_matched(const char *why) {
+    if (g_terminating) return;
+    (void)do_disconnect_mt2(why);
+}
+
+/* Reliable shutdown oracle: NSLog/ASL does not flush before a reboot, so the quiesce/disconnect log lines
+ * are lost across the very reboot we're validating. Write an fsync'd marker instead — it survives, so after
+ * boot we can PROVE the quiesce path fired and how many links it closed. Best-effort; never blocks shutdown. */
+#define QUIESCE_MARKER "/var/db/voodooinputmavericks-lastquiesce"
+static void write_quiesce_marker(const char *why, int closed) {
+    int fd = open(QUIESCE_MARKER, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) return;
+    char buf[128];
+    int n = snprintf(buf, sizeof buf, "why=%s closed=%d t=%ld\n", why, closed, (long)time(NULL));
+    if (n > 0) { (void)write(fd, buf, (size_t)n); fsync(fd); }
+    close(fd);
 }
 
 /* Post-update/post-reload BOUNCE: a full closeConnection -> openConnection on the MT2, forcing the BT
@@ -187,23 +210,29 @@ static void on_presence(presence_action_t action, presence_event_t event, void *
     }
 }
 
-/* Quiesce the keeper for a power-off/restart: stop new pages (cancel the timer + latch g_terminating) and
- * BARRIER-drain the serial paging queue so any in-flight openConnection (bounded by the ~5s page timeout)
- * has finished before we return. That leaves the BT controller idle for the OS's own clean teardown and,
- * critically, for the next warm boot's EFI Bluetooth init. Idempotent; safe to call from SIGTERM or the
- * system-power callback. */
+/* Quiesce the keeper for a power-off/restart AND close the live ACL: stop new pages (cancel the timer + latch
+ * g_terminating), barrier-drain any in-flight openConnection (~5s page timeout), THEN close the MT2's BT link.
+ * Closing it is the load-bearing part: a device still CONNECTED at a WARM restart (which does NOT power-cycle
+ * the BT controller) rides into EFI's boot-time Bluetooth init and HANGS the boot before video (dark machine;
+ * cold power-cycle the only recovery — confirmed 2026-07-22). Stop-paging alone only helped the mid-page case.
+ * BOTH callers (SIGTERM source + system-power callback) run this, so a reboot is covered whichever edge fires
+ * first; a plain daemon reload disconnects too (harmless — install already bounces). Idempotent; serialized on
+ * the main thread. */
 static void quiesce_for_shutdown(const char *why) {
     if (g_terminating) return;   /* already quiescing (both callers run serialized on the main thread) */
     g_terminating = 1;
     if (g_reconnect_timer) dispatch_source_cancel(g_reconnect_timer);
-    dispatch_sync(reconnect_queue(), ^{});               /* wait out any in-flight page (~5s max) */
-    NSLog(@"mt2_linkstated: quiesced BT for %s — keeper stopped, controller left idle for warm restart", why);
+    dispatch_sync(reconnect_queue(), ^{});               /* wait out any in-flight page (~5s max); link may be up after */
+    int closed = do_disconnect_mt2(why);                 /* close the live ACL so EFI's init doesn't hang the warm restart */
+    write_quiesce_marker(why, closed);                   /* fsync'd proof that survives the reboot we're validating */
+    NSLog(@"mt2_linkstated: quiesced BT for %s — keeper stopped, %d link(s) closed, controller idle for warm restart", why, closed);
 }
 
 /* System power callback (IORegisterForSystemPower). The MT2 box has EFIBluetoothDelay set, so firmware
- * touches the BT controller on every boot; we MUST hand it over clean. Quiesce on the will-restart /
- * will-power-off edges (our bug is warm restart); allow every transition promptly so we never stall
- * shutdown/sleep. Sleep is intentionally NOT terminal (the keeper must survive wake). */
+ * touches the BT controller on every boot; we MUST hand it over clean. Quiesce (which now also closes the live
+ * ACL — see quiesce_for_shutdown) on the will-restart / will-power-off edges; this is belt-and-suspenders with
+ * the SIGTERM source, since a reboot may fire either edge first. Allow every transition promptly so we never
+ * stall shutdown/sleep. Sleep is intentionally NOT terminal (the keeper must survive wake). */
 static void pm_callback(void *ctx, io_service_t svc, natural_t msgType, void *msgArg) {
     (void)ctx; (void)svc;
     switch (msgType) {
