@@ -55,6 +55,10 @@
 #include "mavericks_presence_observer.h"
 #include "../mt2_cod_match.h"   /* mt2_cod_is_mt2 — device-class match that tolerates live service bits */
 
+/* OSKextCopyLoadedKextInfo lives in IOKit.framework (already linked); its header IOKit/kext/OSKext.h
+ * isn't in this SDK's default include path, so declare the one function we use. (10.7+, 10.9-safe.) */
+extern CFDictionaryRef OSKextCopyLoadedKextInfo(CFArrayRef kextIdentifiers, CFArrayRef infoKeys);
+
 #define LOG(...) syslog(LOG_NOTICE, "[VoodooInputMavericksPane] " __VA_ARGS__)
 
 /* CMake passes -DMAVERICKS_VERSION_STR="X.Y.Z" (lock-step with MAVERICKS_VERSION); keep the file self-compilable. */
@@ -820,6 +824,72 @@ static void mavericks_version_cstr(char *buf, unsigned long n) {
 
 static char gAboutVer[48] = "";   /* version currently shown in the About link (change-detect for refresh) */
 
+/* The CURRENTLY LOADED kext's CFBundleVersion (the version actually running), via OSKext. Returns 1 and
+ * fills buf on success; 0 if the kext isn't loaded / version unknown. CF-only, GC-neutral. */
+static int mavericks_resident_kext_version(char *buf, unsigned long n) {
+    CFStringRef bid = CFSTR("dev.modernmavericks.VoodooInputMavericks");
+    CFArrayRef ids = CFArrayCreate(kCFAllocatorDefault, (const void **)&bid, 1, &kCFTypeArrayCallBacks);
+    if (!ids) return 0;
+    CFDictionaryRef info = OSKextCopyLoadedKextInfo(ids, NULL);
+    CFRelease(ids);
+    int got = 0;
+    if (info) {
+        CFDictionaryRef kd = (CFDictionaryRef)CFDictionaryGetValue(info, bid);
+        if (kd && CFGetTypeID(kd) == CFDictionaryGetTypeID()) {
+            CFStringRef v = (CFStringRef)CFDictionaryGetValue(kd, CFSTR("CFBundleVersion"));
+            if (v && CFGetTypeID(v) == CFStringGetTypeID())
+                got = CFStringGetCString(v, buf, (CFIndex)n, kCFStringEncodingUTF8);
+        }
+        CFRelease(info);
+    }
+    return got;
+}
+
+/* The ON-DISK kext's CFBundleVersion (what will load at the next boot) — read straight from the staged
+ * kext bundle, so it's independent of whether the updater app is present. 1 + buf on success. */
+static int mavericks_ondisk_kext_version(char *buf, unsigned long n) {
+    CFURLRef url = CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
+        CFSTR("/usr/local/lib/voodooinputmavericks/VoodooInputMavericks.kext/Contents/Info.plist"),
+        kCFURLPOSIXPathStyle, false);
+    if (!url) return 0;
+    CFReadStreamRef s = CFReadStreamCreateWithFile(kCFAllocatorDefault, url);
+    CFRelease(url);
+    if (!s) return 0;
+    int got = 0;
+    if (CFReadStreamOpen(s)) {
+        CFPropertyListRef pl = CFPropertyListCreateWithStream(kCFAllocatorDefault, s, 0, kCFPropertyListImmutable, NULL, NULL);
+        if (pl) {
+            if (CFGetTypeID(pl) == CFDictionaryGetTypeID()) {
+                CFStringRef v = (CFStringRef)CFDictionaryGetValue((CFDictionaryRef)pl, CFSTR("CFBundleVersion"));
+                if (v && CFGetTypeID(v) == CFStringGetTypeID()) got = CFStringGetCString(v, buf, (CFIndex)n, kCFStringEncodingUTF8);
+            }
+            CFRelease(pl);
+        }
+        CFReadStreamClose(s);
+    }
+    CFRelease(s);
+    return got;
+}
+
+/* Is a staged update pending a restart? True when the ON-DISK kext version differs from the RESIDENT one
+ * — Model A stages the new kext on disk and it loads at the next boot. Fills target with the on-disk
+ * version (what you'd update TO). If either version is unreadable, don't nag. A dev/QA override forces it:
+ *     defaults write dev.modernmavericks.Trackpad2Updater MT2RestartBannerTest -bool YES
+ * CF-only, GC-neutral. */
+static int mavericks_restart_pending(char *target, unsigned long tn) {
+    char ondisk[48], resident[48];
+    int haveOnDisk = mavericks_ondisk_kext_version(ondisk, sizeof ondisk);
+    CFPreferencesAppSynchronize(MAVERICKS_UPDATER_DOMAIN);
+    CFPropertyListRef t = CFPreferencesCopyAppValue(CFSTR("MT2RestartBannerTest"), MAVERICKS_UPDATER_DOMAIN);
+    int forced = (t && CFGetTypeID(t) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)t));
+    if (t) CFRelease(t);
+    if (forced) { snprintf(target, tn, "%s", haveOnDisk ? ondisk : "the new version"); return 1; }
+    if (!haveOnDisk || !mavericks_resident_kext_version(resident, sizeof resident)) return 0;
+    if (strcmp(ondisk, resident) == 0) return 0;
+    snprintf(target, tn, "%s", ondisk);
+    return 1;
+}
+
 /* Build the About tab's container view + its controls, CENTERED. Big bold title on top, the update
  * controls + GitHub hyperlink centered, and the version tucked in the lower-right corner. Version from
  * MAVERICKS_VERSION_STR (compile time); the checkbox reflects SUEnableAutomaticChecks (default OFF). */
@@ -874,14 +944,16 @@ static id mavericks_build_about_view(void) {
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(hint, setMask, 2 | 8); /* width-sizable, top */
     ((void (*)(id, SEL, id))objc_msgSend)(v, addSub, hint);
 
-    /* Lower-right corner: just the version number, plain + inert, right-aligned so it hugs the edge as the
+    /* Lower-right corner: the version number, plain + inert, right-aligned so it hugs the edge as the
      * version changes. Carries the tag the reconcile tick updates after an install. (No GitHub link — the
      * repo link lived here but its click area/placement read poorly; dropped per user.) */
     char vbuf[48];
     mavericks_version_cstr(vbuf, sizeof vbuf);
     snprintf(gAboutVer, sizeof gAboutVer, "%s", vbuf);
     CFStringRef vs = CFStringCreateWithCString(kCFAllocatorDefault, vbuf, kCFStringEncodingUTF8);
-    id ver = mavericks_make_label(CGRectMake(MT2_W-80, 12, 68, 16), vs);
+    /* Wide enough for "Restart to update to <ver>" (about_refresh swaps the text when a reboot is
+     * pending); right-aligned so both the bare version and the longer prompt hug the corner. */
+    id ver = mavericks_make_label(CGRectMake(MT2_W-260, 12, 248, 16), vs);
     if (vs) CFRelease(vs);
     Class vfCls = objc_getClass("NSFont");
     id vfont = vfCls ? ((id (*)(Class, SEL, double))objc_msgSend)(vfCls, sel_registerName("systemFontOfSize:"), 11.0) : NULL;
@@ -949,13 +1021,18 @@ static void mavericks_about_refresh(id root) {
     char cur[48];
     mavericks_version_cstr(cur, sizeof cur);
 
-    /* installed version changed -> update the " | <ver>" label (right-aligned, so no reposition needed) */
-    if (strcmp(cur, gAboutVer) != 0) {
+    /* Lower-right label: just "<ver>" once we're running it, or "Restart to update to <ver>" while a
+     * staged update awaits a reboot (Model A stages the kext on disk; it loads at next boot). Right-
+     * aligned, so the longer prompt hugs the same corner. Refresh when the version OR pending state moves. */
+    char want[64], rtarget[48];
+    if (mavericks_restart_pending(rtarget, sizeof rtarget)) snprintf(want, sizeof want, "Restart to update to %s", rtarget);
+    else                                                    snprintf(want, sizeof want, "%s", cur);
+    if (strcmp(want, gAboutVer) != 0) {
         id lbl = ((id (*)(id, SEL, long))objc_msgSend)(view, sel_registerName("viewWithTag:"), (long)MAVERICKS_TAG_VERLINK);
         if (lbl) {
-            CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, cur, kCFStringEncodingUTF8);
+            CFStringRef s = CFStringCreateWithCString(kCFAllocatorDefault, want, kCFStringEncodingUTF8);
             if (s) { ((void (*)(id, SEL, id))objc_msgSend)(lbl, sel_registerName("setStringValue:"), (id)s); CFRelease(s); }
-            snprintf(gAboutVer, sizeof gAboutVer, "%s", cur);
+            snprintf(gAboutVer, sizeof gAboutVer, "%s", want);
         }
     }
 
