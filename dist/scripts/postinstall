@@ -21,6 +21,16 @@ echo ok > "$STATE"
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST"
 
+# The loader is WatchPaths-only (no RunAtLoad -- that armed launchd's ~8s boot throttle). `load -w`
+# above only REGISTERS the job; a WatchPaths job does not run at load. Touch the trigger to fire it now
+# so the kext loads at install/update time (the same path the per-user LaunchAgent uses at login).
+# voodooinputmavericks-run's /dev/console guard still no-ops it at the login window (no session) --
+# correct: it then loads at the user's next login. Without this, an update leaves the OLD kext torn
+# down (preinstall) and the NEW kext unloaded until the next login.
+TRIGGER=/usr/local/var/voodooinputmavericks/session.trigger
+mkdir -p "$(dirname "$TRIGGER")"
+touch "$TRIGGER"
+
 # Post-update: BOUNCE the BT MT2 (close+reopen) so it resumes without a tap. A plain wake no-ops here
 # because the kext reload leaves the baseband link UP but the multitouch stream stalled
 # (openConnection -> kBluetoothHCIErrorACLConnectionAlreadyExists 0x0b); the bounce forces a full
