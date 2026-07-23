@@ -1,6 +1,0 @@
-{
-  "version": "0.0.0-dev.1",
-  "min_os": "10.9.5",
-  "pkg": "mt2d-0.0.0-dev.1.pkg",
-  "url": "https://github.com/schmonz/mavericks-magic-trackpad2/releases/download/macos26-crossbuild/mt2d-0.0.0-dev.1.pkg"
-}
