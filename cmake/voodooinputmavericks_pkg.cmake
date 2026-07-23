@@ -46,8 +46,8 @@ add_custom_target(pkg
   COMMAND chmod +x ${PKGROOT}/usr/local/sbin/voodooinputmavericks-run
   COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/dist/dev.modernmavericks.voodooinputmavericks.plist ${PKGROOT}/Library/LaunchDaemons/
   # Login-screen basic HID: the session-start trigger + the per-user LaunchAgent that touches it. The
-  # voodooinputmavericks daemon WatchPaths this file; the agent touches it at login so voodooinputmavericks-run runs post-session (its
-  # /dev/console guard makes the boot RunAtLoad a no-op). File is world-writable so any Aqua session can
+  # voodooinputmavericks daemon WatchPaths this file (WatchPaths-only, no RunAtLoad); the agent touches it at login so
+  # voodooinputmavericks-run runs post-session — the sole path that loads. File is world-writable so any Aqua session can
   # fire it (low risk: it only triggers loading OUR own driver).
   COMMAND ${CMAKE_COMMAND} -E make_directory ${PKGROOT}/usr/local/var/voodooinputmavericks
   COMMAND ${CMAKE_COMMAND} -E touch ${PKGROOT}/usr/local/var/voodooinputmavericks/session.trigger

@@ -104,8 +104,10 @@ fi
 # Only take the MT2 over (load our kext) once a GUI user is actually logged in. At the login window
 # /dev/console is owned by root; a real user owns it only after login. Pre-session we deliberately do
 # NOT load, leaving the device to Apple's generic HID -> an instant basic cursor at the login screen
-# (docs/superpowers login-screen-basic-hid design). This daemon runs BOTH at boot (RunAtLoad -> a
-# guarded no-op) and at session start (a WatchPaths trigger the per-user LaunchAgent touches).
+# (docs/superpowers login-screen-basic-hid design). This daemon is WatchPaths-driven only (no
+# RunAtLoad): it runs when the per-user LaunchAgent touches the session trigger at login. (A boot-time
+# RunAtLoad would just no-op through this guard, but that wasted launch armed launchd's ~10s throttle
+# and delayed the real login load ~8s — see the loader plist.)
 # MT2D_STAT_CONSOLE is overridable for the unit test; MT2D_FORCE_LOAD=1 bypasses the guard.
 STAT_CONSOLE="${MT2D_STAT_CONSOLE:-stat -f%Su /dev/console}"
 CONSOLE_USER="$($STAT_CONSOLE 2>/dev/null || echo root)"

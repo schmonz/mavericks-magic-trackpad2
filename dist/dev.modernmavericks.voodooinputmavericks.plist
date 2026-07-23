@@ -8,11 +8,12 @@
     <array>
         <string>/usr/local/sbin/voodooinputmavericks-run</string>
     </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <!-- Runs at boot (RunAtLoad -> a no-op behind voodooinputmavericks-run's /dev/console session guard, so the login
-         screen stays on Apple's generic HID) AND when the per-user LaunchAgent touches this trigger at
-         login (session start -> the guard passes -> full multitouch takeover). -->
+    <!-- No RunAtLoad, deliberately. A boot-time run would only hit voodooinputmavericks-run's
+         /dev/console session guard and no-op out (login screen stays on Apple's generic HID) — but that
+         wasted launch armed launchd's ~10s respawn throttle, so the real login-triggered load was then
+         delayed ~8s (measured boot->gestures 2026-07-23: ~15s, ~8s of it pure throttle). The job is
+         purely WatchPaths-driven: the per-user LaunchAgent touches this trigger at login (session start
+         -> the guard passes -> full multitouch takeover), which is the only path that does real work. -->
     <key>WatchPaths</key>
     <array>
         <string>/usr/local/var/voodooinputmavericks/session.trigger</string>
