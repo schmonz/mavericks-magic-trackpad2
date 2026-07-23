@@ -91,4 +91,16 @@ cp "$BEZEL_SRC/MagicTrackpad.icns" "$BEZEL_DST/MavericksTrackpad.icns" 2>/dev/nu
 UPD_ICON="/Library/Application Support/ModernMavericks/Trackpad2Updater.app/Contents/Resources/Trackpad2Updater.icns"
 [ -f "$UPD_ICON" ] && cp "$BEZEL_SRC/MagicTrackpad.icns" "$UPD_ICON" 2>/dev/null || true
 
+# Confirm the (async, trigger-fired) load actually took. If a prior same-generation build was busy and
+# refused to unload in preinstall, the incoming kext can't load until a reboot clears it. macOS Installer
+# can't raise a restart dialog conditionally from a script, so we OBSERVE the outcome and notify only when
+# warranted (silent on success, and on a login-window deferral). Done last so the load has had all the
+# postinstall work as settle time. Best-effort: never fail the install on it.
+KLN="$(dirname "$0")/kext_load_notice.sh"
+if [ -f "$KLN" ]; then
+    . "$KLN"
+    maybe_notify_kext_stuck dev.modernmavericks.VoodooInputMavericks \
+      "The Magic Trackpad 2 driver was updated, but the previous version was still in use. Please restart to finish updating." || true
+fi
+
 exit 0
