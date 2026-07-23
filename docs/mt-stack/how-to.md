@@ -213,3 +213,41 @@ Open question: can a modern toolchain build a kext that LOADS on 10.9? The recip
 **Remaining unknowns for the kext spike (need a macOS-26 host):** whether modern clang/ld64 can emit a
 Mach-O kext that LOADS on 10.9 (KPI symbol versioning, codesigning/`-mkernel` ABI), and sourcing the 10.9
 KDK (Apple KDKs for 10.9 are archived, findable). The header/dep graph above is settled.
+
+## Test a rename-release update (e.g. 0.4.5 → 0.5.0)
+
+0.5.0 renames the whole identity (`com.schmonz.mt2*` → `dev.modernmavericks.voodooinputmavericks*`,
+loader `mt2d-run` → `voodooinputmavericks-run`, kext `com.schmonz.MT2Gesture` →
+`dev.modernmavericks.VoodooInputMavericks`). Sparkle applies updates by **running the new `.pkg`**, so the
+update = (fetch/accept) + (install new pkg over old). Verify each half.
+
+**Fetch/accept (static, already verified):** v0.4.5 and HEAD ship byte-identical `SUFeedURL`
+(`…/releases/latest/download/appcast.xml`, a stable "latest release" URL) and `SUPublicEDKey`
+(`E8ZT…lGs=`). So a v0.4.5 updater will see the 0.5.0 GitHub release and accept a pkg signed with the
+unchanged key. `git show v0.4.5:tools/mt2_updater/Info.plist.in` vs `tools/CMakeLists.txt` FEED_URL/ED_PUBKEY.
+
+**Migration completeness (static):** `tests/test_preinstall_migration.sh` asserts the preinstall tears down
+every legacy identity; it was cross-checked against the *genuine* v0.4.5 pkg's install manifest (1:1):
+```sh
+gh release download v0.4.5 -p '*.pkg' -D /tmp/mig            # genuine 0.4.5 pkg
+pkgutil --expand /tmp/mig/mt2d-0.4.5.pkg /tmp/mig/x
+lsbom /tmp/mig/x/mt2d-component.pkg/Bom | awk '{print $1}' | grep -iE 'LaunchDaemons|LaunchAgents|mt2d'
+# every plist/kext/path it lists must appear in a teardown command in dist/scripts/preinstall
+```
+
+**Migration (definitive, on-device — pkg-over-pkg, no signing/feed needed):** this exercises the exact
+`installer -pkg` step Sparkle runs after download. Disruptive (downgrades then upgrades the live driver);
+have a backup pointer; reversible by reinstalling 0.5.0.
+```sh
+sudo installer -pkg /tmp/mig/mt2d-0.4.5.pkg -target /        # genuine 0.4.5 -> old identity on disk
+# confirm the OLD identity is present:
+launchctl list | grep com.schmonz.mt2 ; kextstat | grep -i MT2Gesture ; ls /usr/local/lib/mt2d
+sudo installer -pkg build-native/voodooinputmavericks-0.5.0.pkg -target /   # 0.5.0 preinstall migrates
+sh tools/spikes/verify_migration.sh                          # oracle: exit 0 == no residue + new identity
+# then log out/in (or reboot), touch the pad, re-run the oracle for the loaded-kext line.
+```
+
+**Full Sparkle path (optional, needs the private signing key):** sign the 0.5.0 pkg + `gen_appcast.sh`,
+serve `appcast.xml`+pkg locally, `defaults write com.schmonz.MavericksTrackpad2Updater SUFeedURL
+http://localhost:PORT/appcast.xml` on a genuine-0.4.5 box, trigger the updater, then run the oracle. Only
+needed to exercise Sparkle's own download/verify UI; the pkg-over-pkg test already covers the migration.
