@@ -33,12 +33,14 @@ launchctl unload /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || tr
 rm -f /Library/LaunchDaemons/com.schmonz.mt2d.plist 2>/dev/null || true
 launchctl unload /Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist 2>/dev/null || true
 rm -f /Library/LaunchDaemons/com.schmonz.mt2usbbthandoff.plist 2>/dev/null || true
-kextunload -b dev.modernmavericks.VoodooInputMavericks 2>/dev/null || true
-kextunload -b com.schmonz.VoodooInputMavericks 2>/dev/null || true       # legacy kext id from pre-org-move installs
-kextunload -b com.schmonz.MavericksVoodooInputHost 2>/dev/null || true   # legacy kext id from pre-rename installs
-kextunload -b com.schmonz.MT2USBClaim 2>/dev/null || true
-kextunload -b com.schmonz.MT2Claim 2>/dev/null || true      # legacy id from pre-rename installs
-kextunload -b com.schmonz.MT2Gesture 2>/dev/null || true    # v0.4.5's gesture kext id -- was missing, so the old kext stayed resident beside the new one on update
+# NB: we deliberately do NOT kextunload a running gesture kext here. A kext driving the live MT2 can't be
+# unloaded -- its terminal holds a synthetic IOHIDDevice the system HID stack retains, so kextunload does a
+# PARTIAL teardown (kills the reader -> trackpad goes dead) and then FAILS on the retained terminal, and a
+# same-id new kext can't load over the stuck image => dead until reboot. Instead we leave the running kext
+# driving the trackpad; the new one loads cleanly at the next boot (nothing resident then), and the
+# postinstall tells the user to restart. The old loaders/plists/binaries are still removed (above + below),
+# so nothing re-loads the old kext at that boot. This matches upstream VoodooInput and every macOS kext:
+# stage now, apply at reboot. (kextunload'ing a busy driver here is what left a user dead-until-reboot.)
 rm -rf /Library/Extensions/MT2USBClaim.kext /Library/Extensions/MT2Claim.kext 2>/dev/null || true
 # Both transports now run in-kernel inside VoodooInputMavericks: the USB-claim + legacy claim
 # kexts and the userspace feeder are retired. Remove them from the loose load dir so

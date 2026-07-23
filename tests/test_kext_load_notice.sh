@@ -1,25 +1,22 @@
 #!/bin/sh
-# Tests maybe_notify_kext_stuck() (dist/scripts/kext_load_notice.sh), the postinstall's "did the kext
-# really load?" check. After the loader is triggered, notify the console user to restart ONLY when:
-#   - the new kext is NOT resident (it didn't come up), AND
-#   - a GUI user is logged in (so it SHOULD have -- at the login window the /dev/console guard
-#     legitimately defers the load to next login, which is not a stuck update).
-# All externals (kextstat, console-user, notifier) are injectable, so no real kext/GUI is needed.
+# Tests maybe_notify_user() (dist/scripts/kext_load_notice.sh): show a message to the logged-in GUI user,
+# but stay silent at the login window (console owned by root) where there's no one to tell. Used by the
+# postinstall to say "restart to finish" when an update is staged (a running driver can't be hot-swapped,
+# so the new kext applies at the next boot). Externals injected; no real GUI needed.
 set -u
 H="$(dirname "$0")/../dist/scripts/kext_load_notice.sh"
 [ -f "$H" ] || { echo "FAIL: helper missing: $H"; exit 1; }
 . "$H"
 fail=0
-KL_WAIT=0   # do not sleep in tests
 
 NOTED="${TMPDIR:-/tmp}/kln.$$"
-rec_notify() { echo "$1|$2" > "$NOTED"; }   # records (user, msg); same-shell function, no export needed
+rec_notify() { echo "$1|$2" > "$NOTED"; }   # records (user, msg); same-shell function
 KL_NOTIFY=rec_notify
 
 check() {
     desc="$1"; want="$2"
     rm -f "$NOTED"
-    maybe_notify_kext_stuck "some.kext.id" "restart please" >/dev/null 2>&1
+    maybe_notify_user "restart please" >/dev/null 2>&1
     if [ "$want" = notify ]; then
         [ -f "$NOTED" ] && echo "PASS: $desc" || { echo "FAIL: $desc (expected a notification)"; fail=1; }
     else
@@ -27,12 +24,10 @@ check() {
     fi
 }
 
-# A: kext resident -> silent (it loaded fine)
-KL_KEXTSTAT="echo some.kext.id"; KL_STAT_CONSOLE="echo alice"; check "resident -> silent" silent
-# B: not resident + a user logged in -> notify (it should have loaded but didn't)
-KL_KEXTSTAT="echo other.kext";   KL_STAT_CONSOLE="echo alice"; check "absent + session -> notify" notify
-# C: not resident + login window (console owned by root) -> silent (guard deferred by design)
-KL_KEXTSTAT="echo other.kext";   KL_STAT_CONSOLE="echo root";  check "absent + login window -> silent" silent
+# A GUI user is logged in -> notify them.
+KL_STAT_CONSOLE="echo alice"; check "session -> notify" notify
+# Login window (console owned by root) -> no one to tell -> silent.
+KL_STAT_CONSOLE="echo root";  check "login window -> silent" silent
 
 rm -f "$NOTED"
 [ "$fail" = 0 ] && echo "ALL PASS" || echo "FAIL"

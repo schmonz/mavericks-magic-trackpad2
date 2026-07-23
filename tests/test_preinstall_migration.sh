@@ -15,16 +15,15 @@ fail=0
 # (else a plist on a continuation line is invisible to a per-line grep).
 NORM="$(awk '{ while (sub(/\\[[:space:]]*$/,"")) { if ((getline nxt) > 0) $0 = $0 nxt; else break } print }' "$PRE")"
 
-# Legacy KEXT bundle ids -> must be kextunload'd (else the old kext stays resident beside the new one
-# until reboot, both claiming the MT2).
-for id in com.schmonz.MT2Gesture com.schmonz.VoodooInputMavericks com.schmonz.MavericksVoodooInputHost \
-          com.schmonz.MT2Claim com.schmonz.MT2USBClaim; do
-    if echo "$NORM" | grep -qE "kextunload +-b +$id( |\$)"; then
-        echo "PASS: kextunload $id"
-    else
-        echo "FAIL: preinstall never kextunloads legacy kext $id"; fail=1
-    fi
-done
+# Model A defers the KEXT swap to reboot -- a kext driving the live MT2 can't be hot-unloaded (partial
+# teardown kills the trackpad; see test_install_kext_load.sh). So migration completeness here means the
+# old LOADERS + FILES are removed, so nothing re-loads the old identity at that boot -- NOT that we
+# kextunload a live driver. v0.4.5's gesture kext + updater live under /usr/local/lib/mt2d.
+if echo "$NORM" | grep -E "rm " | grep -qE "/usr/local/lib/mt2d( |\$)"; then
+    echo "PASS: rm /usr/local/lib/mt2d (old kext + updater tree -> can't reload at boot)"
+else
+    echo "FAIL: preinstall never removes /usr/local/lib/mt2d -> old kext could reload at boot"; fail=1
+fi
 
 # Legacy LaunchDaemon/Agent plists -> must be rm'd (unload alone leaves the .plist to relaunch at the
 # next boot, pointing at a now-removed binary).

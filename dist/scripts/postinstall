@@ -21,22 +21,27 @@ echo ok > "$STATE"
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST"
 
-# The loader is WatchPaths-only (no RunAtLoad -- that armed launchd's ~8s boot throttle). `load -w`
-# above only REGISTERS the job; a WatchPaths job does not run at load. Touch the trigger to fire it now
-# so the kext loads at install/update time (the same path the per-user LaunchAgent uses at login).
-# voodooinputmavericks-run's /dev/console guard still no-ops it at the login window (no session) --
-# correct: it then loads at the user's next login. Without this, an update leaves the OLD kext torn
-# down (preinstall) and the NEW kext unloaded until the next login.
+# Load the new kext now ONLY on a FRESH install. On an UPDATE a prior version of our kext is still
+# resident and driving the trackpad, and a kext driving a live device cannot be hot-swapped in place --
+# its terminal publishes a synthetic IOHIDDevice the system HID stack retains, so kextunload can't unload
+# it and a same-id new kext can't load over it (see kext_load_notice.sh; upstream VoodooInput has the same
+# constraint). So we leave the running driver alone -- the trackpad keeps working on the old version --
+# and the new kext loads cleanly at the next boot, when nothing is resident. This is the standard macOS
+# kext-update model (stage, apply at reboot); we just tell the user.
 TRIGGER=/usr/local/var/voodooinputmavericks/session.trigger
 mkdir -p "$(dirname "$TRIGGER")"
-touch "$TRIGGER"
-
-# Post-update: BOUNCE the BT MT2 (close+reopen) so it resumes without a tap. A plain wake no-ops here
-# because the kext reload leaves the baseband link UP but the multitouch stream stalled
-# (openConnection -> kBluetoothHCIErrorACLConnectionAlreadyExists 0x0b); the bounce forces a full
-# re-establish + re-enable. Best-effort (paired CoD-0x594 only, no-ops otherwise). Backgrounded +
-# settle so a powered-off device's page timeout can't stall the installer.
-( sleep 3; /usr/local/libexec/mt2_linkstated --bounce-once >/dev/null 2>&1 ) &
+KLN="$(dirname "$0")/kext_load_notice.sh"
+if kextstat 2>/dev/null | grep -qE "VoodooInputMavericks|MT2Gesture|MavericksVoodooInputHost|MT2Claim|MT2USBClaim"; then
+    # UPDATE: a prior kext of ours is resident -> stage; it applies at reboot. Notify the user.
+    [ -f "$KLN" ] && { . "$KLN"; maybe_notify_user \
+        "The Magic Trackpad 2 driver was updated. Please restart to finish updating." || true; }
+else
+    # FRESH install: fire the WatchPaths loader now (RunAtLoad-free, so `load -w` only registered it; a
+    # WatchPaths job does not run at load). The wrapper's /dev/console guard defers to next login at the
+    # login window. Then BOUNCE the BT MT2 (close+reopen) so it resumes without a tap after the load.
+    touch "$TRIGGER"
+    ( sleep 3; /usr/local/libexec/mt2_linkstated --bounce-once >/dev/null 2>&1 ) &
+fi
 
 # USB->BT handoff daemon: wakes deep-idle Bluetooth on cable unplug (no click). Root LaunchDaemon,
 # runs regardless of GUI session. Best-effort — a UX feature, never fail the install on it.
@@ -90,17 +95,5 @@ cp "$BEZEL_SRC/MagicTrackpad.icns" "$BEZEL_DST/MavericksTrackpad.icns" 2>/dev/nu
 # updater is what a user sees when an update is offered, so it should look like the device it drives.
 UPD_ICON="/Library/Application Support/ModernMavericks/Trackpad2Updater.app/Contents/Resources/Trackpad2Updater.icns"
 [ -f "$UPD_ICON" ] && cp "$BEZEL_SRC/MagicTrackpad.icns" "$UPD_ICON" 2>/dev/null || true
-
-# Confirm the (async, trigger-fired) load actually took. If a prior same-generation build was busy and
-# refused to unload in preinstall, the incoming kext can't load until a reboot clears it. macOS Installer
-# can't raise a restart dialog conditionally from a script, so we OBSERVE the outcome and notify only when
-# warranted (silent on success, and on a login-window deferral). Done last so the load has had all the
-# postinstall work as settle time. Best-effort: never fail the install on it.
-KLN="$(dirname "$0")/kext_load_notice.sh"
-if [ -f "$KLN" ]; then
-    . "$KLN"
-    maybe_notify_kext_stuck dev.modernmavericks.VoodooInputMavericks \
-      "The Magic Trackpad 2 driver was updated, but the previous version was still in use. Please restart to finish updating." || true
-fi
 
 exit 0

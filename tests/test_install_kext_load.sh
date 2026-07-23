@@ -1,12 +1,10 @@
 #!/bin/sh
-# Invariant: the loader daemon is WatchPaths-only (no RunAtLoad -- dropped to kill the ~8s boot throttle,
-# see the loader plist). A WatchPaths job does NOT run on `launchctl load`, so the postinstall's
-# `launchctl load -w` alone will NOT load the kext at install/update time. The postinstall must therefore
-# actively fire the load -- by touching the session trigger (the same path login uses) or invoking the
-# wrapper directly -- else a fresh install/update leaves the NEW kext UNLOADED until the next login.
-#
-# Regression guard for the 2026-07-23 RunAtLoad removal: without this, updating leaves the user with the
-# old kext torn down (preinstall) and the new one not yet loaded.
+# Model A -- stage-and-apply-at-reboot. A kext driving the live MT2 cannot be hot-swapped in place (its
+# terminal holds a synthetic IOHIDDevice the HID stack retains, like upstream VoodooInput's simulator),
+# so the install must NOT force-unload a running kext: kextunload does a PARTIAL teardown that kills the
+# reader (trackpad dead) then fails, and the same-id new kext can't load over the stuck image -> dead
+# until reboot (observed 2026-07-23). Instead: fresh install loads now; an update stages the new kext,
+# leaves the old one driving, and notifies restart; the new kext applies cleanly at the next boot.
 set -u
 D="$(dirname "$0")/.."
 PLIST="$D/dist/dev.modernmavericks.voodooinputmavericks.plist"
@@ -14,33 +12,28 @@ POST="$D/dist/scripts/postinstall"
 PRE="$D/dist/scripts/preinstall"
 fail=0
 
-# Anti-collision: IOKit registers C++ class names GLOBALLY. Our kext's classes (MT2BTReader,
-# MavericksVoodooInputHost, MavericksTerminalBackend, the vendored VoodooInput/TrackpointDevice, ...)
-# are shared across builds of the SAME generation, so installing a new build while a prior one is still
-# resident makes the new kext FAIL to load ("a plain kext-load no-ops if a stale kext is still
-# resident" -- docs/mt-stack/battery-reporting.md). The preinstall MUST unload the current kext id
-# before the payload + postinstall load the new one, or a same-generation update won't load the driver.
-CURRENT_KEXT="dev.modernmavericks.VoodooInputMavericks"
-if grep -qE "kextunload +-b +$CURRENT_KEXT( |\$)" "$PRE"; then
-    echo "PASS: preinstall unloads $CURRENT_KEXT before load (no same-generation OSMetaClass collision)"
+# 1. Preinstall must NOT kextunload a (possibly-running) kext -- that is the partial-teardown breakage.
+if grep -qE "^[^#]*kextunload" "$PRE"; then
+    echo "FAIL: preinstall runs kextunload -> can partial-tear-down a live driver (dead-until-reboot)"; fail=1
 else
-    echo "FAIL: preinstall doesn't unload $CURRENT_KEXT -> a resident prior build's classes collide; new kext won't load"
-    fail=1
+    echo "PASS: preinstall does not force-unload a running kext"
 fi
 
-# Does the loader run at load on its own (RunAtLoad true)?
-if grep -A1 "<key>RunAtLoad</key>" "$PLIST" 2>/dev/null | grep -q "<true/>"; then
-    echo "PASS: loader has RunAtLoad -> load-time run covers install"
+# 2. Postinstall gates the load: fire the WatchPaths trigger only when NO prior kext is resident (fresh
+#    install), and notify restart otherwise (update -> apply at reboot).
+if grep -q "kextstat" "$POST" && grep -q 'touch "$TRIGGER"' "$POST" && grep -q "maybe_notify_user" "$POST"; then
+    echo "PASS: postinstall gates load fresh-vs-update (touch trigger on fresh, notify on update)"
 else
-    # WatchPaths-only: postinstall must fire the load by touching the trigger (the same path login uses).
-    # Accept a literal `touch .../session.trigger` OR the DRY form (TRIGGER=.../session.trigger; touch "$TRIGGER").
-    if grep -qE "touch .*session\.trigger" "$POST" || \
-       { grep -qE '[A-Za-z_]+=[^ ]*session\.trigger' "$POST" && grep -qE 'touch +"?\$\{?[A-Za-z_]+\}?"?' "$POST"; }; then
-        echo "PASS: WatchPaths-only loader + postinstall touches session.trigger (kext loads at install)"
-    else
-        echo "FAIL: loader is WatchPaths-only but postinstall never touches session.trigger"
-        echo "      -> install/update leaves the NEW kext unloaded until the next login"
-        fail=1
-    fi
+    echo "FAIL: postinstall must gate on kextstat -> touch trigger (fresh) / maybe_notify_user (update)"; fail=1
 fi
+
+# 3. Loader stays WatchPaths-only (no RunAtLoad -> avoids the ~8s boot throttle); the fresh-install touch
+#    is what fires it, since a WatchPaths job does not run at `launchctl load`.
+if grep -A1 "<key>RunAtLoad</key>" "$PLIST" 2>/dev/null | grep -q "<true/>"; then
+    echo "FAIL: loader has RunAtLoad (reintroduces the boot throttle)"; fail=1
+else
+    echo "PASS: loader is WatchPaths-only"
+fi
+
+[ "$fail" = 0 ] && echo "ALL PASS" || echo "FAIL"
 exit $fail
