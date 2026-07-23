@@ -1,6 +1,19 @@
 # Open questions — things we need to understand but don't yet
 
-## ⚠️ CONFIRMED BUG (2026-07-22): reboot-while-on-BT hangs the warm restart at EFI (kext BT teardown un-quiesced)
+## ✅ FIXED (2026-07-22): reboot-while-on-BT hung the warm restart at EFI — daemon now disconnects at quiesce
+
+> **RESOLVED — commit `7b76a05`.** The fix was NOT the kext-shutdown-hook proposed below; it was simpler +
+> userland. `mt2_linkstated`'s `quiesce_for_shutdown` was PASSIVE (stop paging only) → a device still
+> CONNECTED at reboot kept a live ACL that rode the (non-power-cycled) warm restart into EFI's BT init and
+> hung it. Fix: quiesce now actively `closeConnection`s the MT2 (`do_disconnect_mt2`) after draining pages, on
+> BOTH the SIGTERM source and the system-power callback. PROVEN, not assumed: Reboot-1 (MT2 off) = clean →
+> isolated the live connection; an fsync'd marker (`/var/db/voodooinputmavericks-lastquiesce`, since ASL can't
+> log across a reboot) recorded `why=sigterm closed=1` at the validation reboot, which warm-restarted clean
+> with the MT2 connected. The "kext holds the L2CAP channels" framing below was right that a connection
+> persists, but the DAEMON closing it (proven to drop the ACL even with the kext bound — same primitive as the
+> USB-appear yield) suffices — no kext change needed. History retained below.
+
+## (superseded — original diagnosis) reboot-while-on-BT hangs the warm restart at EFI (kext BT teardown un-quiesced)
 
 The predicted risk from `docs/superpowers/plans/2026-07-21-ondevice-satellite-validation.md` Task 1
 ("Reboot while BT-connected — HIGH RISK") **materialized on-device 2026-07-22.** User rebooted while on BT
