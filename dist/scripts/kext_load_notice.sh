@@ -32,8 +32,10 @@ maybe_notify_kext_stuck() {
     if [ -n "$KL_NOTIFY" ]; then
         "$KL_NOTIFY" "$_kl_user" "$_kl_msg"
     else
+        # Backgrounded: `display dialog` is modal and would block the installer's postinstall until the
+        # user clicked OK. Run it detached in the user's GUI session so the install completes regardless.
         sudo -u "$_kl_user" osascript -e \
-            "display dialog \"$_kl_msg\" buttons {\"OK\"} default button 1 with icon note" >/dev/null 2>&1 || true
+            "display dialog \"$_kl_msg\" buttons {\"OK\"} default button 1 with icon note" >/dev/null 2>&1 &
     fi
     return 1
 }
