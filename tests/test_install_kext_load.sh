@@ -11,7 +11,22 @@ set -u
 D="$(dirname "$0")/.."
 PLIST="$D/dist/dev.modernmavericks.voodooinputmavericks.plist"
 POST="$D/dist/scripts/postinstall"
+PRE="$D/dist/scripts/preinstall"
 fail=0
+
+# Anti-collision: IOKit registers C++ class names GLOBALLY. Our kext's classes (MT2BTReader,
+# MavericksVoodooInputHost, MavericksTerminalBackend, the vendored VoodooInput/TrackpointDevice, ...)
+# are shared across builds of the SAME generation, so installing a new build while a prior one is still
+# resident makes the new kext FAIL to load ("a plain kext-load no-ops if a stale kext is still
+# resident" -- docs/mt-stack/battery-reporting.md). The preinstall MUST unload the current kext id
+# before the payload + postinstall load the new one, or a same-generation update won't load the driver.
+CURRENT_KEXT="dev.modernmavericks.VoodooInputMavericks"
+if grep -qE "kextunload +-b +$CURRENT_KEXT( |\$)" "$PRE"; then
+    echo "PASS: preinstall unloads $CURRENT_KEXT before load (no same-generation OSMetaClass collision)"
+else
+    echo "FAIL: preinstall doesn't unload $CURRENT_KEXT -> a resident prior build's classes collide; new kext won't load"
+    fail=1
+fi
 
 # Does the loader run at load on its own (RunAtLoad true)?
 if grep -A1 "<key>RunAtLoad</key>" "$PLIST" 2>/dev/null | grep -q "<true/>"; then
