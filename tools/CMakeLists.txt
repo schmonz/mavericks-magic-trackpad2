@@ -7,7 +7,7 @@ endforeach()
 target_link_libraries(vhid_probe mt2core)
 
 # Shipped-userland 10.9 guard: only mt2_reenumerate ships (vhid_probe / mt2_usb_enable are dev-only).
-mavericks_compat_guard(mt2_reenumerate)
+mavericks_assert_binary_compatible(mt2_reenumerate)
 
 # ObjC tools (ARC, Foundation + IOBluetooth).
 foreach(t mt2_bt_bounce)
@@ -27,7 +27,7 @@ target_compile_options(mt2_linkstated PRIVATE -fobjc-arc)
 target_include_directories(mt2_linkstated PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(mt2_linkstated
   "-framework Foundation" "-framework IOBluetooth" "-framework IOKit" "-framework CoreFoundation")
-mavericks_compat_guard(mt2_linkstated)
+mavericks_assert_binary_compatible(mt2_linkstated)
 
 # The prefpane-refresh payload: a pure-C GC-neutral bundle injected into System Preferences, shipped ONLY
 # as a SIMBL plugin. OSAX_DIR is the shared source dir (used by the SIMBL target below).
@@ -59,7 +59,7 @@ add_custom_command(TARGET VoodooInputMavericksPane_simbl POST_BUILD
   VERBATIM)
 
 # 10.9 compat guard for the shipped SIMBL bundle.
-mavericks_compat_guard(VoodooInputMavericksPane_simbl)
+mavericks_assert_binary_compatible(VoodooInputMavericksPane_simbl)
 
 # Aggregate convenience target: the SIMBL plugin (the one shipped loader). For a release-identical
 # on-device install use the `install-pkg` target, not hand-copied pieces.
@@ -114,7 +114,7 @@ if(MT2_SPARKLE_FRAMEWORK)
     RELAUNCH_MARKER "/tmp/.mt2updater-relaunched"
     PANE_HINT_KEY "MT2AvailableUpdateVersion")
 
-  mavericks_compat_guard(Trackpad2Updater)
+  mavericks_assert_binary_compatible(Trackpad2Updater)
 
   add_custom_target(updater-install
     COMMAND sudo ${CMAKE_COMMAND} -E rm -rf "/Library/Application Support/ModernMavericks/Trackpad2Updater.app"
