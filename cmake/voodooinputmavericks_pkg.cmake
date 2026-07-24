@@ -17,20 +17,21 @@ set(PKG_SCRIPTS ${CMAKE_BINARY_DIR}/pkg-scripts)
 # staged by mavericks-shared-cmake, so this product renders the same plist and runs the same load
 # logic as every sibling. Only in a Sparkle build -- a build with no updater must also ship no agent,
 # or login gets an agent pointing at an app that was never installed.
-# _UPD_PKG_STAGE expands to the COMMAND at configure time; empty otherwise.
-if(MT2_SPARKLE_FRAMEWORK)
-  set(_UPD_PKG_STAGE
-    COMMAND sh ${MavericksSharedCMake_SCRIPTS}/stage_updater.sh
-      --stage ${PKGROOT}
-      --app ${CMAKE_BINARY_DIR}/Trackpad2Updater.app
-      --app-dir "/Library/Application Support/ModernMavericks"
-      --agent-label dev.modernmavericks.voodooinputmavericks.updatecheck
-      --snippet-out ${PKG_SCRIPTS}/agent-load.sh)
-  set(_UPD_PKG_DEP Trackpad2Updater)
-else()
-  set(_UPD_PKG_STAGE "")
-  set(_UPD_PKG_DEP "")
-endif()
+# The updater app + its update-check LaunchAgent + the agent-load.sh snippet the postinstall sources, all
+# staged into the payload by the shared stage_updater.sh. The updater is now built UNCONDITIONALLY (see
+# tools/CMakeLists.txt; mavericks_add_updater_app self-fetches Sparkle), so its staging is unconditional too.
+# NB (2026-07-24): this was gated on if(MT2_SPARKLE_FRAMEWORK) -- a cache var the shared-cmake refactor
+# DELETED -- so the gate was always FALSE and the pkg silently shipped with NO updater app and NO
+# update-check agent. That is why 0.5.0's "Check for Updates" did nothing. check_pkg_payload.sh (run at the
+# end of this target) now fails the build if the updater app is ever absent from the payload again.
+set(_UPD_PKG_STAGE
+  COMMAND sh ${MavericksSharedCMake_SCRIPTS}/stage_updater.sh
+    --stage ${PKGROOT}
+    --app ${CMAKE_BINARY_DIR}/Trackpad2Updater.app
+    --app-dir "/Library/Application Support/ModernMavericks"
+    --agent-label dev.modernmavericks.voodooinputmavericks.updatecheck
+    --snippet-out ${PKG_SCRIPTS}/agent-load.sh)
+set(_UPD_PKG_DEP Trackpad2Updater)
 add_custom_target(pkg
   COMMAND ${CMAKE_COMMAND} -E remove_directory ${PKGROOT}
   # Fresh scripts dir first: _UPD_PKG_STAGE drops the generated agent-load.sh into it below.
@@ -86,6 +87,11 @@ add_custom_target(pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --resources ${CMAKE_SOURCE_DIR}/dist/resources
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
+  # Fail-closed payload check: assert the finished .pkg actually contains every install root a working
+  # product needs (updater app + update-check agent, kext, loader, pane bundle, daemons). Catches a
+  # staging step that silently drops out -- e.g. the dead if(MT2_SPARKLE_FRAMEWORK) gate that shipped 0.5.0
+  # with no updater. Runs on the real pkg, so it guards the local `pkg` build AND the CI release build.
+  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/check_pkg_payload.sh ${PKG_OUT}
   DEPENDS kext mt2_reenumerate VoodooInputMavericksPane_simbl mt2_linkstated ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
 
