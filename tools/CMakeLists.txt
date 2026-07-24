@@ -93,42 +93,35 @@ add_custom_target(linkstate-uninstall
   COMMENT "Uninstalling the mt2_linkstated LaunchDaemon")
 
 # ---- Trackpad2Updater.app (shared MavericksSparkle) --------------------------------------
-# Built only when a fetched Sparkle framework path is provided (MT2_SPARKLE_FRAMEWORK); otherwise the
-# rest of the tree still builds without the network fetch. The updater host now lives in
-# mavericks-shared-cmake (templated main.m/Info.plist); we just configure it per product here.
-if(MT2_SPARKLE_FRAMEWORK)
-  include(MavericksSparkle)
-  mavericks_add_updater_app(
-    NAME Trackpad2Updater
-    PRODUCT_NAME "Mavericks Trackpad 2"
-    BUNDLE_ID dev.modernmavericks.Trackpad2Updater
-    FEED_URL "https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml"
-    ED_PUBKEY "E8ZTStxLUfSWtTDg24bwnanLII20R27NVm+RxZtElGs="
-    ICON "${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_updater/Trackpad2Updater.icns"
-    VERSION "${MAVERICKS_VERSION}"
-    AUTO_CHECK false
-    SPARKLE_FRAMEWORK "${MT2_SPARKLE_FRAMEWORK}"
-    LOG_PREFIX "MT2Updater"
-    CONFIRM_TITLE "Mavericks Trackpad 2 updated"
-    CONFIRM_BODY "The trackpad driver was updated and is ready to use."
-    RELAUNCH_MARKER "/tmp/.mt2updater-relaunched"
-    PANE_HINT_KEY "MT2AvailableUpdateVersion")
+# mavericks_add_updater_app() self-fetches the Sparkle framework (cached under ~/Library/Caches), so there
+# is no MT2_SPARKLE_FRAMEWORK gate/path anymore. Built UNCONDITIONALLY, like the sibling projects (the
+# one-time Sparkle fetch is cached). The updater host lives in mavericks-shared-cmake (templated
+# main.m/Info.plist); we configure it per product here.
+include(MavericksSparkle)
+mavericks_add_updater_app(
+  NAME Trackpad2Updater
+  PRODUCT_NAME "Mavericks Trackpad 2"
+  BUNDLE_ID dev.modernmavericks.Trackpad2Updater
+  FEED_URL "https://github.com/schmonz/mavericks-magic-trackpad2/releases/latest/download/appcast.xml"
+  ED_PUBKEY "E8ZTStxLUfSWtTDg24bwnanLII20R27NVm+RxZtElGs="
+  ICON "${CMAKE_CURRENT_SOURCE_DIR}/voodooinputmavericks_updater/Trackpad2Updater.icns"
+  VERSION "${MAVERICKS_VERSION}"
+  AUTO_CHECK false
+  LOG_PREFIX "MT2Updater"
+  CONFIRM_TITLE "Mavericks Trackpad 2 updated"
+  CONFIRM_BODY "The trackpad driver was updated and is ready to use."
+  RELAUNCH_MARKER "/tmp/.mt2updater-relaunched"
+  PANE_HINT_KEY "MT2AvailableUpdateVersion")
 
-  mavericks_assert_binary_compatible(Trackpad2Updater)
+mavericks_assert_binary_compatible(Trackpad2Updater)
 
-  add_custom_target(updater-install
-    COMMAND sudo ${CMAKE_COMMAND} -E rm -rf "/Library/Application Support/ModernMavericks/Trackpad2Updater.app"
-    COMMAND sudo ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Trackpad2Updater.app "/Library/Application Support/ModernMavericks/Trackpad2Updater.app"
-    COMMAND ${CMAKE_COMMAND} -E echo "Installed /Library/Application Support/ModernMavericks/Trackpad2Updater.app"
-    COMMENT "Installing Trackpad2Updater.app")
-  add_dependencies(updater-install Trackpad2Updater)
-endif()
+add_custom_target(updater-install
+  COMMAND sudo ${CMAKE_COMMAND} -E rm -rf "/Library/Application Support/ModernMavericks/Trackpad2Updater.app"
+  COMMAND sudo ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/Trackpad2Updater.app "/Library/Application Support/ModernMavericks/Trackpad2Updater.app"
+  COMMAND ${CMAKE_COMMAND} -E echo "Installed /Library/Application Support/ModernMavericks/Trackpad2Updater.app"
+  COMMENT "Installing Trackpad2Updater.app")
+add_dependencies(updater-install Trackpad2Updater)
 
-# ---- Native EdDSA signer + keygen (shared MavericksSparkle) --------------------------------------
-# Built only when a fetched orlp/ed25519 src dir is provided (MT2_ED25519_SRC). The signer/keygen
-# sources now live in mavericks-shared-cmake; this builds mavericks_sign_update + mavericks_generate_keys
-# (into ${CMAKE_BINARY_DIR}/sbin via the project-wide CMAKE_RUNTIME_OUTPUT_DIRECTORY).
-if(MT2_ED25519_SRC)
-  include(MavericksSparkle)
-  mavericks_add_signer(ED25519_SRC "${MT2_ED25519_SRC}")
-endif()
+# NB (shared-cmake refactor): the EdDSA signer is no longer built by this project. Signing moved to the
+# shared scripts/sign_and_appcast.sh (prebuilt ed25519-sign), invoked from release.yml. (Was: an
+# MT2_ED25519_SRC-gated mavericks_add_signer building mavericks_sign_update + mavericks_generate_keys.)

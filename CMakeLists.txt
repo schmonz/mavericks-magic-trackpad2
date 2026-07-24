@@ -44,14 +44,8 @@ set(MAVERICKS_POST_10_9_SYMBOLS "_IORegistryEntryCopyPath|_IOMainPort|_kIOMainPo
 # mavericks_fetch_10_9_sdk() helper). Leave UNSET on the native 10.9 dev box --
 # the kext then falls back to CMAKE_OSX_SYSROOT (unchanged).
 set(MT2_MACOSX_10_9_SDK "" CACHE PATH "MacOSX10.9 SDK root for kext cross-build (modern host only)")
-# Path to a fetched Sparkle 1.27.3 Sparkle.framework (x86_64, 10.9) for the updater helper.
-# Empty by default; set by the caller/CI from the shared fetch script (mavericks-shared-cmake):
-# cmake -DMT2_SPARKLE_FRAMEWORK=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_sparkle.sh").
-set(MT2_SPARKLE_FRAMEWORK "" CACHE PATH "Fetched Sparkle.framework for VoodooInputMavericks updater app")
-# Path to a fetched orlp/ed25519 src/ dir (the SAME lib Sparkle vendors) for the native EdDSA signer.
-# Empty by default; set by the caller/CI from the shared fetch script (mavericks-shared-cmake):
-# cmake -DMT2_ED25519_SRC=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_ed25519.sh").
-set(MT2_ED25519_SRC "" CACHE PATH "Fetched orlp/ed25519 src dir for the native mavericks_sign_update signer")
+# (Sparkle framework + ed25519 signer are no longer project inputs: mavericks_add_updater_app self-fetches
+# Sparkle, and signing moved to the shared scripts/sign_and_appcast.sh. See tools/CMakeLists.txt.)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/sbin")

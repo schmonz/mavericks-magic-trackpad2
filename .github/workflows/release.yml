@@ -85,39 +85,16 @@ jobs:
         id: sdk
         env:
           MAVERICKS_SDK_CACHE: ${{ github.workspace }}/.mt2-sdk-cache
-        run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_10_9_sdk.sh")" >> "$GITHUB_OUTPUT"
+        run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_sdk.sh")" >> "$GITHUB_OUTPUT"
 
-      # Sparkle 1.27.3 (prebuilt, x86_64-thinned) for Trackpad2Updater.app. The fetch script
-      # (URL + pinned SHA) lives in shared-cmake, so key the cache on what @v1 resolves to.
-      - name: Cache the Sparkle framework
-        uses: actions/cache@v6
-        with:
-          path: ${{ github.workspace }}/.mt2-sparkle-cache
-          key: sparkle-1.27.3-${{ steps.msc.outputs.sha }}
+      # NB (shared-cmake refactor): Sparkle + ed25519 are no longer fetched here. mavericks_add_updater_app()
+      # self-fetches the Sparkle framework at configure time (cached under ~/Library/Caches), and the release
+      # signing step below uses scripts/sign_and_appcast.sh, which fetches the prebuilt ed25519-sign via gh.
+      # Only the 10.9 SDK (for the kext cross-build) still needs an explicit fetch + -D pass.
 
-      - name: Fetch + checksum-verify + thin Sparkle 1.27.3
-        id: sparkle
-        env:
-          MT2_SPARKLE_CACHE: ${{ github.workspace }}/.mt2-sparkle-cache
-        run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_sparkle.sh")" >> "$GITHUB_OUTPUT"
-
-      # orlp/ed25519 (the same lib Sparkle vendors) for our native mavericks_sign_update, which signs the
-      # .pkg -- no Swift-binary dependency. Fetch script lives in shared-cmake; key on @v1's commit.
-      - name: Cache orlp/ed25519
-        uses: actions/cache@v6
-        with:
-          path: ${{ github.workspace }}/.mt2-ed25519-cache
-          key: ed25519-${{ steps.msc.outputs.sha }}
-
-      - name: Fetch + checksum-verify orlp/ed25519
-        id: ed25519
-        env:
-          MT2_ED25519_CACHE: ${{ github.workspace }}/.mt2-ed25519-cache
-        run: echo "path=$(sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/fetch_ed25519.sh")" >> "$GITHUB_OUTPUT"
-
-      - name: Configure + build (x86_64 @ 10.9 userland + kext + updater + signer)
+      - name: Configure + build (x86_64 @ 10.9 userland + kext + updater)
         run: |
-          cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}" -DMT2_SPARKLE_FRAMEWORK="${{ steps.sparkle.outputs.path }}" -DMT2_ED25519_SRC="${{ steps.ed25519.outputs.path }}"
+          cmake -S . -B build -DMT2_MACOSX_10_9_SDK="${{ steps.sdk.outputs.path }}"
           cmake --build build
           echo "userland slice:"; lipo -info build/sbin/mt2_reenumerate
           echo "kext:"; file build/VoodooInputMavericks.kext/Contents/MacOS/VoodooInputMavericks
@@ -142,18 +119,18 @@ jobs:
         if: github.ref_type == 'tag'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches the prebuilt ed25519-sign via gh
         run: |
           VER="${{ steps.ver.outputs.version }}"
           PKG="build/voodooinputmavericks-$VER.pkg"
           [ -n "$SPARKLE_PRIVATE_KEY" ] || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
-          # Sign with OUR native signer (built above; no Swift dependency). It prints the enclosure
-          # attrs (sparkle:edSignature="..." length="...") and self-checks the signature against the
-          # key's public half, so a bad key fails HERE instead of shipping an update the framework
-          # rejects. gen_appcast.sh inlines docs/release-notes/vVER.md as the <description>.
-          ENCLOSURE=$(build/sbin/mavericks_sign_update -s "$SPARKLE_PRIVATE_KEY" "$PKG")
-          echo "enclosure: $ENCLOSURE"
           URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/voodooinputmavericks-$VER.pkg"
-          sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/gen_appcast.sh" "Mavericks Trackpad 2" "$VER" "$URL" "10.9.5" "docs/release-notes/v$VER.md" "$ENCLOSURE" > build/appcast.xml
+          # Shared signer (scripts/sign_and_appcast.sh): reads the key from $SPARKLE_PRIVATE_KEY (never
+          # argv), fetches the prebuilt ed25519-sign, self-checks the signature against the pubkey so a
+          # bad key fails HERE not on the client, and inlines docs/release-notes/vVER.md as <description>.
+          sh "$HOME/.local/share/cmake/MavericksSharedCMake/scripts/sign_and_appcast.sh" \
+            --channel-title "Mavericks Trackpad 2" --version "$VER" --pkg-url "$URL" \
+            --notes-file "docs/release-notes/v$VER.md" --pkg "$PKG" --min-os 10.9.5 > build/appcast.xml
           echo "=== appcast.xml ==="; cat build/appcast.xml
 
       - name: Upload build artifact (always)
