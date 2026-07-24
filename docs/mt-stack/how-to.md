@@ -243,6 +243,18 @@ lsbom /tmp/mig/x/mt2d-component.pkg/Bom | awk '{print $1}' | grep -iE 'LaunchDae
 # every plist/loader/kext-file it lists must be rm'd in dist/scripts/preinstall; preinstall must NOT kextunload
 ```
 
+**Three completeness guards added after the 0.5.0 → 0.5.1 update test** (2026-07-24; see decisions.md "Rename-update
+test found three ship-blockers"):
+- The pane ships via BOTH a SIMBL bundle AND a ScriptingAdditions osax. Migration must purge BOTH under their
+  GENUINE pre-rename names (`MT2PaneRefresh.osax` + `/usr/local/libexec/mt2_pane_watch` + `/usr/local/share/mt2d`),
+  not just the intermediate dev names — else the osax co-loads a stale SECOND About pane. `pkgutil --files
+  com.schmonz.mt2d` is the authoritative purge list; `test_preinstall_migration.sh` asserts the full set.
+- `cmake/check_pkg_payload.sh` (fail-closed in the `pkg` target) asserts the built pkg actually CONTAINS the
+  updater app + update-check agent — 0.5.0 silently shipped without them (dead `if(MT2_SPARKLE_FRAMEWORK)` gate),
+  so "Check for Updates" did nothing.
+- The auto-check opt-in is carried old-domain → new-domain by `dist/scripts/migrate_autocheck.sh` (postinstall);
+  `test_autocheck_migration.sh` covers it.
+
 **Migration (definitive, on-device — pkg-over-pkg, no signing/feed needed):** a THREE-step test (install old,
 install new, REBOOT). The trackpad keeps working on the old version throughout; nothing breaks pre-reboot.
 ```sh

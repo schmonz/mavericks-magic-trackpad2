@@ -921,3 +921,49 @@ parties (the sample satellite is retired — the BT reader IS the worked example
   present (or force `MTTrackpadController` directly). RISK to handle: `MTTrackpadController` with no real
   matching device may deref device props — the osax already has `find_mt_controller` + drives
   `_magicTrackpadAction`, but must synthesize `(self,arg)` since Apple never fires `deviceConnected`.
+
+### Rename-update test (0.4.5 → 0.5.x) found three ship-blockers — fixed in 0.5.1 (2026-07-24)
+
+The end-to-end update test (genuine 0.4.5 → 0.5.x through the real Sparkle path) surfaced three bugs that
+every static/CI gate had passed. All fixed in 0.5.1; each now has a kext-free regression guard. Root causes:
+
+1. **0.5.0 shipped with NO updater — a dead `if()` left by the shared-cmake refactor.**
+   `cmake/voodooinputmavericks_pkg.cmake` gated updater payload staging on `if(MT2_SPARKLE_FRAMEWORK)`, a
+   cache variable the refactor (b596f00) DELETED when it made the updater build unconditional in
+   `tools/CMakeLists.txt`. The gate went permanently false → `stage_updater.sh` never ran → the pkg omitted
+   the updater app AND the update-check agent, so the pane's "Check for Updates" did nothing and no
+   background check existed. Every other gate (OS-floor, signature, unit tests, appcast) stayed green — a
+   missing payload root is invisible to them.
+   FIX: stage unconditionally (mirror `tools/CMakeLists.txt`). DEFENSE: `cmake/check_pkg_payload.sh` expands
+   the finished pkg and asserts every install root a working product needs (updater app + update-check
+   agent, kext, loader, pane bundle, daemons, install scripts); wired FAIL-CLOSED into the `pkg` target, so
+   it fails `cmake --build --target pkg` locally AND in CI.
+   LESSON: a refactor removing a cache var silently disables everything gated on it — grep the WHOLE tree
+   for the var, not just the file you edited.
+
+2. **The prefpane ships via TWO loaders; migration purged only one → a stale SECOND About pane.**
+   Genuine 0.4.5 installed the pane companion as BOTH a SIMBL bundle (`MT2PaneRefresh.bundle`) AND a
+   ScriptingAdditions osax (`/Library/ScriptingAdditions/MT2PaneRefresh.osax`, + watcher
+   `/usr/local/libexec/mt2_pane_watch`, + staging copy `/usr/local/share/mt2d/`). The 0.5.0 preinstall's
+   osax block removed only the INTERMEDIATE dev-identity names (`VoodooInputMavericksPane.osax` /
+   `voodooinputmavericks_pane_watch`), so the genuine pre-rename osax survived and System Preferences
+   co-loaded it → two About tabs (the leftover read the OLD updater prefs domain, so it also showed a
+   phantom "update available"). AUTHORITATIVE source of what to purge = the genuine receipt,
+   `pkgutil --files com.schmonz.mt2d` — drive migration teardown off THAT, not a hand-picked list.
+   FIX: preinstall now rm's the genuine-0.4.5 names too. DEFENSE: `tests/test_preinstall_migration.sh`
+   asserts the full receipt teardown set (fails on the 3 missed paths against the pre-fix preinstall).
+   Instance of the dual-loader gotcha: the pane payload ships via TWO loaders — handle BOTH under their
+   SHIPPED (pre-rename) names.
+
+3. **The auto-check opt-in reset across the identity rename.** `SUEnableAutomaticChecks` lives in the
+   updater's PER-USER prefs domain; the rename `com.schmonz.MavericksTrackpad2Updater` →
+   `dev.modernmavericks.Trackpad2Updater` handed it a fresh, empty domain, so a user who had enabled
+   automatic checks silently reverted to the off default. FIX: `dist/scripts/migrate_autocheck.sh` (run by
+   the postinstall as the console user) carries the value old-domain → new-domain, ONLY when the new domain
+   is unset (never clobbers a new-identity choice; idempotent). DEFENSE: `tests/test_autocheck_migration.sh`
+   drives the real helper through throwaway `defaults` domains.
+
+Validated on-device: 0.4.5 → (buggy 0.5.0) → 0.5.1 manual install → reboot → `verify_migration.sh` CLEAN,
+single About pane, updater launches + reports up-to-date, opt-in preserved (`=1`), kext
+`dev.modernmavericks.VoodooInputMavericks (0.5.1)` bound (full-gesture, BT=2). NB the shipped 0.5.0 had a
+dead updater so 0.5.0 users can't in-pane-update — **0.5.0 was pulled; 0.5.1 is the real first release**.
