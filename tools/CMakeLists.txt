@@ -1,10 +1,3 @@
-# mavericks_compat_guard() lives in the shared MavericksCompatGuard module. Include it explicitly where
-# we use it (like MavericksSparkle below) rather than relying on include(Mavericks) to pull it in
-# transitively -- the umbrella's module composition varies across shared-cmake versions, and a host whose
-# Mavericks.cmake doesn't re-include it left the command undefined here. CMAKE_MODULE_PATH is inherited
-# from the top-level find_package(MavericksSharedCMake).
-include(MavericksCompatGuard)
-
 # Plain C tools (IOKit + CoreFoundation).
 foreach(t vhid_probe mt2_reenumerate mt2_usb_enable)
   add_executable(${t} ${t}.c)
