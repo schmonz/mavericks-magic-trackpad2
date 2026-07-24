@@ -70,6 +70,15 @@ else
     echo "VoodooInputMavericks: prefpane companion installed as a SIMBL plugin."
 fi
 
+# Carry the "check automatically" opt-in across the com.schmonz -> dev.modernmavericks updater rename, so a
+# 0.4.x user who had enabled automatic update checks keeps it (the rename gave the updater a new per-user
+# prefs domain, which otherwise starts at the off default). Runs as the console user (per-user prefs);
+# best-effort, and only carries a value when the new domain has none. See migrate_autocheck.sh.
+if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+    sudo -u "$CONSOLE_USER" sh "$(dirname "$0")/migrate_autocheck.sh" \
+        com.schmonz.MavericksTrackpad2Updater dev.modernmavericks.Trackpad2Updater 2>/dev/null || true
+fi
+
 # Scheduled background update check (per-user LaunchAgent). Independent of the prefpane route above.
 # Both the plist and this load logic are rendered by mavericks-shared-cmake's stage_updater.sh, so all
 # the ModernMavericks products load their agent the same way instead of each hand-rolling it. The

@@ -30,8 +30,10 @@ for k in com.schmonz.MT2Gesture com.schmonz.MT2Claim com.schmonz.MT2USBClaim \
     if kextstat 2>/dev/null | grep -q "$k"; then say FAIL "resident: $k"; fail=1; else say ok "gone: $k"; fi
 done
 
-echo "--- 4. no legacy binaries on disk ---"
-for p in /usr/local/lib/mt2d /usr/local/sbin/mt2d-run /usr/local/sbin/mt2d /usr/local/bin/mt2d; do
+echo "--- 4. no legacy binaries on disk (incl. the dual-loader osax + watcher + staging copy) ---"
+for p in /usr/local/lib/mt2d /usr/local/share/mt2d /usr/local/sbin/mt2d-run /usr/local/sbin/mt2d \
+         /usr/local/bin/mt2d /usr/local/libexec/mt2_pane_watch /usr/local/libexec/mt2_usb_bt_handoff \
+         /Library/ScriptingAdditions/MT2PaneRefresh.osax; do
     if [ -e "$p" ]; then say FAIL "present: $p"; fail=1; else say ok "absent: $p"; fi
 done
 

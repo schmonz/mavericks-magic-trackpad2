@@ -44,5 +44,23 @@ for bin in mt2d-run mt2d; do
     fi
 done
 
+# Pane DUAL-LOADER teardown. v0.4.5's prefpane companion shipped under its PRE-RENAME name via TWO loaders
+# plus a staging copy + link-state binary (authoritative: `pkgutil --files com.schmonz.mt2d`). The
+# 2026-07-24 regression: the osax block purged only the intermediate dev-identity names
+# (VoodooInputMavericksPane.osax / voodooinputmavericks_pane_watch), so genuine v0.4.5's MT2PaneRefresh.osax
+# survived and co-loaded a SECOND, stale About pane into System Preferences. Assert the whole genuine-0.4.5
+# set is torn down -- these exact paths came from the shipped 0.4.5 receipt, so this is class-level coverage.
+for path in \
+    "/Library/ScriptingAdditions/MT2PaneRefresh.osax" \
+    "/usr/local/libexec/mt2_pane_watch" \
+    "/usr/local/libexec/mt2_usb_bt_handoff" \
+    "/usr/local/share/mt2d"; do
+    if echo "$NORM" | grep -E "rm " | grep -qF "$path"; then
+        echo "PASS: rm $path"
+    else
+        echo "FAIL: preinstall never rm's $path (genuine-0.4.5 residue survives the rename update)"; fail=1
+    fi
+done
+
 if [ "$fail" = 0 ]; then echo "ALL PASS: legacy identity teardown complete"; else echo "MIGRATION TEARDOWN INCOMPLETE"; fi
 exit $fail

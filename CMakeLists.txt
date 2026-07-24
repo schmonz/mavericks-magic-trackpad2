@@ -14,7 +14,7 @@ set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Target architectures")
 # (e.g. -pre.1 / -rc.1) that CMake's project(VERSION) can't hold, so keep the full
 # string here and feed project() only the numeric part. The .pkg name + version and
 # CI all derive from MAVERICKS_VERSION -- bump it here, tag v<MAVERICKS_VERSION> to match.
-set(MAVERICKS_VERSION "0.5.0")
+set(MAVERICKS_VERSION "0.5.1")
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" MAVERICKS_VERSION_NUMERIC "${MAVERICKS_VERSION}")
 project(mt2 VERSION ${MAVERICKS_VERSION_NUMERIC} LANGUAGES C CXX)
 
