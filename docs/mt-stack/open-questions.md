@@ -2086,3 +2086,39 @@ every gesture, both USB and Bluetooth. Judge any demo by a new general user's fi
 **Format candidates:** short screen-capture + hand cam (QuickTime screen recording on the 10.9 box + phone
 cam, composited); a tight animated GIF per feature for the README; or one ~60 s narrated walkthrough for a
 release page.
+
+## Naming (on-device 0x55 write) BROKEN under the VoodooInput satellite — regression (2026-07-25)
+
+The 0.5.1 prefpane walk confirmed the pane's BT on-device rename no longer works. Root-caused as
+architectural, not a typo:
+- The real BT MT2 (IOBluetooth `ProductID 0x0265`, whose HID descriptor declares the `0x55` name Feature
+  report) is no longer exposed as a feature-capable `IOHIDDevice` — the satellite EXCLUDES Apple's
+  `IOBluetoothHIDDriver`.
+- The only MT2 `IOHIDDevice` IOHIDManager now sees is OUR synthetic `MavericksHIDShell` (`ProductID 0x030e`,
+  under the `VoodooInput` mux, fed from `IOBluetoothL2CAPChannel`; `CFBundleIdentifier
+  dev.modernmavericks.VoodooInputMavericks`). It declares `0x55` in its descriptor but returns
+  `kIOReturnUnsupported` for feature GET/SET — it does NOT forward feature reports to the real device.
+- `mavericks_name_write_onboard()` (voodooinputmavericks_prefpane_refresh.c ~1330) matches
+  `kIOHIDProductIDKey=0x0265` via IOHIDManager → finds nothing (the real device isn't an IOHIDDevice) → bails
+  `"no BT MT2 present or write failed"` BEFORE the SetReport (hence no inner `SET_REPORT 0x55 error` line).
+  On-device, `GET_REPORT 0x55` also errors `0xe00002c7` (`kIOReturnUnsupported`).
+- Pre-satellite this worked because `IOBluetoothHIDDriver` published the real MT2 as an IOHIDDevice at
+  `0x0265` that serviced feature reports. The Voodoo refactor removed that path.
+
+FIX (chosen): route the `0x55 SET_REPORT` through the BT reader's L2CAP CONTROL channel (which reaches the
+real device and feeds MavericksHIDShell), instead of IOHIDManager. Alt: have MavericksHIDShell forward feature
+GET/SET to the L2CAP channel so IOHIDManager writes to `0x030e` reach the device.
+
+Three more findings from the same 2026-07-25 walk (the Section A transport matrix itself: all 7 rows PASS,
+incl. USB-cabled power-off → NoTrackpad and the no-device "force declines" guard):
+- **3-finger-drag toggle missing even on a FRESH USB open** — WORSE than the documented "3FD-on-live-USB
+  availability race" (which claimed a fresh launch restores it). The capability EXISTS (ioreg shows
+  `TrackpadThreeFingerDrag=1`) but the toggle (under **Point & Click**, not More Gestures) is absent on USB
+  under the satellite even on a fresh launch. Supersedes the "fresh launch is fine" half of that race note.
+- **Battery % accuracy unverified post-Voodoo** — the row renders a number (100% / "charged"), so the
+  mechanism works, but accuracy vs the old always-100 field question has NOT been re-attested since the
+  satellite switch. Needs a known-drained device.
+- **BT cold power-on reconnect flicker** — on a cold BT power-on the pane cycles found→NoTrackpad→BT-UI. Our
+  render is ~1s once `BT+` fires; the gap is the BT stack re-establishing the link (control channel up before
+  our reader binds). Ties to the existing "BT power-on tap-to-stream latency" item; worth holding the view or
+  shortening the gap.

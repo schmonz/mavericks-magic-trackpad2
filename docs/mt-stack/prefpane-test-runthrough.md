@@ -193,6 +193,12 @@ Correctness note: the observer sets `o->state` BEFORE the callback, so `perform(
   that's the OLD unresolved field question, NOT a Voodoo regression — don't re-chase it here.
 
 ## C. Naming (BT only — USB `MaxFeatureReportSize==1`, no room; USB showing no name report is EXPECTED)
+> ❌ **BROKEN under the VoodooInput satellite (confirmed 2026-07-25, 0.5.1).** The IOHIDManager path below can't
+> reach the real device anymore — the satellite excludes `IOBluetoothHIDDriver`, so the only MT2 IOHIDDevice is
+> our synthetic `MavericksHIDShell` (PID `0x030e`), which returns `kIOReturnUnsupported` for `0x55` GET/SET; the
+> write matches the real device's PID `0x0265` and finds nothing. Fix = route `0x55` through the BT reader's
+> L2CAP control channel. See `open-questions.md` → "Naming (on-device 0x55 write) BROKEN under the … satellite".
+
 The write (`mt2_name_write_onboard`) is `IOHIDManager` → `SET_REPORT(Feature, 0x55)` straight to the physical BT
 MT2 — pipeline-independent (never touched our AMD). **The at-risk precondition:** the satellite BT path excludes
 Apple's `IOBluetoothHIDDriver`, which historically exposed the BT MT2 as the `IOHIDDevice` the write needs.
