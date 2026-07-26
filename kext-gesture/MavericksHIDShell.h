@@ -43,5 +43,19 @@ public:
     virtual OSNumber *newVendorIDNumber() const override;
     virtual OSNumber *newProductIDNumber() const override;
     virtual OSNumber *newVendorIDSourceNumber() const override;
+
+    /* Service the ONE Feature report we advertise (0x55, the on-device name): forward it to the BT
+     * reader's L2CAP control channel so a rename FOLLOWS the device. Under the satellite this shell is the
+     * only MT2 IOHIDDevice IOHIDManager sees, so a `IOHIDDeviceSetReport(Feature, 0x55, …)` lands here;
+     * without this override the default returns kIOReturnUnsupported and the rename silently no-ops. Other
+     * reports fall through to super (still unsupported — we produce no output/other-feature reports). */
+    virtual IOReturn setReport(IOMemoryDescriptor *report, IOHIDReportType reportType,
+                               IOOptionBits options = 0) override;
+
+    /* Service GET of the 0x55 name we advertise: read it back off the device via the BT reader's control
+     * channel (mirrors setReport). Restores the write->read-back verification (and `tools/re mt2-name`) the
+     * satellite broke; without it GET(0x55) returns kIOReturnUnsupported. Other reports fall through. */
+    virtual IOReturn getReport(IOMemoryDescriptor *report, IOHIDReportType reportType,
+                               IOOptionBits options = 0) override;
 };
 #endif

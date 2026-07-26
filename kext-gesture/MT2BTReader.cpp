@@ -69,6 +69,14 @@ static IOService *gInterruptReader = 0;
 static mavericks_splice_state_t gBtControlState;
 static IOBluetoothL2CAPChannel *gCtrlInterposedChannel = 0;
 
+/* GET(0x55) name read-back: bt_control_shim captures the device's DATA|Feature(0x55) reply here; the
+ * IOHIDManager getReport thread (readDeviceName) waits on gNameRespPending, then copies gNameResp out.
+ * volatile + flag-set-LAST: bt_control_shim (BT workloop) fills the buffer then sets pending, so a reader
+ * seeing pending==1 has a complete buffer. One outstanding read at a time (user-driven, not concurrent). */
+static volatile int      gNameRespPending = 0;
+static uint8_t           gNameResp[64];
+static volatile unsigned gNameRespLen = 0;
+
 static uint32_t bt_uptime_ms(void) {
     clock_sec_t s; clock_usec_t u;
     clock_get_system_microtime(&s, &u);
@@ -119,6 +127,21 @@ static void bt_control_shim(IOService *target, IOBluetoothL2CAPChannel *channel,
      * saw_id (not _raw): control-plane battery polls must NOT reset the touch stream's idle-gap clock. */
     if (length > 0) mavericks_diag_saw_id(MAVERICKS_DIAG_BT, (length > 1 && b[0] == 0xA1) ? b[1] : b[0]);
     mavericks_maybe_publish_battery(data, length);
+    /* GET(0x55) name reply: strip an optional DATA transport byte (0xA1 Input / 0xA3 Feature) and, if the
+     * report id is 0x55, capture the name for readDeviceName. Set gNameRespPending LAST (buffer complete
+     * before the reader is signalled). Harmless to every other control PDU (battery, handshakes). */
+    {
+        const uint8_t *nd = b; unsigned nl = length;
+        if (nl > 0 && (nd[0] == 0xA1 || nd[0] == MAVERICKS_HIDP_DATA_FEATURE)) { nd++; nl--; }
+        if (nl >= 1 && nd[0] == MAVERICKS_NAME_REPORT_ID) {
+            unsigned cn = nl - 1;
+            if (cn > sizeof gNameResp) cn = sizeof gNameResp;
+            for (unsigned i = 0; i < cn; i++) gNameResp[i] = nd[1 + i];
+            gNameRespLen = cn;
+            gNameRespPending = 1;
+            IOLog("MT2BTReader: name-read captured %u bytes (id 0x55) on control\n", cn);
+        }
+    }
     /* Forward to saved delegate (set if there was a prior delegate, e.g. from BNB; no-op if null). */
     if (gBtControlState.saved_cb) {
         typedef void (*bt_l2cap_cb_t)(IOService *, IOBluetoothL2CAPChannel *, unsigned short, void *);
@@ -403,6 +426,75 @@ IOReturn MT2BTReader::reEnableInGate(OSObject * /*owner*/, void *arg0,
     if (!self || !self->fChannel) return kIOReturnNoDevice;
     static const uint8_t kEnable[] = { MAVERICKS_HIDP_SET_REPORT_FEATURE, MAVERICKS_ENABLE_REPORT_ID, 0x02, 0x01 };
     self->fChannel->sendTo((void *)kEnable, sizeof(kEnable), 0, self, 0, 0);
+    return kIOReturnSuccess;
+}
+
+/* Route a rename to the real device over the control channel — see MT2BTReader.h. Runs OFF the BT
+ * workloop (IOHIDManager's setReport thread), so it ONLY marshals: read the (raw) control-channel pointer,
+ * grab its Bluetooth command gate, and runAction the actual sendTo in-gate. gCtrlInterposedChannel is 0
+ * unless a BT control channel is up and interposed, so USB / disconnected returns cleanly. runAction is
+ * synchronous, so `name` stays valid for the in-gate copy. RESIDUAL RACE: gCtrlInterposedChannel is a raw
+ * (unretained) global that stop() clears to 0; a rename racing a BT teardown could read a channel about to
+ * be freed. Rename is rare + user-driven, and sendNameInGate re-checks isInactive in-gate; this matches
+ * the same gCtrlInterposedChannel pattern stop() itself uses. */
+IOReturn MT2BTReader::writeDeviceName(const uint8_t *name, unsigned int len) {
+    if (!name || len == 0 || len > 63) return kIOReturnBadArgument;
+    IOBluetoothL2CAPChannel *ch = gCtrlInterposedChannel;
+    if (!ch) return kIOReturnNoDevice;
+    IOCommandGate *gate = ((IOBluetoothObject *)ch)->getCommandGate();
+    if (!gate) return kIOReturnNoDevice;
+    return gate->runAction(&MT2BTReader::sendNameInGate, ch, (void *)name, (void *)(uintptr_t)len, 0);
+}
+
+/* In the CONTROL channel's gate: SET_REPORT(Feature, 0x55, [name]) — same wire shape as reEnableInGate's
+ * 0xF1 enable ([0x53 SET_REPORT|Feature][report id][payload]). Bail if the channel went inactive between
+ * the marshal and here. The device answers with a HIDP HANDSHAKE on the same channel (bt_control_shim
+ * logs it) — that ack is the only confirmation we get, since GET_REPORT 0x55 is unsupported on the shell. */
+IOReturn MT2BTReader::sendNameInGate(OSObject * /*owner*/, void *arg0, void *arg1, void *arg2, void * /*a3*/) {
+    IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
+    const uint8_t *name = (const uint8_t *)arg1;
+    unsigned int nl = (unsigned int)(uintptr_t)arg2;
+    if (!ch || ch->isInactive()) return kIOReturnNoDevice;
+    if (!name || nl == 0 || nl > 63) return kIOReturnBadArgument;
+    uint8_t buf[66];
+    buf[0] = MAVERICKS_HIDP_SET_REPORT_FEATURE;   /* 0x53 */
+    buf[1] = MAVERICKS_NAME_REPORT_ID;            /* 0x55 */
+    memcpy(buf + 2, name, nl);
+    ch->sendTo(buf, (unsigned short)(2 + nl), 0, 0, 0, 0);
+    IOLog("MT2BTReader: name-write SET_REPORT(0x55) sent (%u name bytes) on control\n", nl);
+    return kIOReturnSuccess;
+}
+
+/* In the control channel's gate: GET_REPORT(Feature, 0x55) — request the on-device name. Same shape as
+ * pollBatteryInGate's GET(Input, 0x90). The device answers [0xA3][0x55][name] on the same channel, caught
+ * by bt_control_shim. arg0 = the control channel. */
+IOReturn MT2BTReader::sendNameGetInGate(OSObject * /*owner*/, void *arg0, void * /*a1*/, void * /*a2*/, void * /*a3*/) {
+    IOBluetoothL2CAPChannel *ch = (IOBluetoothL2CAPChannel *)arg0;
+    if (!ch || ch->isInactive()) return kIOReturnNoDevice;
+    static const uint8_t kGetName[] = { MAVERICKS_HIDP_GET_REPORT_FEATURE, MAVERICKS_NAME_REPORT_ID };
+    ch->sendTo((void *)kGetName, sizeof(kGetName), 0, 0, 0, 0);
+    return kIOReturnSuccess;
+}
+
+/* Read the on-device name — see MT2BTReader.h. Marshal the GET in-gate, then IOSleep-poll (this runs on
+ * IOHIDManager's getReport thread, OFF the workloop, so IOSleep is legal) until bt_control_shim captures
+ * the reply. ~500 ms budget (50 x 10 ms) — a rare, user-driven read. */
+IOReturn MT2BTReader::readDeviceName(uint8_t *out, unsigned int *outLen, unsigned int maxLen) {
+    if (!out || !outLen) return kIOReturnBadArgument;
+    *outLen = 0;
+    IOBluetoothL2CAPChannel *ch = gCtrlInterposedChannel;
+    if (!ch) return kIOReturnNoDevice;
+    IOCommandGate *gate = ((IOBluetoothObject *)ch)->getCommandGate();
+    if (!gate) return kIOReturnNoDevice;
+    gNameRespPending = 0;
+    IOReturn sr = gate->runAction(&MT2BTReader::sendNameGetInGate, ch);
+    if (sr != kIOReturnSuccess) return sr;
+    for (int i = 0; i < 50 && !gNameRespPending; i++) IOSleep(10);
+    if (!gNameRespPending) return kIOReturnTimeout;
+    unsigned int n = gNameRespLen;
+    if (n > maxLen) n = maxLen;
+    for (unsigned int i = 0; i < n; i++) out[i] = gNameResp[i];
+    *outLen = n;
     return kIOReturnSuccess;
 }
 

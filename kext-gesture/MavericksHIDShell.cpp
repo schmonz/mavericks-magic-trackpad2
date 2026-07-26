@@ -8,6 +8,8 @@
 #include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSString.h>
 #include "MavericksHIDShell.h"
+#include "MT2BTReader.h"       /* MT2BTReader::writeDeviceName — route the 0x55 name to the control channel */
+#include "mavericks_stack.h"   /* MAVERICKS_NAME_REPORT_ID (0x55) */
 
 OSDefineMetaClassAndStructors(MavericksHIDShell, IOHIDDevice)
 
@@ -65,4 +67,53 @@ OSNumber *MavericksHIDShell::newProductIDNumber() const {
 }
 OSNumber *MavericksHIDShell::newVendorIDSourceNumber() const {
     return OSNumber::withNumber((unsigned long long)2, 32);
+}
+
+/* We advertise exactly one Feature report in kMT1Desc: 0x55, the 64-byte on-device name. IOHIDManager's
+ * IOHIDDeviceSetReport(Feature, 0x55, [0x55][name]) lands here; route it to the BT reader's control channel
+ * so the rename FOLLOWS the device. The default IOHIDDevice::setReport returns kIOReturnUnsupported (which
+ * is exactly why naming silently no-op'd under the satellite). Any other report falls through to super. */
+IOReturn MavericksHIDShell::setReport(IOMemoryDescriptor *report, IOHIDReportType reportType,
+                                      IOOptionBits options) {
+    if (reportType == kIOHIDReportTypeFeature && report) {
+        uint8_t buf[65];
+        IOByteCount len = report->getLength();
+        if (len >= 2 && len <= (IOByteCount)sizeof(buf)) {
+            report->readBytes(0, buf, len);
+            if (buf[0] == MAVERICKS_NAME_REPORT_ID) {   /* [0x55][name...] */
+                IOReturn r = MT2BTReader::writeDeviceName(buf + 1, (unsigned int)(len - 1));
+                IOLog("MavericksHIDShell: setReport(Feature 0x55, %u name bytes) -> control write 0x%08x\n",
+                      (unsigned)(len - 1), r);
+                return r;
+            }
+        }
+    }
+    return IOHIDDevice::setReport(report, reportType, options);
+}
+
+/* Service GET(Feature, 0x55): read the on-device name back over the BT control channel and hand it up as
+ * [0x55][name]. The report ID rides in the low byte of `options` (IOHIDDevice convention); only 0x55 is
+ * ours (0x47 battery GET, if any, falls through). Without this, GET(0x55) returned kIOReturnUnsupported —
+ * which is why `tools/re mt2-name` couldn't read the name under the satellite. */
+IOReturn MavericksHIDShell::getReport(IOMemoryDescriptor *report, IOHIDReportType reportType,
+                                      IOOptionBits options) {
+    if (reportType == kIOHIDReportTypeFeature && report &&
+        (unsigned char)(options & 0xff) == MAVERICKS_NAME_REPORT_ID) {
+        unsigned char name[64]; unsigned int nl = 0;
+        IOReturn r = MT2BTReader::readDeviceName(name, &nl, sizeof name);
+        if (r == kIOReturnSuccess) {
+            unsigned char buf[64]; memset(buf, 0, sizeof buf);
+            buf[0] = MAVERICKS_NAME_REPORT_ID;
+            if (nl > sizeof(buf) - 1) nl = sizeof(buf) - 1;
+            memcpy(buf + 1, name, nl);
+            IOByteCount cap = report->getLength();
+            IOByteCount w = cap < (IOByteCount)(1 + nl) ? cap : (IOByteCount)(1 + nl);
+            report->writeBytes(0, buf, w);
+            IOLog("MavericksHIDShell: getReport(Feature 0x55) -> %u name bytes\n", nl);
+            return kIOReturnSuccess;
+        }
+        IOLog("MavericksHIDShell: getReport(Feature 0x55) -> read 0x%08x\n", r);
+        return r;
+    }
+    return IOHIDDevice::getReport(report, reportType, options);
 }

@@ -1333,7 +1333,12 @@ static int mavericks_name_write_onboard(const char *name) {
     int ok = 0;
     IOHIDManagerRef mgr = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
     if (!mgr) return 0;
-    { int pid = 0x0265;
+    /* Match OUR synthetic MavericksHIDShell (PID 0x030e), NOT the real MT2's BT-SIG 0x0265: the satellite
+     * excludes IOBluetoothHIDDriver, so the real device is no longer an IOHIDDevice. The shell's setReport
+     * forwards this 0x55 write to the BT L2CAP control channel. (Was 0x0265 -> matched nothing -> the silent
+     * no-op naming regression, confirmed 2026-07-25.) On USB the shell is present too but has no BT control
+     * channel, so the kext returns kIOReturnNoDevice and the mirror retries once BT is up. */
+    { int pid = 0x030e;
       CFNumberRef pidNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &pid);
       CFMutableDictionaryRef mm = CFDictionaryCreateMutable(kCFAllocatorDefault, 1,
                                       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);

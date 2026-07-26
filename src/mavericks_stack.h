@@ -70,12 +70,23 @@
 #define MAVERICKS_HIDP_GET_REPORT_INPUT        0x41   /* [BUILD] (GET_REPORT<<4)|INPUT — poll report over  */
                                                /*   the control channel; response returns as        */
                                                /*   0xA1(DATA|INPUT) id .. on the same channel.      */
+#define MAVERICKS_HIDP_GET_REPORT_FEATURE      0x43   /* [BUILD] (GET_REPORT<<4)|FEATURE — read the 0x55   */
+                                               /*   name back; response returns as 0xA3(DATA|FEATURE)*/
+                                               /*   0x55 <name> on the control channel.              */
+#define MAVERICKS_HIDP_DATA_FEATURE            0xa3   /* [BUILD] DATA|FEATURE transport byte on a GET(0x55)*/
+                                               /*   response (cf. 0xA1 DATA|INPUT for the battery).  */
 #define MAVERICKS_BATTERY_REPORT_ID            0x90   /* [BUILD] Apple Power-Device INPUT report:           */
                                                /*   [0x90][flags][capacity 0-100]. See               */
                                                /*   docs/mt-stack/battery-reporting.md.              */
 #define MAVERICKS_ENABLE_REPORT_ID             0xf1   /* [BUILD] MT2 enable feature report: 0xF1 0x02 0x01;*/
                                                /*   BNB bring-up resets to mouse mode after, so we  */
                                                /*   re-send it ~8x once both channels are OPEN.     */
+#define MAVERICKS_NAME_REPORT_ID               0x55   /* [BUILD] MT2 on-device name Feature report (64B):  */
+                                               /*   SET_REPORT(Feature,0x55,[name]) over the control */
+                                               /*   channel so a rename FOLLOWS the device. The       */
+                                               /*   satellite excludes IOBluetoothHIDDriver, so the   */
+                                               /*   IOHIDManager path can't reach it — we route it    */
+                                               /*   through MavericksHIDShell::setReport instead.     */
 #define MAVERICKS_REPORT_ID_MOUSE              0x02   /* [REF] device mode mouse (vs MT2 0x31 multitouch)  */
 #define MAVERICKS_TRIGGER_REPORT_ID            0x60   /* [BUILD] 0xA1 0x60 0x02 -> createMultitouchHandler */
 #define MAVERICKS_BNB_WATCHDOG_MS              5000   /* [REF] BNBDevice handleStart 5s (0x1388) "Forcing  */

@@ -63,6 +63,26 @@ public:
     /* In the CONTROL channel's gate: re-send the 0xF1 multitouch enable. arg0 = the control reader. */
     static IOReturn reEnableInGate(OSObject *owner, void *arg0, void *a1, void *a2, void *a3);
 
+    /* Route a rename to the device: SET_REPORT(Feature, 0x55, [name]) over the control channel, so the
+     * name FOLLOWS the device. The satellite excludes IOBluetoothHIDDriver, so the IOHIDManager path can't
+     * reach the real MT2's feature reports — MavericksHIDShell::setReport funnels 0x55 here instead. Called
+     * on IOHIDManager's thread; marshals the L2CAP send onto the control channel's BT workloop via
+     * getCommandGate()->runAction (same discipline as reEnableInGate/pollBatteryInGate). Best-effort:
+     * returns kIOReturnNoDevice when there is no BT control channel (USB or disconnected). */
+    static IOReturn writeDeviceName(const uint8_t *name, unsigned int len);
+    /* In the CONTROL channel's gate: build [0x53 SET_REPORT|Feature][0x55][name] and sendTo. Guards a
+     * torn-down channel (isInactive). arg0 = the control channel, arg1 = name bytes, arg2 = length. */
+    static IOReturn sendNameInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
+
+    /* Read the on-device name back: send GET_REPORT(Feature, 0x55) on the control channel and wait
+     * (bounded IOSleep) for the device's DATA|Feature reply, which bt_control_shim captures into the
+     * gNameResp buffer. Fills out[0..] with the name bytes (no report-id/transport byte) + *outLen. Returns
+     * kIOReturnTimeout if no reply lands, kIOReturnNoDevice off-BT. Called on IOHIDManager's getReport
+     * thread (may IOSleep); restores the round-trip verification the satellite broke. */
+    static IOReturn readDeviceName(uint8_t *out, unsigned int *outLen, unsigned int maxLen);
+    /* In the CONTROL channel's gate: send [0x43 GET_REPORT|Feature][0x55]. arg0 = the control channel. */
+    static IOReturn sendNameGetInGate(OSObject *owner, void *arg0, void *arg1, void *arg2, void *arg3);
+
 private:
     /* start() split into named steps (extract-method only; call order preserved). */
     void resetTransportState();       /* zero the per-connection fields */
