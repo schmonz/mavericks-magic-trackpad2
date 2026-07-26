@@ -967,3 +967,33 @@ Validated on-device: 0.4.5 → (buggy 0.5.0) → 0.5.1 manual install → reboot
 single About pane, updater launches + reports up-to-date, opt-in preserved (`=1`), kext
 `dev.modernmavericks.VoodooInputMavericks (0.5.1)` bound (full-gesture, BT=2). NB the shipped 0.5.0 had a
 dead updater so 0.5.0 users can't in-pane-update — **0.5.0 was pulled; 0.5.1 is the real first release**.
+
+### Reboot-free hot-reload spiked — UNSAFE (use-after-unload panic); Model A's mechanism corrected (2026-07-25)
+
+Chasing reboot-free kext iteration, a spike (since reverted) established two things on-device:
+
+1. **A live `kextunload` while the device is STREAMING SUCCEEDS** — surprising, and contra Model A's
+   original "a kext driving the live MT2 can't be unloaded" framing. The kext even reloaded to a fresh
+   address and rebound cleanly (new addr, `MT2BTReader`/shell/mux all re-bound, trackpad worked). What
+   actually PINS the synthetic shell is **disconnecting the device first** (soft `closeConnection` OR a
+   full power-off): that orphans the shell and the HID stack keeps the now-parentless `MavericksHIDShell`
+   retained. EVERY "retained, can't unload" failure this session was AFTER a disconnect. So Model A's
+   "reopening criterion" (disconnect → drain → unload) was **backwards** — the disconnect is what breaks it.
+
+2. **But the reload is UNSAFE.** ~130 ms after the unload, one of OUR async callbacks fired into the freed
+   kext text → kernel panic (page fault at an RIP *inside* the just-unloaded kext). Symbolicated via `nm -n`
+   (16-hex string-compare on `RIP − loadaddr`, since 10.9 `awk` lacks `strtonum`):
+   `MT2BTReader::interposeTimerFired` → `MT2BTReader::reEnableInGate`. The interpose `IOTimerEventSource`'s
+   `runAction` onto the BT control channel's gate outlived our text on the hot path. A reboot never hits
+   this because everything halts atomically; a hot-unload races our in-flight/pending callbacks.
+
+**Corrected mechanism:** Model A's real hazard is **dangling async callbacks after unload**, NOT the
+retention per se. Whether the *unload* succeeds depends on streaming-vs-disconnected; whether it's *safe*
+depends on quiescing every async surface we own (timers, L2CAP delegates, queued `runAction`s) before the
+text frees.
+
+**Decision:** stage-and-reboot stands as the shipped path, now with a concrete panic backing it. A
+time-boxed attempt at a self-driven pre-unload quiesce (drain ALL our async surfaces, then unload) is
+specced in `docs/superpowers/specs/2026-07-25-hot-reload-self-quiesce-timeboxed.md`; if it can't be made
+bulletproof over many cycles, hot-reload is abandoned. The naive `prepareForReload` spike (enumerate +
+`terminate()` the mux) was reverted — it never touched the readers' timers, which is the actual work.
