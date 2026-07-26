@@ -456,12 +456,18 @@ IOReturn MT2BTReader::sendNameInGate(OSObject * /*owner*/, void *arg0, void *arg
     unsigned int nl = (unsigned int)(uintptr_t)arg2;
     if (!ch || ch->isInactive()) return kIOReturnNoDevice;
     if (!name || nl == 0 || nl > 63) return kIOReturnBadArgument;
+    /* buf = [0x53 SET_REPORT|Feature][0x55 report id][64 data bytes]. The 0x55 report is a fixed 64-byte
+     * Feature report (descriptor count 0x40). We send the FULL 64-byte payload zero-padded, not just the
+     * name length, so a SHORTER rename overwrites the previous (longer) name's tail with zeros instead of
+     * leaving stale bytes on the device (e.g. "MT2-followtest" -> "MT2-fresh-99" must not read back as
+     * "MT2-fresh-99st"). name is capped at 63 above, so it always fits with room to spare. */
     uint8_t buf[66];
+    memset(buf, 0, sizeof buf);
     buf[0] = MAVERICKS_HIDP_SET_REPORT_FEATURE;   /* 0x53 */
     buf[1] = MAVERICKS_NAME_REPORT_ID;            /* 0x55 */
     memcpy(buf + 2, name, nl);
-    ch->sendTo(buf, (unsigned short)(2 + nl), 0, 0, 0, 0);
-    IOLog("MT2BTReader: name-write SET_REPORT(0x55) sent (%u name bytes) on control\n", nl);
+    ch->sendTo(buf, (unsigned short)sizeof buf, 0, 0, 0, 0);   /* full 64-byte report (name + zero pad) */
+    IOLog("MT2BTReader: name-write SET_REPORT(0x55) sent (%u name bytes, zero-padded to 64) on control\n", nl);
     return kIOReturnSuccess;
 }
 
