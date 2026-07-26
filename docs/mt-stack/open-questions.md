@@ -2087,7 +2087,13 @@ every gesture, both USB and Bluetooth. Judge any demo by a new general user's fi
 cam, composited); a tight animated GIF per feature for the README; or one ~60 s narrated walkthrough for a
 release page.
 
-## Naming (on-device 0x55 write) BROKEN under the VoodooInput satellite — regression (2026-07-25)
+## ✅ FIXED (2026-07-26): Naming (on-device 0x55 write) was BROKEN under the VoodooInput satellite
+
+> **RESOLVED — commit `2258a99` (+ padding `b6870da`), ships in 0.5.2.** The fix routes the `0x55` Feature
+> report through our synthetic `MavericksHIDShell` (which now implements `setReport`/`getReport` — forwarding
+> to the BT L2CAP control channel) instead of the dead IOHIDManager path, and the prefpane matches the shell's
+> PID `0x030e`. Proven on-device: write "MT2-fresh-99" → read back "MT2-fresh-99"; a name survived a
+> power-cycle + two reboots. `tools/re mt2-name` reads again too. History retained below.
 
 The 0.5.1 prefpane walk confirmed the pane's BT on-device rename no longer works. Root-caused as
 architectural, not a typo:
