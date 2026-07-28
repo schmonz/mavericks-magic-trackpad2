@@ -21,6 +21,8 @@ name: release
 on:
   push:
     tags: ['v*']
+  pull_request:
+    branches: [main]          # PR build is the status check Renovate automerge waits on
   workflow_dispatch:        # manual runs produce an artifact, not a release
 
 permissions:
