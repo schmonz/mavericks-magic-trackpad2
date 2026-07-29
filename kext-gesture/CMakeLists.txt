@@ -17,7 +17,7 @@ set(KEXT_LOCAL_CPP
 set(KEXT_SHARED_NAMES
   mt2_bt_decode mavericks_amd_terminal_encode mt2_usb_decode mt2_decode mavericks_pipeline mavericks_lifecycle
   mavericks_session mt2_geometry mt2_usb_bytes mavericks_connect_sm mavericks_conn_trace
-  mavericks_genuine_host mavericks_coordinator mt2_battery mavericks_splice mavericks_synth_report mavericks_synth_teardown)
+  mavericks_genuine_host mavericks_coordinator mt2_battery mt2_name_report mavericks_splice mavericks_synth_report mavericks_synth_teardown)
 set(KEXT_SHARED_SRCS "")
 foreach(c ${KEXT_SHARED_NAMES})
   list(APPEND KEXT_SHARED_SRCS ${CMAKE_SOURCE_DIR}/src/${c}.c)

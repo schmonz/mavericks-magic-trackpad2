@@ -10,6 +10,7 @@
 #include "MavericksHIDShell.h"
 #include "MT2BTReader.h"       /* MT2BTReader::writeDeviceName — route the 0x55 name to the control channel */
 #include "mavericks_stack.h"   /* MAVERICKS_NAME_REPORT_ID (0x55) */
+#include "mt2_name_report.h"   /* mt2_build_name_report — zero-pad the fixed 0x55 report (no tail leak) */
 
 OSDefineMetaClassAndStructors(MavericksHIDShell, IOHIDDevice)
 
@@ -102,14 +103,16 @@ IOReturn MavericksHIDShell::getReport(IOMemoryDescriptor *report, IOHIDReportTyp
         unsigned char name[64]; unsigned int nl = 0;
         IOReturn r = MT2BTReader::readDeviceName(name, &nl, sizeof name);
         if (r == kIOReturnSuccess) {
-            unsigned char buf[64]; memset(buf, 0, sizeof buf);
-            buf[0] = MAVERICKS_NAME_REPORT_ID;
-            if (nl > sizeof(buf) - 1) nl = sizeof(buf) - 1;
-            memcpy(buf + 1, name, nl);
+            /* Present the FULL fixed-size 0x55 Feature report, zero-padded past the name. The helper zeroes
+             * the whole buffer so no uninitialized tail leaks into the report (a short name like "Bo" used to
+             * read back with heap garbage in bytes 3..64). Then clamp to the caller's report length. */
+            unsigned char buf[65];
+            size_t full = mt2_build_name_report(MAVERICKS_NAME_REPORT_ID, name, nl, buf, sizeof buf);
             IOByteCount cap = report->getLength();
-            IOByteCount w = cap < (IOByteCount)(1 + nl) ? cap : (IOByteCount)(1 + nl);
+            IOByteCount w = cap < (IOByteCount)full ? cap : (IOByteCount)full;
             report->writeBytes(0, buf, w);
-            IOLog("MavericksHIDShell: getReport(Feature 0x55) -> %u name bytes\n", nl);
+            IOLog("MavericksHIDShell: getReport(Feature 0x55) -> %u name bytes (%u-byte report)\n",
+                  nl, (unsigned)w);
             return kIOReturnSuccess;
         }
         IOLog("MavericksHIDShell: getReport(Feature 0x55) -> read 0x%08x\n", r);
