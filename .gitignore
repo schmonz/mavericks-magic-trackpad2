@@ -38,5 +38,5 @@ tools/multitouch_frames_probe
 # transient working dirs
 /docs/superpowers/
 /reference/
-.claude/
+.claude/settings.local.json
 /tools/genuine-mt2-geometry.out
