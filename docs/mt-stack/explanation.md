@@ -500,6 +500,34 @@ read, `tools/re mt2-name-write` write):
   kext code interposes `0x55`, so the userland SET/GET reach the device directly.
 - The `02 01` was an accidental early-dev write, not the current enable path (which targets `0xF1`).
 
+**Read-back under the VoodooInput satellite — fixed-size report vs. variable-length wire (2026-07-29,
+`3160412`).** Once the `0x55` SET/GET route through our synthetic `MavericksHIDShell` (`2258a99`, when the
+mux took the device off the direct userland path), a `getReport(Feature,0x55)` is answered by
+`MavericksHIDShell::getReport` → `MT2BTReader::readDeviceName` (L2CAP `GET_REPORT` round-trip on the control
+channel). Two layers to keep straight:
+- **The wire reply is variable-length, and we match Tahoe there.** The device answers with just the raw
+  name bytes — e.g. `2` bytes for `"Bo"` (kernel log: `name-read captured 2 bytes`), exactly the terse
+  reply the Tahoe RE saw (`02 01`). `readDeviceName` captures precisely those bytes (`cn=2`).
+- **The HID report is fixed 64 bytes, so getReport must zero-pad it.** The `0x55` descriptor (copied
+  verbatim from genuine: `report count 0x40, size 8`) declares a *fixed* 64-byte Feature report, so
+  `getReport` must present 64 well-defined bytes regardless of the short wire reply. The first cut wrote
+  only the `1+name-length` prefix and left the caller's report-descriptor tail untouched → a short name
+  read back as name + uninitialised heap (`55 42 6f 02 00 00 10 00 78 25 cd 02 …` for `"Bo"`) — an
+  ill-defined report and a possible kernel-memory disclosure if `IOHIDLibUserClient` copies an unzeroed
+  temp buffer out to the caller. Fixed by building the whole report through the pure
+  `mt2_build_name_report()` (`src/mt2_name_report.c`, host-tested by `tests/test_name_report.c`): zero the
+  full buffer, set `[id][name]`, then clamp to the caller's length. The write side (`b6870da`, SET_REPORT
+  zero-padded to 64) was already correct and is unaffected.
+- **Is zero-pad what Tahoe's *host* presents? Un-probed, but a strong prior it matches — and required
+  regardless.** We RE'd the device *wire* (2 bytes), NOT Tahoe's host `getReport` presentation of the
+  padding tail. But the genuine descriptor is *also* a fixed 64-byte report, so Tahoe's host presents 64
+  bytes too and must fill the tail — a correct host zero-fills (leaking uninitialised memory would be
+  Apple's bug, not a behaviour to mirror). And a defined fill is mandatory either way (the infoleak),
+  while returning only the 2 valid bytes would be a *truncated* report — further from genuine, not closer.
+  So zero-fill is the fidelity-preserving choice, not a divergence. The only thing left un-measured is a
+  padding tail no consumer reads (every name reader stops at the NUL); the definitive check would be a
+  `getReport(0x55)` probe against the genuine MT2 on the Tahoe box, deferred as low-value.
+
 **Host-cache / live-refresh behavior (validated 2026-07-05):** 10.9 is NOT blind to the on-device name —
 it lands in the BT plist `Name` cache (`/Library/Preferences/com.apple.Bluetooth.plist`, per device) and
 the pane shows it; the pane just prefers the `displayName` override when set (the old interim alias).
