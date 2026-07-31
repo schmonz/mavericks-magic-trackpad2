@@ -73,17 +73,19 @@ add_custom_target(pkg
   # installer enforces the 10.9.5 floor (allowed-os-versions in dist/distribution.xml).
   # A bare pkgbuild product cannot express an OS floor; productbuild can.
   #
-  # --analyze the staged root to get the bundle component list, then flip BundleIsVersionChecked
-  # off on every entry BEFORE building. Without this, PackageKit version-gates each bundle and skips
-  # any whose on-disk CFBundleVersion is >= the pkg's — which silently prevented the legacy-1.0.0
-  # kext from ever updating (proven 2026-07-09, see cmake/pkg_no_version_check.sh). Force-install so
-  # the pkg always places its own build.
-  COMMAND pkgbuild --analyze --root ${PKGROOT} ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
-  COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/pkg_no_version_check.sh ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
-  COMMAND pkgbuild --root ${PKGROOT} --component-plist ${CMAKE_BINARY_DIR}/voodooinputmavericks-components.plist
-          --scripts ${PKG_SCRIPTS}
-          --identifier dev.modernmavericks.voodooinputmavericks --version ${MAVERICKS_PKG_VERSION} --install-location /
-          ${CMAKE_BINARY_DIR}/voodooinputmavericks-component.pkg
+  # Flat component via the shared helper, which forces install-in-place on every bundle:
+  #   BundleIsVersionChecked=false — else PackageKit version-gates each bundle and skips any whose
+  #     on-disk CFBundleVersion is >= the pkg's, which silently kept the legacy-1.0.0 kext from ever
+  #     updating (proven 2026-07-09).
+  #   BundleIsRelocatable=false — else a same-identifier bundle already on disk at another path gets
+  #     the payload relocated onto it, ignoring the declared install path.
+  # This used to be a local pkgbuild --analyze + cmake/pkg_no_version_check.sh (version-check only);
+  # the shared helper covers BOTH footguns for the whole family. See
+  # mavericks-shared-cmake/scripts/build_component_pkg.sh.
+  COMMAND sh ${MavericksSharedCMake_SCRIPTS}/build_component_pkg.sh
+          --root ${PKGROOT} --scripts ${PKG_SCRIPTS}
+          --identifier dev.modernmavericks.voodooinputmavericks --version ${MAVERICKS_PKG_VERSION}
+          --install-location / --out ${CMAKE_BINARY_DIR}/voodooinputmavericks-component.pkg
   COMMAND productbuild --distribution ${CMAKE_SOURCE_DIR}/dist/distribution.xml
           --resources ${CMAKE_SOURCE_DIR}/dist/resources
           --package-path ${CMAKE_BINARY_DIR} ${PKG_OUT}
@@ -92,6 +94,9 @@ add_custom_target(pkg
   # staging step that silently drops out -- e.g. the dead if(MT2_SPARKLE_FRAMEWORK) gate that shipped 0.5.0
   # with no updater. Runs on the real pkg, so it guards the local `pkg` build AND the CI release build.
   COMMAND sh ${CMAKE_SOURCE_DIR}/cmake/check_pkg_payload.sh ${PKG_OUT}
+  # Install-in-place gate: every bundle must land at its declared path and always overwrite (no
+  # relocation, no version-skip). Runs on the real pkg, guarding local `pkg` AND the CI release build.
+  COMMAND sh ${MavericksSharedCMake_SCRIPTS}/assert_pkg_installs_in_place.sh ${PKG_OUT}
   DEPENDS kext mt2_reenumerate VoodooInputMavericksPane_simbl mt2_linkstated ${_UPD_PKG_DEP}
   COMMENT "Building ${PKG_OUT} (productbuild, 10.9.5 floor)")
 

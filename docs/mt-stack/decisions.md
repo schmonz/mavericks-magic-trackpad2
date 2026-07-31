@@ -677,9 +677,12 @@ hand-reloads the kext). Proven in `/var/log/install.log` during the 0.4.4 dogfoo
 already installed`. Even after stamping the real version (`0b9dc5f`), a numeric regression (1.0.0 → 0.4.x)
 still skips.
 
-**Decision: force-install every component, never let PackageKit version-gate them.** The pkg build runs
-`pkgbuild --analyze` → flips `BundleIsVersionChecked=false` on all bundles (`cmake/pkg_no_version_check.sh`)
-→ `pkgbuild --component-plist`. An unsigned, loose-path (`/usr/local/lib/mt2d`) driver package should
+**Decision: force-install every component, never let PackageKit version-gate them.** The pkg build goes
+through the shared `build_component_pkg.sh` (mavericks-shared-cmake), which flips both
+`BundleIsVersionChecked=false` AND `BundleIsRelocatable=false` on every bundle before `pkgbuild` —
+hoisted from this repo's former `cmake/pkg_no_version_check.sh` (version-check only) once container-tools
+hit the relocation half of the same footgun; a shared `assert_pkg_installs_in_place.sh` now gates the
+finished pkg. An unsigned, loose-path (`/usr/local/lib/mt2d`) driver package should
 always place its own build, not defer to a stale on-disk copy. Self-bootstrapping: the first release
 carrying the fix (v0.4.5) force-installs the kext even over the legacy 1.0.0, unsticking every existing
 install. Validated on-device 2026-07-10: 0.4.4→0.4.5 self-update actually moved `kextstat` to 0.4.5.
